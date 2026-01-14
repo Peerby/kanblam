@@ -961,7 +961,7 @@ fn handle_signal_command(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Detect InProgress tasks whose Claude sessions are actually idle (waiting for input)
+/// Detect tasks whose Claude sessions are actually idle (waiting for input)
 /// This is a fallback for when signals are lost or have wrong session IDs
 fn detect_idle_tasks_from_tmux(app: &mut App) {
     use std::process::Command;
@@ -970,8 +970,10 @@ fn detect_idle_tasks_from_tmux(app: &mut App) {
         let project_slug = project.slug();
 
         for task in &mut project.tasks {
-            // Only check InProgress tasks with tmux windows
-            if task.status != model::TaskStatus::InProgress {
+            // Check InProgress and NeedsInput tasks with tmux windows
+            // Both could have finished while app was closed
+            if task.status != model::TaskStatus::InProgress
+                && task.status != model::TaskStatus::NeedsInput {
                 continue;
             }
             let Some(ref window_name) = task.tmux_window else {
