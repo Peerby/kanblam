@@ -2259,6 +2259,10 @@ impl App {
                 self.model.ui_state.show_help = !self.model.ui_state.show_help;
             }
 
+            Message::ToggleTaskPreview => {
+                self.model.ui_state.show_task_preview = !self.model.ui_state.show_task_preview;
+            }
+
             Message::Tick => {
                 // Increment animation frame for spinners
                 self.model.ui_state.animation_frame = self.model.ui_state.animation_frame.wrapping_add(1);

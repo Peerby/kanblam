@@ -90,6 +90,7 @@ pub enum Message {
     NavigateLeft,
     NavigateRight,
     ToggleHelp,
+    ToggleTaskPreview, // Show/hide task preview modal (v/space)
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

@@ -22,42 +22,9 @@ pub use status_bar::render_status_bar;
 /// In tmux-split mode, we only render the kanban board (left pane)
 /// The Claude session runs in an actual tmux pane on the right
 pub fn view(frame: &mut Frame, app: &mut App) {
-    // Calculate dynamic input height based on content
-    // Account for wrapped lines by estimating visual rows
+    // Calculate dynamic input height based on editor content
     let frame_width = frame.area().width.saturating_sub(4) as usize; // Account for borders
-
-    // Determine if we're showing a preview or the editor
-    let is_editing = app.model.ui_state.editing_task_id.is_some()
-        || app.model.ui_state.editing_divider_id.is_some();
-    let show_preview = app.model.ui_state.focus == FocusArea::KanbanBoard
-        && app.model.ui_state.selected_task_idx.is_some()
-        && !app.model.ui_state.selected_is_divider
-        && !app.model.ui_state.selected_is_divider_above
-        && !is_editing;
-
-    let input_height = if show_preview {
-        // Calculate height based on selected task content
-        let task_content = app.model.active_project().and_then(|project| {
-            let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
-            app.model.ui_state.selected_task_idx.and_then(|idx| {
-                tasks.get(idx).map(|task| {
-                    let mut content = task.title.clone();
-                    if !task.description.is_empty() {
-                        content.push_str("\n\n");
-                        content.push_str(&task.description);
-                    }
-                    if !task.images.is_empty() {
-                        content.push_str("\n\n[images]");
-                    }
-                    content
-                })
-            })
-        }).unwrap_or_default();
-        calculate_input_height(&task_content, frame_width)
-    } else {
-        // Calculate height based on editor content
-        calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width)
-    };
+    let input_height = calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -89,6 +56,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     // Render queue dialog if active
     if app.model.ui_state.is_queue_dialog_open() {
         render_queue_dialog(frame, app);
+    }
+
+    // Render task preview modal if active
+    if app.model.ui_state.show_task_preview {
+        render_task_preview_modal(frame, app);
     }
 }
 
@@ -180,25 +152,12 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(bar, area);
 }
 
-/// Render the task input area using edtui, or show task preview when a task is selected
+/// Render the task input area using edtui
 fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_focused = app.model.ui_state.focus == FocusArea::TaskInput;
     let is_editing_task = app.model.ui_state.editing_task_id.is_some();
     let is_editing_divider = app.model.ui_state.editing_divider_id.is_some();
     let is_editing = is_editing_task || is_editing_divider;
-
-    // Check if we should show a task preview instead of the editor
-    // Show preview when: focused on kanban, task selected (not divider), not editing
-    let show_preview = app.model.ui_state.focus == FocusArea::KanbanBoard
-        && app.model.ui_state.selected_task_idx.is_some()
-        && !app.model.ui_state.selected_is_divider
-        && !app.model.ui_state.selected_is_divider_above
-        && !is_editing;
-
-    if show_preview {
-        render_task_preview(frame, area, app);
-        return;
-    }
 
     // Choose title based on whether we're editing or creating, show image indicator
     let pending_count = app.model.ui_state.pending_images.len();
@@ -291,8 +250,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(hints), hints_area);
 }
 
-/// Render a preview of the currently selected task
-fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
+/// Render the task preview modal (shown with v/space)
+fn render_task_preview_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(70, 70, frame.area());
+
     // Get the selected task
     let task = app.model.active_project().and_then(|project| {
         let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
@@ -300,12 +261,7 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
     });
 
     let Some(task) = task else {
-        // No task selected, show empty preview
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .title(Span::styled(" Task Preview ", Style::default().fg(Color::DarkGray)));
-        frame.render_widget(block, area);
+        // No task selected, close the modal
         return;
     };
 
@@ -319,31 +275,10 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
         crate::model::TaskStatus::Done => Color::Green,
     };
 
-    // Build the title with step number and task status
-    let title = match app.model.ui_state.selected_column {
-        crate::model::TaskStatus::Planned => " 1. Planned ",
-        crate::model::TaskStatus::Queued => " 2. Queued ",
-        crate::model::TaskStatus::InProgress => " 3. In Progress ",
-        crate::model::TaskStatus::NeedsInput => " 4. Needs Input ",
-        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => " 5. Review ",
-        crate::model::TaskStatus::Done => " 6. Done ",
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(column_color))
-        .title(Span::styled(
-            title,
-            Style::default().fg(column_color).add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
     // Build the preview content
     let mut lines: Vec<Line> = Vec::new();
 
-    // Task title (bold)
+    // Task title (bold, large)
     lines.push(Line::from(Span::styled(
         &task.title,
         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -410,78 +345,26 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
+    // Add close hint
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press any key to close",
+        Style::default().fg(Color::DarkGray),
+    )));
 
-    // Render action hints at bottom-right (context-aware)
-    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let desc_style = Style::default().fg(Color::DarkGray);
+    let preview = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Task Details ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(column_color)),
+        )
+        .style(Style::default().fg(Color::White))
+        .wrap(ratatui::widgets::Wrap { trim: false });
 
-    let hints = match app.model.ui_state.selected_column {
-        crate::model::TaskStatus::Review => {
-            if task.worktree_path.is_some() {
-                // Worktree-based review options
-                Line::from(vec![
-                    Span::styled("y", key_style),
-                    Span::styled(" accept  ", desc_style),
-                    Span::styled("n", key_style),
-                    Span::styled(" discard  ", desc_style),
-                    Span::styled("c", key_style),
-                    Span::styled(" continue ", desc_style),
-                ])
-            } else {
-                // Legacy review options
-                Line::from(vec![
-                    Span::styled("x", key_style),
-                    Span::styled(" done  ", desc_style),
-                    Span::styled("p", key_style),
-                    Span::styled(" plan  ", desc_style),
-                    Span::styled("⏎", key_style),
-                    Span::styled(" Reset ", desc_style),
-                ])
-            }
-        }
-        crate::model::TaskStatus::InProgress => {
-            if task.tmux_window.is_some() {
-                Line::from(vec![
-                    Span::styled("⏎", key_style),
-                    Span::styled(" switch  ", desc_style),
-                    Span::styled("r", key_style),
-                    Span::styled(" review  ", desc_style),
-                    Span::styled("o", key_style),
-                    Span::styled(" open tmux ", desc_style),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::styled("e", key_style),
-                    Span::styled(" edit  ", desc_style),
-                    Span::styled("r", key_style),
-                    Span::styled(" review  ", desc_style),
-                    Span::styled("x", key_style),
-                    Span::styled(" done ", desc_style),
-                ])
-            }
-        }
-        _ => {
-            Line::from(vec![
-                Span::styled("e", key_style),
-                Span::styled(" edit  ", desc_style),
-                Span::styled("⏎", key_style),
-                Span::styled(" start  ", desc_style),
-                Span::styled("d", key_style),
-                Span::styled(" delete ", desc_style),
-            ])
-        }
-    };
-
-    let hints_width = 36u16;
-    let hints_area = Rect {
-        x: area.x + area.width.saturating_sub(hints_width + 1),
-        y: area.y + area.height.saturating_sub(1),
-        width: hints_width,
-        height: 1,
-    };
-    frame.render_widget(Paragraph::new(hints), hints_area);
+    // Clear area first
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(preview, area);
 }
 
 /// Render help overlay
@@ -506,6 +389,7 @@ fn render_help(frame: &mut Frame) {
         Line::from(vec![
             Span::styled("Actions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
+        Line::from("  v/Space    View task details"),
         Line::from("  i          Add new task"),
         Line::from("  e          Edit selected task"),
         Line::from("  Enter      Start selected task"),

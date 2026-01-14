@@ -441,6 +441,10 @@ pub struct UiState {
     pub applied_task_id: Option<Uuid>,
     /// Stash ref created when applying task changes (to restore original work on unapply)
     pub applied_stash_ref: Option<String>,
+
+    // Task preview modal
+    /// If true, show the task preview modal for the selected task
+    pub show_task_preview: bool,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -492,6 +496,7 @@ impl Default for UiState {
             queue_dialog_selected_idx: 0,
             applied_task_id: None,
             applied_stash_ref: None,
+            show_task_preview: false,
         }
     }
 }

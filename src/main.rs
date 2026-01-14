@@ -449,6 +449,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return vec![Message::ToggleHelp];
     }
 
+    // Handle task preview modal
+    if app.model.ui_state.show_task_preview {
+        return vec![Message::ToggleTaskPreview];
+    }
+
     // Handle queue dialog if open
     if app.model.ui_state.is_queue_dialog_open() {
         return handle_queue_dialog_key(key, app);
@@ -830,9 +835,33 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::SpawnNewSession]
         }
 
-        // Paste image
+        // Paste image (Ctrl+V)
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             vec![Message::PasteImage]
+        }
+
+        // View task details (v without modifiers, or Space)
+        KeyCode::Char('v') => {
+            // Only show preview if a task is selected (not a divider)
+            if app.model.ui_state.selected_task_idx.is_some()
+                && !app.model.ui_state.selected_is_divider
+                && !app.model.ui_state.selected_is_divider_above
+            {
+                vec![Message::ToggleTaskPreview]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::Char(' ') => {
+            // Only show preview if a task is selected (not a divider)
+            if app.model.ui_state.selected_task_idx.is_some()
+                && !app.model.ui_state.selected_is_divider
+                && !app.model.ui_state.selected_is_divider_above
+            {
+                vec![Message::ToggleTaskPreview]
+            } else {
+                vec![]
+            }
         }
 
         _ => vec![],
