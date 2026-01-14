@@ -1,0 +1,176 @@
+use anyhow::Result;
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver};
+use std::time::Duration;
+
+/// Event received from hook watcher
+#[derive(Debug, Clone)]
+pub enum WatcherEvent {
+    /// Claude finished responding (Stop hook)
+    ClaudeStopped {
+        session_id: String,
+        project_dir: PathBuf,
+    },
+    /// Session ended (SessionEnd hook)
+    SessionEnded {
+        session_id: String,
+        project_dir: PathBuf,
+        reason: String,
+    },
+    /// Claude needs user input (Notification hook - permission_prompt or idle_prompt)
+    NeedsInput {
+        session_id: String,
+        project_dir: PathBuf,
+        input_type: String,
+    },
+    /// User provided input (UserPromptSubmit hook)
+    InputProvided {
+        session_id: String,
+        project_dir: PathBuf,
+    },
+    /// Claude is working/using a tool (PreToolUse hook)
+    Working {
+        session_id: String,
+        project_dir: PathBuf,
+    },
+    /// Error occurred
+    Error(String),
+}
+
+/// Signal file format written by hook scripts
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HookSignalFile {
+    pub event: String,
+    pub session_id: String,
+    pub project_dir: PathBuf,
+    pub timestamp: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub input_type: String,
+}
+
+/// Watches the signal directory for hook notifications
+pub struct HookWatcher {
+    signal_dir: PathBuf,
+    _watcher: RecommendedWatcher,
+    receiver: Receiver<notify::Result<Event>>,
+}
+
+impl HookWatcher {
+    /// Create a new hook watcher
+    pub fn new() -> Result<Self> {
+        let signal_dir = get_signal_dir()?;
+        std::fs::create_dir_all(&signal_dir)?;
+
+        let (tx, rx) = channel();
+
+        let mut watcher = RecommendedWatcher::new(
+            move |res| {
+                let _ = tx.send(res);
+            },
+            Config::default().with_poll_interval(Duration::from_millis(500)),
+        )?;
+
+        watcher.watch(&signal_dir, RecursiveMode::NonRecursive)?;
+
+        Ok(Self {
+            signal_dir,
+            _watcher: watcher,
+            receiver: rx,
+        })
+    }
+
+    /// Check for new events (non-blocking)
+    pub fn poll(&self) -> Option<WatcherEvent> {
+        match self.receiver.try_recv() {
+            Ok(Ok(event)) => self.process_event(event),
+            Ok(Err(e)) => Some(WatcherEvent::Error(e.to_string())),
+            Err(_) => None,
+        }
+    }
+
+    /// Process a file system event
+    fn process_event(&self, event: Event) -> Option<WatcherEvent> {
+        // Only process create events
+        if !matches!(event.kind, EventKind::Create(_)) {
+            return None;
+        }
+
+        // Read and process signal files
+        for path in event.paths {
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
+                        // Delete the signal file after reading
+                        let _ = std::fs::remove_file(&path);
+
+                        return match signal.event.as_str() {
+                            "stop" => Some(WatcherEvent::ClaudeStopped {
+                                session_id: signal.session_id,
+                                project_dir: signal.project_dir,
+                            }),
+                            "end" => Some(WatcherEvent::SessionEnded {
+                                session_id: signal.session_id,
+                                project_dir: signal.project_dir,
+                                reason: signal.reason,
+                            }),
+                            "needs-input" => Some(WatcherEvent::NeedsInput {
+                                session_id: signal.session_id,
+                                project_dir: signal.project_dir,
+                                input_type: signal.input_type,
+                            }),
+                            "input-provided" => Some(WatcherEvent::InputProvided {
+                                session_id: signal.session_id,
+                                project_dir: signal.project_dir,
+                            }),
+                            "working" => Some(WatcherEvent::Working {
+                                session_id: signal.session_id,
+                                project_dir: signal.project_dir,
+                            }),
+                            _ => None,
+                        };
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get the signal directory path
+    pub fn signal_dir(&self) -> &PathBuf {
+        &self.signal_dir
+    }
+}
+
+/// Get the signal directory path
+pub fn get_signal_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
+    Ok(home.join(".kanclaude").join("signals"))
+}
+
+/// Write a signal file (called by hook script via CLI)
+pub fn write_signal(event: &str, session_id: &str, project_dir: &PathBuf, input_type: Option<&str>) -> Result<()> {
+    let signal_dir = get_signal_dir()?;
+    std::fs::create_dir_all(&signal_dir)?;
+
+    let signal = HookSignalFile {
+        event: event.to_string(),
+        session_id: session_id.to_string(),
+        project_dir: project_dir.clone(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        reason: String::new(),
+        input_type: input_type.unwrap_or("").to_string(),
+    };
+
+    let filename = format!("signal-{}-{}.json", event, chrono::Utc::now().timestamp_millis());
+    let path = signal_dir.join(filename);
+
+    let content = serde_json::to_string_pretty(&signal)?;
+    std::fs::write(path, content)?;
+
+    Ok(())
+}

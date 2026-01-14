@@ -1,0 +1,403 @@
+use chrono::{DateTime, Utc};
+use edtui::{
+    EditorEventHandler, EditorMode, EditorState, Lines,
+    actions::{Composed, SelectInnerWord, DeleteSelection},
+    events::{KeyEvent, KeyEventHandler, KeyEventRegister},
+};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use uuid::Uuid;
+
+/// Application state following The Elm Architecture
+#[derive(Serialize, Deserialize)]
+pub struct AppModel {
+    pub projects: Vec<Project>,
+    pub active_project_idx: usize,
+    #[serde(skip)]
+    pub ui_state: UiState,
+}
+
+impl Default for AppModel {
+    fn default() -> Self {
+        Self {
+            projects: Vec::new(),
+            active_project_idx: 0,
+            ui_state: UiState::default(),
+        }
+    }
+}
+
+impl AppModel {
+    pub fn active_project(&self) -> Option<&Project> {
+        self.projects.get(self.active_project_idx)
+    }
+
+    pub fn active_project_mut(&mut self) -> Option<&mut Project> {
+        self.projects.get_mut(self.active_project_idx)
+    }
+
+    pub fn projects_needing_attention(&self) -> usize {
+        self.projects.iter().filter(|p| p.needs_attention).count()
+    }
+}
+
+/// A project represents a working directory with Claude Code sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: Uuid,
+    pub name: String,
+    pub working_dir: PathBuf,
+    pub tasks: Vec<Task>,
+    /// Multiple tmux sessions can be associated with a project
+    #[serde(default)]
+    pub tmux_sessions: Vec<String>,
+    /// Which session is currently active/highlighted
+    #[serde(default)]
+    pub active_session_idx: usize,
+    /// Legacy field for backward compatibility - will be migrated to tmux_sessions
+    #[serde(default, skip_serializing)]
+    pub tmux_session: Option<String>,
+    pub needs_attention: bool,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip)]
+    pub captured_output: String,
+    #[serde(skip)]
+    pub hooks_installed: bool,
+}
+
+impl Project {
+    pub fn new(name: String, working_dir: PathBuf) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            working_dir,
+            tasks: Vec::new(),
+            tmux_sessions: Vec::new(),
+            active_session_idx: 0,
+            tmux_session: None, // Legacy, will be migrated
+            needs_attention: false,
+            created_at: Utc::now(),
+            captured_output: String::new(),
+            hooks_installed: false,
+        }
+    }
+
+    /// Migrate legacy tmux_session to tmux_sessions if needed
+    pub fn migrate_legacy_session(&mut self) {
+        if let Some(session) = self.tmux_session.take() {
+            if !self.tmux_sessions.contains(&session) {
+                self.tmux_sessions.push(session);
+            }
+        }
+    }
+
+    /// Get the currently active tmux session
+    pub fn active_tmux_session(&self) -> Option<&String> {
+        self.tmux_sessions.get(self.active_session_idx)
+    }
+
+    /// Add a tmux session if not already present
+    pub fn add_session(&mut self, session: String) {
+        if !self.tmux_sessions.contains(&session) {
+            self.tmux_sessions.push(session);
+        }
+    }
+
+    /// Remove a tmux session
+    pub fn remove_session(&mut self, session: &str) {
+        self.tmux_sessions.retain(|s| s != session);
+        // Adjust active_session_idx if needed
+        if self.active_session_idx >= self.tmux_sessions.len() && !self.tmux_sessions.is_empty() {
+            self.active_session_idx = self.tmux_sessions.len() - 1;
+        }
+    }
+
+    /// Select next session (wrap around)
+    pub fn next_session(&mut self) {
+        if !self.tmux_sessions.is_empty() {
+            self.active_session_idx = (self.active_session_idx + 1) % self.tmux_sessions.len();
+        }
+    }
+
+    /// Select previous session (wrap around)
+    pub fn prev_session(&mut self) {
+        if !self.tmux_sessions.is_empty() {
+            if self.active_session_idx == 0 {
+                self.active_session_idx = self.tmux_sessions.len() - 1;
+            } else {
+                self.active_session_idx -= 1;
+            }
+        }
+    }
+
+    pub fn tasks_by_status(&self, status: TaskStatus) -> Vec<&Task> {
+        // Return tasks in Vec order - allows manual reordering with +/-
+        self.tasks.iter().filter(|t| t.status == status).collect()
+    }
+
+    pub fn in_progress_task(&self) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.status == TaskStatus::InProgress)
+    }
+
+    /// Check if any task is currently active (InProgress or NeedsInput)
+    pub fn has_active_task(&self) -> bool {
+        self.tasks.iter().any(|t| {
+            t.status == TaskStatus::InProgress || t.status == TaskStatus::NeedsInput
+        })
+    }
+
+    /// Get the next queued task (first one in queue order)
+    pub fn next_queued_task(&self) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.status == TaskStatus::Queued)
+    }
+
+    pub fn review_count(&self) -> usize {
+        self.tasks.iter().filter(|t| t.status == TaskStatus::Review).count()
+    }
+
+    pub fn needs_input_count(&self) -> usize {
+        self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsInput).count()
+    }
+}
+
+/// A task to be executed by Claude Code
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub status: TaskStatus,
+    pub images: Vec<PathBuf>,
+    pub claude_session_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Visual divider below this task
+    #[serde(default)]
+    pub divider_below: bool,
+    /// Visual divider above this task (for top-of-column dividers)
+    #[serde(default)]
+    pub divider_above: bool,
+    /// Optional title for the divider below
+    #[serde(default)]
+    pub divider_title: Option<String>,
+    /// Optional title for the divider above
+    #[serde(default)]
+    pub divider_above_title: Option<String>,
+}
+
+impl Task {
+    pub fn new(title: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            title,
+            description: String::new(),
+            status: TaskStatus::Planned,
+            images: Vec::new(),
+            claude_session_id: None,
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            divider_below: false,
+            divider_above: false,
+            divider_title: None,
+            divider_above_title: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn with_image(mut self, image_path: PathBuf) -> Self {
+        self.images.push(image_path);
+        self
+    }
+}
+
+/// Task status in the Kanban workflow
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TaskStatus {
+    #[default]
+    Planned,
+    Queued,
+    InProgress,
+    NeedsInput,
+    Review,
+    Done,
+}
+
+impl TaskStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TaskStatus::Planned => "Planned",
+            TaskStatus::Queued => "Queued",
+            TaskStatus::InProgress => "In Progress",
+            TaskStatus::NeedsInput => "Needs Input",
+            TaskStatus::Review => "Review",
+            TaskStatus::Done => "Done",
+        }
+    }
+
+    pub fn all() -> [TaskStatus; 6] {
+        [
+            TaskStatus::Planned,
+            TaskStatus::Queued,
+            TaskStatus::InProgress,
+            TaskStatus::NeedsInput,
+            TaskStatus::Review,
+            TaskStatus::Done,
+        ]
+    }
+
+    /// Get array index for this status (for column_scroll_offsets)
+    pub fn index(&self) -> usize {
+        match self {
+            TaskStatus::Planned => 0,
+            TaskStatus::Queued => 1,
+            TaskStatus::InProgress => 2,
+            TaskStatus::NeedsInput => 3,
+            TaskStatus::Review => 4,
+            TaskStatus::Done => 5,
+        }
+    }
+}
+
+/// UI state (not persisted)
+pub struct UiState {
+    pub focus: FocusArea,
+    pub editor_state: EditorState,
+    pub editor_event_handler: EditorEventHandler,
+    pub selected_task_idx: Option<usize>,
+    /// The ID of the currently selected task (source of truth for selection)
+    pub selected_task_id: Option<Uuid>,
+    pub selected_column: TaskStatus,
+    pub show_help: bool,
+    pub pending_confirmation: Option<PendingConfirmation>,
+    pub status_message: Option<String>,
+    /// If set, we're editing an existing task instead of creating a new one
+    pub editing_task_id: Option<Uuid>,
+    /// If set, we're editing a divider's title (task_id that has the divider)
+    pub editing_divider_id: Option<Uuid>,
+    /// If true, we're editing a divider_above (vs divider_below)
+    pub editing_divider_is_above: bool,
+    /// Scroll offset for long task titles (marquee effect)
+    pub title_scroll_offset: usize,
+    /// Pending images to attach to next created task
+    pub pending_images: Vec<PathBuf>,
+    /// If true, a divider below is selected (below the task at selected_task_idx)
+    pub selected_is_divider: bool,
+    /// If true, a divider above is selected (above the first task, only valid when selected_task_idx == 0)
+    pub selected_is_divider_above: bool,
+    /// Animation frame counter for spinners
+    pub animation_frame: usize,
+    /// Last scroll position (visual index) for each column, preserved when leaving
+    /// Order: Planned, Queued, InProgress, NeedsInput, Review, Done
+    pub column_scroll_offsets: [usize; 6],
+}
+
+/// Create vim mode handler with custom keybindings
+fn create_vim_handler() -> EditorEventHandler {
+    let mut key_handler = KeyEventHandler::vim_mode();
+
+    // Add dw (delete word) in normal mode - selects inner word and deletes it
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('w')]),
+        Composed::new(SelectInnerWord).chain(DeleteSelection),
+    );
+
+    // Add diw (delete inner word) explicitly too
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('i'), KeyEvent::Char('w')]),
+        Composed::new(SelectInnerWord).chain(DeleteSelection),
+    );
+
+    EditorEventHandler::new(key_handler)
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        let mut editor_state = EditorState::default();
+        // Ensure we're in insert mode for text input
+        editor_state.mode = EditorMode::Insert;
+
+        Self {
+            focus: FocusArea::default(),
+            editor_state,
+            // Use vim mode with custom keybindings
+            editor_event_handler: create_vim_handler(),
+            selected_task_idx: None,
+            selected_task_id: None,
+            selected_column: TaskStatus::default(),
+            show_help: false,
+            pending_confirmation: None,
+            status_message: None,
+            editing_task_id: None,
+            editing_divider_id: None,
+            editing_divider_is_above: false,
+            title_scroll_offset: 0,
+            pending_images: Vec::new(),
+            selected_is_divider: false,
+            selected_is_divider_above: false,
+            animation_frame: 0,
+            column_scroll_offsets: [0; 6],
+        }
+    }
+}
+
+impl UiState {
+    /// Get the current text content from the editor
+    pub fn get_input_text(&self) -> String {
+        self.editor_state.lines.to_string()
+    }
+
+    /// Set the editor text content
+    pub fn set_input_text(&mut self, text: &str) {
+        self.editor_state = EditorState::new(Lines::from(text));
+        // Ensure we're in insert mode
+        self.editor_state.mode = EditorMode::Insert;
+    }
+
+    /// Clear the editor text
+    pub fn clear_input(&mut self) {
+        self.editor_state = EditorState::default();
+        // Ensure we're in insert mode
+        self.editor_state.mode = EditorMode::Insert;
+    }
+}
+
+/// A pending confirmation dialog
+#[derive(Debug, Clone)]
+pub struct PendingConfirmation {
+    pub message: String,
+    pub action: PendingAction,
+}
+
+/// Actions that require user confirmation
+#[derive(Debug, Clone)]
+pub enum PendingAction {
+    InstallHooks,
+    ReloadClaude,
+    DeleteTask(Uuid),
+}
+
+/// Which UI element has focus
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FocusArea {
+    #[default]
+    KanbanBoard,
+    TaskInput,
+    ProjectTabs,
+    OutputViewer,
+}
+
+/// Signal received from Claude Code hooks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookSignal {
+    pub event: String,
+    pub session_id: String,
+    pub project_dir: PathBuf,
+    pub timestamp: DateTime<Utc>,
+    pub transcript_path: Option<PathBuf>,
+}

@@ -1,0 +1,683 @@
+mod app;
+mod hooks;
+mod image;
+mod message;
+mod model;
+mod notify;
+mod tmux;
+mod ui;
+
+use app::{load_state, save_state, App};
+use chrono::Utc;
+use hooks::{HookWatcher, WatcherEvent};
+use message::Message;
+use model::{FocusArea, HookSignal, TaskStatus};
+use ratatui::{
+    backend::CrosstermBackend,
+    crossterm::{
+        event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind, MouseButton},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    },
+    layout::Rect,
+    Terminal,
+};
+use std::io;
+use std::time::Duration;
+
+
+fn main() -> anyhow::Result<()> {
+    // Check for CLI subcommands (used by hooks)
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "hook-signal" {
+        return handle_hook_signal(&args[2..]);
+    }
+
+    // Load saved state
+    let model = load_state().unwrap_or_default();
+    let mut app = App::with_model(model);
+
+    // Scan for existing Claude sessions
+    app.update(Message::RefreshProjects);
+
+    // Create hook watcher for completion detection
+    let hook_watcher = HookWatcher::new().ok();
+
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Run the main loop
+    let result = run_app(&mut terminal, &mut app, hook_watcher);
+
+    // Restore terminal
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    // Save state on exit
+    if let Err(e) = save_state(&app.model) {
+        eprintln!("Failed to save state: {}", e);
+    }
+
+    result
+}
+
+fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    hook_watcher: Option<HookWatcher>,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    loop {
+        // Render
+        terminal.draw(|frame| ui::view(frame, app))?;
+
+        // Check for hook events (completion detection)
+        if let Some(ref watcher) = hook_watcher {
+            while let Some(event) = watcher.poll() {
+                if let Some(msg) = convert_watcher_event(event) {
+                    let commands = app.update(msg);
+                    for cmd in commands {
+                        app.update(cmd);
+                    }
+                }
+            }
+        }
+
+        // Handle events with timeout for tick
+        if event::poll(Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Key(key) => {
+                    // Only handle Press events, ignore Release and Repeat
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // Handle input mode directly with textarea
+                    if app.model.ui_state.focus == FocusArea::TaskInput {
+                        let messages = handle_textarea_input(key, app);
+                        for msg in messages {
+                            let commands = app.update(msg);
+                            for cmd in commands {
+                                app.update(cmd);
+                            }
+                        }
+                    } else {
+                        let messages = handle_key_event(key, app);
+                        for msg in messages {
+                            let commands = app.update(msg);
+                            for cmd in commands {
+                                app.update(cmd);
+                            }
+                        }
+                    }
+                }
+                Event::Mouse(mouse) => {
+                    let size = terminal.size()?;
+                    let rect = Rect::new(0, 0, size.width, size.height);
+                    if let Some(msg) = handle_mouse_event(mouse, app, rect) {
+                        let commands = app.update(msg);
+                        for cmd in commands {
+                            app.update(cmd);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            // Tick for background updates
+            app.update(Message::Tick);
+        }
+
+        if app.should_quit {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle mouse events - clicks on columns and tasks
+fn handle_mouse_event(
+    mouse: event::MouseEvent,
+    app: &App,
+    size: Rect,
+) -> Option<Message> {
+    // Only handle left clicks and taps
+    if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+        return None;
+    }
+
+    let x = mouse.column;
+    let y = mouse.row;
+
+    // Fixed input height (must match ui/mod.rs)
+    let input_height = 5u16;
+
+    // Calculate layout regions (project bar at top now)
+    let project_bar_height = 1u16;
+    let status_height = 1u16;
+    let kanban_height = size.height.saturating_sub(project_bar_height + input_height + status_height);
+
+    let project_bar_y = 0u16;
+    let kanban_y = project_bar_height;
+    let input_y = project_bar_height + kanban_height;
+    let status_y = project_bar_height + kanban_height + input_height;
+
+    // Check if click is in project bar
+    if y < kanban_y {
+        // Project tabs are roughly spaced out
+        // Estimate project width based on name lengths
+        let mut current_x = 1u16; // Initial space
+        for (idx, project) in app.model.projects.iter().enumerate() {
+            // Width: " [N] name " + separator
+            let tab_width = if idx < 9 {
+                (5 + project.name.len() + 2) as u16
+            } else {
+                (2 + project.name.len() + 2) as u16
+            };
+
+            if x >= current_x && x < current_x + tab_width {
+                return Some(Message::SwitchProject(idx));
+            }
+            current_x += tab_width + 3; // + separator " │ "
+        }
+        return None;
+    }
+
+    // Check if click is in kanban area
+    if y >= kanban_y && y < input_y {
+        let kanban_rel_y = y - kanban_y;
+        // Kanban board has outer border (1 char each side)
+        // Inside is a 2x3 grid layout:
+        //   Row 0: Planned (left)    | Queued (right)
+        //   Row 1: InProgress (left) | NeedsInput (right)
+        //   Row 2: Review (left)     | Done (right)
+
+        let inner_x = x.saturating_sub(1); // Account for left border
+        let inner_y = kanban_rel_y.saturating_sub(1); // Account for top border (use relative y)
+        let inner_width = size.width.saturating_sub(2);
+        let inner_height = kanban_height.saturating_sub(2);
+
+        // Determine which cell (2x3 grid)
+        let half_width = inner_width / 2;
+        let row_height = inner_height / 3;
+
+        let is_right = inner_x >= half_width;
+        let row = if inner_y < row_height {
+            0
+        } else if inner_y < row_height * 2 {
+            1
+        } else {
+            2
+        };
+
+        let status = match (row, is_right) {
+            (0, false) => TaskStatus::Planned,     // Row 0, left
+            (0, true) => TaskStatus::Queued,       // Row 0, right
+            (1, false) => TaskStatus::InProgress,  // Row 1, left
+            (1, true) => TaskStatus::NeedsInput,   // Row 1, right
+            (2, false) => TaskStatus::Review,      // Row 2, left
+            (_, _) => TaskStatus::Done,            // Row 2, right (catch-all)
+        };
+
+        // Calculate task index within the cell
+        // Each cell has its own border (1 line) + title area
+        let cell_y = inner_y.saturating_sub(row as u16 * row_height);
+
+        // Account for column border and title (roughly 2 lines)
+        if cell_y >= 2 {
+            let task_idx = (cell_y - 2) as usize;
+
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(status);
+                if task_idx < tasks.len() {
+                    return Some(Message::ClickedTask { status, task_idx });
+                }
+            }
+        }
+
+        // Click on column header or empty space - just select the column
+        return Some(Message::SelectColumn(status));
+    }
+
+    // Check if click is in input area
+    if y >= input_y && y < status_y {
+        return Some(Message::FocusChanged(FocusArea::TaskInput));
+    }
+
+    // Click in status bar - could add session switching here in the future
+    // For now, status bar shows session info but isn't clickable
+    let _ = (project_bar_y, status_y); // Suppress unused variable warnings
+
+    None
+}
+
+/// Convert a watcher event to a message
+fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
+    match event {
+        WatcherEvent::ClaudeStopped { session_id, project_dir } => {
+            Some(Message::HookSignalReceived(HookSignal {
+                event: "stop".to_string(),
+                session_id,
+                project_dir,
+                timestamp: Utc::now(),
+                transcript_path: None,
+            }))
+        }
+        WatcherEvent::SessionEnded { session_id, project_dir, .. } => {
+            Some(Message::HookSignalReceived(HookSignal {
+                event: "end".to_string(),
+                session_id,
+                project_dir,
+                timestamp: Utc::now(),
+                transcript_path: None,
+            }))
+        }
+        WatcherEvent::NeedsInput { session_id, project_dir, .. } => {
+            Some(Message::HookSignalReceived(HookSignal {
+                event: "needs-input".to_string(),
+                session_id,
+                project_dir,
+                timestamp: Utc::now(),
+                transcript_path: None,
+            }))
+        }
+        WatcherEvent::InputProvided { session_id, project_dir } => {
+            Some(Message::HookSignalReceived(HookSignal {
+                event: "input-provided".to_string(),
+                session_id,
+                project_dir,
+                timestamp: Utc::now(),
+                transcript_path: None,
+            }))
+        }
+        WatcherEvent::Working { session_id, project_dir } => {
+            Some(Message::HookSignalReceived(HookSignal {
+                event: "working".to_string(),
+                session_id,
+                project_dir,
+                timestamp: Utc::now(),
+                transcript_path: None,
+            }))
+        }
+        WatcherEvent::Error(e) => {
+            eprintln!("Hook watcher error: {}", e);
+            None
+        }
+    }
+}
+
+/// Handle editor input mode - passes events to edtui
+fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+    let super_key = key.modifiers.contains(KeyModifiers::SUPER);
+
+    match key.code {
+        // Enter: submit unless line ends with \ (line continuation)
+        KeyCode::Enter if !ctrl && !alt => {
+            let text = app.model.ui_state.get_input_text();
+            if text.ends_with('\\') {
+                // Remove the backslash and insert a newline
+                use edtui::actions::{Execute, DeleteChar, LineBreak};
+                DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
+                LineBreak(1).execute(&mut app.model.ui_state.editor_state);
+                vec![]
+            } else {
+                vec![Message::InputSubmit]
+            }
+        }
+
+        // Ctrl+D also submits the task (explicit submit)
+        KeyCode::Char('d') if ctrl => {
+            vec![Message::InputSubmit]
+        }
+
+        // Ctrl+C unfocuses editor, cancels edit if editing (keeps pending images)
+        KeyCode::Char('c') if ctrl => {
+            if app.model.ui_state.editing_task_id.is_some() {
+                vec![Message::CancelEdit]
+            } else {
+                app.model.ui_state.clear_input();
+                vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+            }
+        }
+
+        // Ctrl+V pastes image from clipboard
+        // Also handle raw control character (ASCII 22) that some terminals send
+        KeyCode::Char('v') if ctrl => {
+            vec![Message::PasteImage]
+        }
+        KeyCode::Char('\x16') => {
+            vec![Message::PasteImage]
+        }
+
+        // Ctrl+U clears all pending images
+        KeyCode::Char('u') if ctrl => {
+            let count = app.model.ui_state.pending_images.len();
+            app.model.ui_state.pending_images.clear();
+            if count > 0 {
+                vec![Message::SetStatusMessage(Some(format!("Cleared {} image{}", count, if count == 1 { "" } else { "s" })))]
+            } else {
+                vec![Message::SetStatusMessage(Some("No images to clear".to_string()))]
+            }
+        }
+
+        // Ctrl+X removes the last pending image
+        KeyCode::Char('x') if ctrl => {
+            if let Some(_) = app.model.ui_state.pending_images.pop() {
+                let remaining = app.model.ui_state.pending_images.len();
+                if remaining > 0 {
+                    vec![Message::SetStatusMessage(Some(format!("{} image{} remaining", remaining, if remaining == 1 { "" } else { "s" })))]
+                } else {
+                    vec![Message::SetStatusMessage(Some("Image removed".to_string()))]
+                }
+            } else {
+                vec![Message::SetStatusMessage(Some("No images to remove".to_string()))]
+            }
+        }
+
+        // Up arrow at position 0 moves focus to Kanban board
+        KeyCode::Up => {
+            let cursor = app.model.ui_state.editor_state.cursor;
+            if cursor.row == 0 && cursor.col == 0 {
+                vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+            } else {
+                // Let edtui handle normal cursor movement
+                app.model.ui_state.editor_event_handler.on_key_event(
+                    key,
+                    &mut app.model.ui_state.editor_state,
+                );
+                vec![]
+            }
+        }
+
+        // All other keys (including plain Enter for newlines) go to edtui editor
+        _ => {
+            app.model.ui_state.editor_event_handler.on_key_event(
+                key,
+                &mut app.model.ui_state.editor_state,
+            );
+            vec![]
+        }
+    }
+}
+
+fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
+    // Handle confirmation dialogs first
+    if app.model.ui_state.pending_confirmation.is_some() {
+        return match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => vec![Message::ConfirmAction],
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![Message::CancelAction],
+            // Allow 1-9 to cancel and switch to that project
+            KeyCode::Char(c @ '1'..='9') => {
+                let project_idx = (c as usize) - ('1' as usize);
+                if project_idx < app.model.projects.len() {
+                    vec![Message::CancelAction, Message::SwitchProject(project_idx)]
+                } else {
+                    vec![]
+                }
+            }
+            _ => vec![],
+        };
+    }
+
+    // Clear status message on any key press
+    if app.model.ui_state.status_message.is_some() {
+        return vec![Message::SetStatusMessage(None)];
+    }
+
+    // Handle help overlay
+    if app.model.ui_state.show_help {
+        return vec![Message::ToggleHelp];
+    }
+
+    // Normal mode keybindings
+    match key.code {
+        // Quit
+        KeyCode::Char('q') => vec![Message::Quit],
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::Quit],
+
+        // Help
+        KeyCode::Char('?') => vec![Message::ToggleHelp],
+
+        // Navigation
+        KeyCode::Char('h') | KeyCode::Left => vec![Message::NavigateLeft],
+        KeyCode::Char('l') | KeyCode::Right => vec![Message::NavigateRight],
+        KeyCode::Char('j') | KeyCode::Down => vec![Message::NavigateDown],
+        KeyCode::Char('k') | KeyCode::Up => vec![Message::NavigateUp],
+
+        // Focus switching
+        KeyCode::Tab => {
+            let next_focus = match app.model.ui_state.focus {
+                FocusArea::KanbanBoard => FocusArea::TaskInput,
+                FocusArea::TaskInput => FocusArea::ProjectTabs,
+                FocusArea::ProjectTabs => FocusArea::KanbanBoard,
+                FocusArea::OutputViewer => FocusArea::KanbanBoard, // Legacy
+            };
+            vec![Message::FocusChanged(next_focus)]
+        }
+
+        // Switch to Claude session (switches tmux session)
+        KeyCode::Char('o') => {
+            app.switch_to_claude_session();
+            vec![]
+        }
+
+        // Refresh - re-scan tmux for Claude sessions
+        KeyCode::Char('R') => vec![Message::RefreshProjects],
+
+        // Reload Claude hooks (Ctrl-R) - restart Claude to pick up new hooks
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::ReloadClaudeHooks]
+        }
+
+        // Enter input mode
+        KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
+
+        // Start task
+        KeyCode::Enter => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        return vec![Message::StartTask(task.id)];
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Delete task or divider
+        KeyCode::Char('d') => {
+            // If a divider is selected, delete it (no confirmation needed)
+            if app.model.ui_state.selected_is_divider {
+                return vec![Message::DeleteDivider];
+            }
+            // Otherwise ask for confirmation before deleting the task
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        let title = if task.title.len() > 30 {
+                            format!("{}...", &task.title[..27])
+                        } else {
+                            task.title.clone()
+                        };
+                        return vec![Message::ShowConfirmation {
+                            message: format!("Delete '{}'? (y/n)", title),
+                            action: model::PendingAction::DeleteTask(task.id),
+                        }];
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Edit task or divider
+        KeyCode::Char('e') => {
+            // If a divider is selected, edit the divider title
+            if app.model.ui_state.selected_is_divider {
+                return vec![Message::EditDivider];
+            }
+            // Otherwise edit the task
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        return vec![Message::EditTask(task.id)];
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Move to Review
+        KeyCode::Char('r') => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        return vec![Message::MoveTask {
+                            task_id: task.id,
+                            to_status: model::TaskStatus::Review,
+                        }];
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Move back to Planned (from Review or Queued)
+        KeyCode::Char('p') => {
+            let column = app.model.ui_state.selected_column;
+            if column == model::TaskStatus::Review || column == model::TaskStatus::Queued {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            return vec![Message::MoveTask {
+                                task_id: task.id,
+                                to_status: model::TaskStatus::Planned,
+                            }];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Mark as Done
+        KeyCode::Char('x') => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        return vec![Message::MoveTask {
+                            task_id: task.id,
+                            to_status: model::TaskStatus::Done,
+                        }];
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Move task up in list
+        KeyCode::Char('+') | KeyCode::Char('=') => vec![Message::MoveTaskUp],
+
+        // Move task down in list
+        KeyCode::Char('-') | KeyCode::Char('_') => vec![Message::MoveTaskDown],
+
+        // Toggle divider below task
+        KeyCode::Char('|') => vec![Message::ToggleDivider],
+
+        // Column switching with Shift+1-6 (or !, @, #, $, %, ^)
+        // 2x3 grid: Row 1: Planned|Queued, Row 2: InProgress|NeedsInput, Row 3: Review|Done
+        KeyCode::Char('!') => vec![Message::SelectColumn(model::TaskStatus::Planned)],
+        KeyCode::Char('@') => vec![Message::SelectColumn(model::TaskStatus::Queued)],
+        KeyCode::Char('#') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
+        KeyCode::Char('$') => vec![Message::SelectColumn(model::TaskStatus::NeedsInput)],
+        KeyCode::Char('%') => vec![Message::SelectColumn(model::TaskStatus::Review)],
+        KeyCode::Char('^') => vec![Message::SelectColumn(model::TaskStatus::Done)],
+
+        // Project switching (1-9)
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            let idx = c.to_digit(10).unwrap() as usize - 1;
+            vec![Message::SwitchProject(idx)]
+        }
+
+        // Session switching within project
+        KeyCode::Char(']') => vec![Message::NextSession],
+        KeyCode::Char('[') => vec![Message::PrevSession],
+
+        // Spawn new Claude session
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::SpawnNewSession]
+        }
+
+        // Paste image
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::PasteImage]
+        }
+
+        _ => vec![],
+    }
+}
+
+/// Handle the hook-signal subcommand (called by Claude Code hooks)
+fn handle_hook_signal(args: &[String]) -> anyhow::Result<()> {
+    use std::io::Read;
+
+    // Parse arguments
+    let mut event = String::new();
+    let mut input_type: Option<String> = None;
+    for arg in args {
+        if let Some(value) = arg.strip_prefix("--event=") {
+            event = value.to_string();
+        } else if let Some(value) = arg.strip_prefix("--type=") {
+            input_type = Some(value.to_string());
+        }
+    }
+
+    if event.is_empty() {
+        return Err(anyhow::anyhow!("Missing --event argument"));
+    }
+
+    // Read hook input from stdin (JSON from Claude Code)
+    let mut stdin_content = String::new();
+    std::io::stdin().read_to_string(&mut stdin_content)?;
+
+    // Parse the hook input
+    let hook_input: serde_json::Value = serde_json::from_str(&stdin_content)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    let session_id = hook_input
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let cwd = hook_input
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    // Write signal file for the watcher
+    hooks::write_signal(&event, &session_id, &cwd, input_type.as_deref())?;
+
+    Ok(())
+}

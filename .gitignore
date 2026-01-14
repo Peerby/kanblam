@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log
