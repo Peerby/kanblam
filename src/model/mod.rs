@@ -82,6 +82,22 @@ impl Project {
         }
     }
 
+    /// Get a URL-safe slug for the project name
+    pub fn slug(&self) -> String {
+        self.name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    }
+
+    /// Check if project directory is a git repository
+    pub fn is_git_repo(&self) -> bool {
+        crate::worktree::git::is_git_repo(&self.working_dir)
+    }
+
     /// Migrate legacy tmux_session to tmux_sessions if needed
     pub fn migrate_legacy_session(&mut self) {
         if let Some(session) = self.tmux_session.take() {
@@ -160,6 +176,53 @@ impl Project {
     }
 }
 
+/// Claude session state within a worktree
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ClaudeSessionState {
+    /// Task not started yet, no worktree
+    #[default]
+    NotStarted,
+    /// Creating worktree and starting Claude
+    Creating,
+    /// Claude started, waiting for it to be ready
+    Starting,
+    /// Claude ready, task prompt being sent
+    Ready,
+    /// Claude actively working on the task
+    Working,
+    /// Claude finished, waiting for user review
+    Paused,
+    /// User interacting with Claude directly
+    Continuing,
+    /// Session ended, ready for cleanup
+    Ended,
+}
+
+impl ClaudeSessionState {
+    pub fn is_active(&self) -> bool {
+        matches!(self,
+            ClaudeSessionState::Creating |
+            ClaudeSessionState::Starting |
+            ClaudeSessionState::Ready |
+            ClaudeSessionState::Working |
+            ClaudeSessionState::Continuing
+        )
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ClaudeSessionState::NotStarted => "Not Started",
+            ClaudeSessionState::Creating => "Creating...",
+            ClaudeSessionState::Starting => "Starting...",
+            ClaudeSessionState::Ready => "Ready",
+            ClaudeSessionState::Working => "Working",
+            ClaudeSessionState::Paused => "Paused",
+            ClaudeSessionState::Continuing => "Continuing",
+            ClaudeSessionState::Ended => "Ended",
+        }
+    }
+}
+
 /// A task to be executed by Claude Code
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -184,6 +247,21 @@ pub struct Task {
     /// Optional title for the divider above
     #[serde(default)]
     pub divider_above_title: Option<String>,
+
+    // === Worktree isolation fields ===
+
+    /// Path to the git worktree for this task
+    #[serde(default)]
+    pub worktree_path: Option<PathBuf>,
+    /// Git branch name for this task (claude/{task-id})
+    #[serde(default)]
+    pub git_branch: Option<String>,
+    /// Tmux window name for this task's Claude session
+    #[serde(default)]
+    pub tmux_window: Option<String>,
+    /// Current state of the Claude session
+    #[serde(default)]
+    pub session_state: ClaudeSessionState,
 }
 
 impl Task {
@@ -202,7 +280,30 @@ impl Task {
             divider_above: false,
             divider_title: None,
             divider_above_title: None,
+            // Worktree fields
+            worktree_path: None,
+            git_branch: None,
+            tmux_window: None,
+            session_state: ClaudeSessionState::NotStarted,
         }
+    }
+
+    /// Check if this task has an active worktree session
+    pub fn has_active_session(&self) -> bool {
+        self.worktree_path.is_some() && self.session_state.is_active()
+    }
+
+    /// Check if this task can be started (not already active)
+    pub fn can_start(&self) -> bool {
+        matches!(self.status, TaskStatus::Planned | TaskStatus::Queued)
+            && !self.has_active_session()
+    }
+
+    /// Check if this task can be continued (in review with a session)
+    pub fn can_continue(&self) -> bool {
+        self.status == TaskStatus::Review
+            && self.worktree_path.is_some()
+            && matches!(self.session_state, ClaudeSessionState::Paused | ClaudeSessionState::Ended)
     }
 
     pub fn with_description(mut self, description: String) -> Self {

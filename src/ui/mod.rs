@@ -364,21 +364,112 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
+    // Worktree info if present
+    if let Some(ref branch) = task.git_branch {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(branch.clone(), Style::default().fg(Color::Green)),
+        ]));
+    }
+
+    // Session state if active
+    if task.session_state != crate::model::ClaudeSessionState::NotStarted {
+        let state_color = match task.session_state {
+            crate::model::ClaudeSessionState::NotStarted => Color::DarkGray,
+            crate::model::ClaudeSessionState::Creating |
+            crate::model::ClaudeSessionState::Starting => Color::Yellow,
+            crate::model::ClaudeSessionState::Ready |
+            crate::model::ClaudeSessionState::Working => Color::Green,
+            crate::model::ClaudeSessionState::Paused => Color::Magenta,
+            crate::model::ClaudeSessionState::Continuing => Color::Cyan,
+            crate::model::ClaudeSessionState::Ended => Color::DarkGray,
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Session: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:?}", task.session_state),
+                Style::default().fg(state_color),
+            ),
+        ]));
+    }
+
+    // Worktree path if present
+    if let Some(ref wt_path) = task.worktree_path {
+        lines.push(Line::from(vec![
+            Span::styled("Worktree: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                wt_path.display().to_string(),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
     let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner);
 
-    // Render action hints at bottom-right
+    // Render action hints at bottom-right (context-aware)
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
-    let hints = Line::from(vec![
-        Span::styled("e", key_style),
-        Span::styled(" edit  ", desc_style),
-        Span::styled("⏎", key_style),
-        Span::styled(" start  ", desc_style),
-        Span::styled("d", key_style),
-        Span::styled(" delete ", desc_style),
-    ]);
-    let hints_width = 28u16;
+
+    let hints = match app.model.ui_state.selected_column {
+        crate::model::TaskStatus::Review => {
+            if task.worktree_path.is_some() {
+                // Worktree-based review options
+                Line::from(vec![
+                    Span::styled("y", key_style),
+                    Span::styled(" accept  ", desc_style),
+                    Span::styled("n", key_style),
+                    Span::styled(" discard  ", desc_style),
+                    Span::styled("c", key_style),
+                    Span::styled(" continue ", desc_style),
+                ])
+            } else {
+                // Legacy review options
+                Line::from(vec![
+                    Span::styled("x", key_style),
+                    Span::styled(" done  ", desc_style),
+                    Span::styled("p", key_style),
+                    Span::styled(" plan  ", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" restart ", desc_style),
+                ])
+            }
+        }
+        crate::model::TaskStatus::InProgress => {
+            if task.tmux_window.is_some() {
+                Line::from(vec![
+                    Span::styled("⏎", key_style),
+                    Span::styled(" switch  ", desc_style),
+                    Span::styled("r", key_style),
+                    Span::styled(" review  ", desc_style),
+                    Span::styled("o", key_style),
+                    Span::styled(" open tmux ", desc_style),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("e", key_style),
+                    Span::styled(" edit  ", desc_style),
+                    Span::styled("r", key_style),
+                    Span::styled(" review  ", desc_style),
+                    Span::styled("x", key_style),
+                    Span::styled(" done ", desc_style),
+                ])
+            }
+        }
+        _ => {
+            Line::from(vec![
+                Span::styled("e", key_style),
+                Span::styled(" edit  ", desc_style),
+                Span::styled("⏎", key_style),
+                Span::styled(" start  ", desc_style),
+                Span::styled("d", key_style),
+                Span::styled(" delete ", desc_style),
+            ])
+        }
+    };
+
+    let hints_width = 36u16;
     let hints_area = Rect {
         x: area.x + area.width.saturating_sub(hints_width + 1),
         y: area.y + area.height.saturating_sub(1),

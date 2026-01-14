@@ -384,3 +384,291 @@ pub fn is_claude_busy(pane_id: &str) -> Result<bool> {
 
     Ok(false)
 }
+
+// ============================================================================
+// Worktree-based task session management
+// ============================================================================
+
+/// Get or create the KanClaude tmux session for a project
+/// This session will contain windows for each active task.
+pub fn get_or_create_project_session(project_slug: &str) -> Result<String> {
+    let session_name = format!("kc-{}", project_slug);
+
+    // Check if session already exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", &session_name])
+        .output()?;
+
+    if check.status.success() {
+        return Ok(session_name);
+    }
+
+    // Create new detached session
+    let output = Command::new("tmux")
+        .args([
+            "new-session",
+            "-d",
+            "-s",
+            &session_name,
+            "-n",
+            "main",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to create session: {}", stderr));
+    }
+
+    Ok(session_name)
+}
+
+/// Create a new tmux window for a task within the project session
+/// Returns the window name
+pub fn create_task_window(
+    project_slug: &str,
+    task_id: &str,
+    worktree_path: &std::path::Path,
+) -> Result<String> {
+    let session_name = get_or_create_project_session(project_slug)?;
+    let window_name = format!("task-{}", &task_id[..8.min(task_id.len())]);
+
+    // Check if window already exists
+    let check = Command::new("tmux")
+        .args([
+            "list-windows",
+            "-t",
+            &session_name,
+            "-F",
+            "#{window_name}",
+        ])
+        .output()?;
+
+    if check.status.success() {
+        let windows = String::from_utf8_lossy(&check.stdout);
+        if windows.lines().any(|w| w == window_name) {
+            // Window already exists, return its name
+            return Ok(window_name);
+        }
+    }
+
+    // Create new window in the session
+    let output = Command::new("tmux")
+        .args([
+            "new-window",
+            "-t",
+            &session_name,
+            "-n",
+            &window_name,
+            "-c",
+            &worktree_path.to_string_lossy(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to create window: {}", stderr));
+    }
+
+    Ok(window_name)
+}
+
+/// Start Claude in a task window
+pub fn start_claude_in_window(project_slug: &str, window_name: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Start Claude
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", &target, "claude", "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to start Claude: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Wait for Claude to be ready (shows prompt) with timeout
+pub fn wait_for_claude_ready(project_slug: &str, window_name: &str, timeout_ms: u64) -> Result<bool> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Ok(false);
+        }
+
+        // Capture pane content
+        let output = Command::new("tmux")
+            .args(["capture-pane", "-t", &target, "-p", "-l", "10"])
+            .output()?;
+
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+
+            // Look for Claude's prompt patterns
+            // Claude Code shows ">" when ready for input
+            // Also check for common ready patterns
+            for line in content.lines().rev() {
+                let trimmed = line.trim();
+                if trimmed.starts_with(">") && !trimmed.contains("...") {
+                    return Ok(true);
+                }
+                if trimmed.contains("What would you like") {
+                    return Ok(true);
+                }
+                if trimmed.contains("How can I help") {
+                    return Ok(true);
+                }
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Send task description to Claude in a window
+pub fn send_task_to_window(
+    project_slug: &str,
+    window_name: &str,
+    task_description: &str,
+    images: &[std::path::PathBuf],
+) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Build the full task with image paths
+    let mut task = task_description.to_string();
+    if !images.is_empty() {
+        task.push_str("\n\nPlease read and analyze these images:");
+        for image in images {
+            task.push_str(&format!("\n{}", image.display()));
+        }
+    }
+
+    // Send using literal mode for special characters
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", &target, "-l", &task])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to send task: {}", stderr));
+    }
+
+    // Send Enter to submit
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", &target, "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to submit: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Focus (select) a task window
+pub fn focus_task_window(project_slug: &str, window_name: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Select the window
+    let output = Command::new("tmux")
+        .args(["select-window", "-t", &target])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to focus window: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Switch to a task's tmux window (from another tmux client)
+pub fn switch_to_task_window(project_slug: &str, window_name: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Switch client to this session/window
+    let _ = Command::new("tmux")
+        .args(["switch-client", "-t", &target])
+        .output();
+
+    // Select the window in case client is already in the session
+    let _ = Command::new("tmux")
+        .args(["select-window", "-t", &target])
+        .output();
+
+    Ok(())
+}
+
+/// Kill a task window
+pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    let output = Command::new("tmux")
+        .args(["kill-window", "-t", &target])
+        .output()?;
+
+    // Ignore errors if window doesn't exist
+    let _ = output;
+
+    Ok(())
+}
+
+/// Check if a task window exists
+pub fn task_window_exists(project_slug: &str, window_name: &str) -> bool {
+    let session_name = format!("kc-{}", project_slug);
+
+    let output = Command::new("tmux")
+        .args([
+            "list-windows",
+            "-t",
+            &session_name,
+            "-F",
+            "#{window_name}",
+        ])
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let windows = String::from_utf8_lossy(&output.stdout);
+            return windows.lines().any(|w| w == window_name);
+        }
+    }
+
+    false
+}
+
+/// Capture output from a task window
+pub fn capture_task_output(project_slug: &str, window_name: &str, lines: u32) -> Result<String> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    let output = Command::new("tmux")
+        .args([
+            "capture-pane",
+            "-t",
+            &target,
+            "-p",
+            "-l",
+            &lines.to_string(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}

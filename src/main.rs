@@ -6,6 +6,7 @@ mod model;
 mod notify;
 mod tmux;
 mod ui;
+mod worktree;
 
 use app::{load_state, save_state, App};
 use chrono::Utc;
@@ -31,6 +32,10 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "hook-signal" {
         return handle_hook_signal(&args[2..]);
+    }
+    // New signal subcommand for worktree-based hooks: kanclaude signal <event> <task-id>
+    if args.len() > 1 && args[1] == "signal" {
+        return handle_signal_command(&args[2..]);
     }
 
     // Load saved state
@@ -487,13 +492,110 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Enter input mode
         KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
 
-        // Start task
+        // Start/Continue task
+        // In Planned/Queued: Start with worktree isolation
+        // In Review: Continue the task
+        // In InProgress: Switch to task window
         KeyCode::Enter => {
             if let Some(project) = app.model.active_project() {
-                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                let column = app.model.ui_state.selected_column;
+                let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        return vec![Message::StartTask(task.id)];
+                        match column {
+                            TaskStatus::Planned | TaskStatus::Queued => {
+                                // Start with worktree isolation if it's a git repo
+                                if project.is_git_repo() {
+                                    return vec![Message::StartTaskWithWorktree(task.id)];
+                                } else {
+                                    // Fall back to legacy start (without worktree)
+                                    return vec![Message::StartTask(task.id)];
+                                }
+                            }
+                            TaskStatus::Review | TaskStatus::NeedsInput => {
+                                // Continue the task (switch to tmux window)
+                                if task.worktree_path.is_some() {
+                                    return vec![Message::ContinueTask(task.id)];
+                                } else {
+                                    // Legacy: restart without worktree
+                                    return vec![Message::StartTask(task.id)];
+                                }
+                            }
+                            TaskStatus::InProgress => {
+                                // Switch to task window
+                                if task.tmux_window.is_some() {
+                                    return vec![Message::SwitchToTaskWindow(task.id)];
+                                }
+                            }
+                            TaskStatus::Done => {
+                                // Can't do anything with done tasks via Enter
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Continue task from Review (alias for Enter in Review column)
+        KeyCode::Char('c') => {
+            if app.model.ui_state.selected_column == TaskStatus::Review {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(TaskStatus::Review);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            if task.worktree_path.is_some() {
+                                return vec![Message::ContinueTask(task.id)];
+                            } else {
+                                return vec![Message::StartTask(task.id)];
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Accept task (merge and cleanup) - 'y' in Review column
+        KeyCode::Char('y') => {
+            if app.model.ui_state.selected_column == TaskStatus::Review {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(TaskStatus::Review);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            if task.worktree_path.is_some() {
+                                return vec![Message::AcceptTask(task.id)];
+                            } else {
+                                // Legacy: just mark as done
+                                return vec![Message::MoveTask {
+                                    task_id: task.id,
+                                    to_status: TaskStatus::Done,
+                                }];
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Discard task (delete worktree without merging) - 'n' in Review column (without modifiers)
+        KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.model.ui_state.selected_column == TaskStatus::Review {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(TaskStatus::Review);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            if task.worktree_path.is_some() {
+                                return vec![Message::DiscardTask(task.id)];
+                            } else {
+                                // Legacy: move back to planned
+                                return vec![Message::MoveTask {
+                                    task_id: task.id,
+                                    to_status: TaskStatus::Planned,
+                                }];
+                            }
+                        }
                     }
                 }
             }
@@ -678,6 +780,26 @@ fn handle_hook_signal(args: &[String]) -> anyhow::Result<()> {
 
     // Write signal file for the watcher
     hooks::write_signal(&event, &session_id, &cwd, input_type.as_deref())?;
+
+    Ok(())
+}
+
+/// Handle the signal subcommand for worktree-based hooks
+/// Format: kanclaude signal <event> <task-id>
+fn handle_signal_command(args: &[String]) -> anyhow::Result<()> {
+    if args.len() < 2 {
+        return Err(anyhow::anyhow!("Usage: kanclaude signal <event> <task-id>"));
+    }
+
+    let event = &args[0];
+    let task_id = &args[1];
+
+    // Get current working directory (the worktree)
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    // Write signal file with task_id as the session identifier
+    // The watcher will pick this up and process it
+    hooks::write_signal(event, task_id, &cwd, None)?;
 
     Ok(())
 }

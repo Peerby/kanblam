@@ -23,6 +23,20 @@ pub enum Message {
     SelectColumn(TaskStatus),
     ClickedTask { status: TaskStatus, task_idx: usize },
 
+    // Worktree-based task lifecycle
+    /// Start a task with worktree isolation (creates worktree, tmux window, starts Claude)
+    StartTaskWithWorktree(Uuid),
+    /// Update the session state of a task (internal, from async operations)
+    UpdateTaskSessionState { task_id: Uuid, state: crate::model::ClaudeSessionState },
+    /// Continue a task from Review (focus the tmux window)
+    ContinueTask(Uuid),
+    /// Accept a task - merge changes to main, cleanup worktree
+    AcceptTask(Uuid),
+    /// Discard a task - delete worktree and branch without merging
+    DiscardTask(Uuid),
+    /// Switch to the task's tmux window (focuses the Claude session)
+    SwitchToTaskWindow(Uuid),
+
     // Project operations
     SwitchProject(usize),
     AddProject { name: String, working_dir: PathBuf },

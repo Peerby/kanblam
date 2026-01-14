@@ -667,6 +667,324 @@ impl App {
                 }
             }
 
+            // === Worktree-based task lifecycle ===
+
+            Message::StartTaskWithWorktree(task_id) => {
+                // Get project info first
+                let project_info = self.model.active_project().map(|p| {
+                    (p.slug(), p.working_dir.clone(), p.is_git_repo())
+                });
+
+                if let Some((project_slug, project_dir, is_git)) = project_info {
+                    if !is_git {
+                        commands.push(Message::Error(
+                            "Project is not a git repository. Worktree isolation requires git.".to_string()
+                        ));
+                        return commands;
+                    }
+
+                    // Check if task can be started
+                    let can_start = self.model.active_project()
+                        .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+                        .map(|t| t.can_start())
+                        .unwrap_or(false);
+
+                    if !can_start {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Task cannot be started (already active or completed)".to_string()
+                        )));
+                        return commands;
+                    }
+
+                    // Update task state to Creating
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.session_state = crate::model::ClaudeSessionState::Creating;
+                        }
+                    }
+
+                    // Create worktree
+                    match crate::worktree::create_worktree(&project_dir, &project_slug, task_id) {
+                        Ok(worktree_path) => {
+                            // Set up Claude settings in worktree
+                            if let Err(e) = crate::worktree::merge_with_project_settings(
+                                &worktree_path,
+                                &project_dir,
+                                task_id,
+                            ) {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Warning: Could not set up Claude settings: {}", e)
+                                )));
+                            }
+
+                            // Create tmux window
+                            match crate::tmux::create_task_window(
+                                &project_slug,
+                                &task_id.to_string(),
+                                &worktree_path,
+                            ) {
+                                Ok(window_name) => {
+                                    // Update task with worktree info
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                            task.worktree_path = Some(worktree_path.clone());
+                                            task.git_branch = Some(format!("claude/{}", task_id));
+                                            task.tmux_window = Some(window_name.clone());
+                                            task.session_state = crate::model::ClaudeSessionState::Starting;
+                                            task.status = TaskStatus::InProgress;
+                                            task.started_at = Some(Utc::now());
+                                        }
+                                    }
+
+                                    // Start Claude in the window
+                                    if let Err(e) = crate::tmux::start_claude_in_window(&project_slug, &window_name) {
+                                        commands.push(Message::Error(format!("Failed to start Claude: {}", e)));
+                                        return commands;
+                                    }
+
+                                    // Wait for Claude to be ready (with timeout)
+                                    let ready = crate::tmux::wait_for_claude_ready(
+                                        &project_slug,
+                                        &window_name,
+                                        15000, // 15 second timeout
+                                    ).unwrap_or(false);
+
+                                    if ready {
+                                        // Get task info for sending
+                                        let task_info = self.model.active_project()
+                                            .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+                                            .map(|t| (t.title.clone(), t.images.clone()));
+
+                                        if let Some((title, images)) = task_info {
+                                            // Send task to Claude
+                                            if let Err(e) = crate::tmux::send_task_to_window(
+                                                &project_slug,
+                                                &window_name,
+                                                &title,
+                                                &images,
+                                            ) {
+                                                commands.push(Message::Error(format!("Failed to send task: {}", e)));
+                                            } else {
+                                                // Update state to Working
+                                                if let Some(project) = self.model.active_project_mut() {
+                                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                                    }
+                                                }
+                                                commands.push(Message::SetStatusMessage(Some(
+                                                    format!("Task started in worktree: {}", worktree_path.display())
+                                                )));
+                                            }
+                                        }
+                                    } else {
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "Claude started but not ready yet. Switch to window with 'o' to interact.".to_string()
+                                        )));
+                                    }
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!("Failed to create tmux window: {}", e)));
+                                    // Clean up worktree
+                                    let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to create worktree: {}", e)));
+                            // Reset task state
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.session_state = crate::model::ClaudeSessionState::NotStarted;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Message::UpdateTaskSessionState { task_id, state } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.session_state = state;
+                    }
+                }
+            }
+
+            Message::ContinueTask(task_id) => {
+                // Get project slug and task window
+                let switch_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .and_then(|t| t.tmux_window.as_ref().map(|w| (p.slug(), w.clone())))
+                });
+
+                if let Some((project_slug, window_name)) = switch_info {
+                    // Check if window still exists
+                    if crate::tmux::task_window_exists(&project_slug, &window_name) {
+                        // Switch to the window
+                        if let Err(e) = crate::tmux::switch_to_task_window(&project_slug, &window_name) {
+                            commands.push(Message::Error(format!("Failed to switch to task window: {}", e)));
+                        } else {
+                            // Update state
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.session_state = crate::model::ClaudeSessionState::Continuing;
+                                    task.status = TaskStatus::InProgress;
+                                }
+                                project.needs_attention = false;
+                                notify::clear_attention_indicator();
+                            }
+                        }
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Task window no longer exists. Restart with Enter.".to_string()
+                        )));
+                    }
+                } else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "No active session for this task.".to_string()
+                    )));
+                }
+            }
+
+            Message::AcceptTask(task_id) => {
+                // Get all necessary info before mutating
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.slug(),
+                            p.working_dir.clone(),
+                            t.tmux_window.clone(),
+                            t.worktree_path.clone(),
+                        ))
+                });
+
+                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                    // Kill tmux window if exists
+                    if let Some(ref window) = window_name {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window);
+                    }
+
+                    // Merge branch to main
+                    if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                        commands.push(Message::Error(format!(
+                            "Merge failed: {}. Resolve manually in the worktree, then discard.",
+                            e
+                        )));
+                        return commands;
+                    }
+
+                    // Remove worktree
+                    if let Some(ref wt_path) = worktree_path {
+                        if let Err(e) = crate::worktree::remove_worktree(&project_dir, wt_path) {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Warning: Could not remove worktree: {}", e)
+                            )));
+                        }
+                    }
+
+                    // Delete branch
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Warning: Could not delete branch: {}", e)
+                        )));
+                    }
+
+                    // Update task
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.status = TaskStatus::Done;
+                            task.completed_at = Some(Utc::now());
+                            task.worktree_path = None;
+                            task.tmux_window = None;
+                            task.session_state = crate::model::ClaudeSessionState::Ended;
+                        }
+                        project.needs_attention = project.review_count() > 0;
+                        if !project.needs_attention {
+                            notify::clear_attention_indicator();
+                        }
+                    }
+
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task accepted and merged to main.".to_string()
+                    )));
+                }
+            }
+
+            Message::DiscardTask(task_id) => {
+                // Get all necessary info before mutating
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.slug(),
+                            p.working_dir.clone(),
+                            t.tmux_window.clone(),
+                            t.worktree_path.clone(),
+                        ))
+                });
+
+                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                    // Kill tmux window if exists
+                    if let Some(ref window) = window_name {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window);
+                    }
+
+                    // Remove worktree (don't merge)
+                    if let Some(ref wt_path) = worktree_path {
+                        if let Err(e) = crate::worktree::remove_worktree(&project_dir, wt_path) {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Warning: Could not remove worktree: {}", e)
+                            )));
+                        }
+                    }
+
+                    // Delete branch
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Warning: Could not delete branch: {}", e)
+                        )));
+                    }
+
+                    // Update task - move back to Planned (not deleted, just discarded changes)
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.status = TaskStatus::Planned;
+                            task.worktree_path = None;
+                            task.git_branch = None;
+                            task.tmux_window = None;
+                            task.session_state = crate::model::ClaudeSessionState::NotStarted;
+                            task.started_at = None;
+                        }
+                        project.needs_attention = project.review_count() > 0;
+                        if !project.needs_attention {
+                            notify::clear_attention_indicator();
+                        }
+                    }
+
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task discarded - changes removed, task moved back to Planned.".to_string()
+                    )));
+                }
+            }
+
+            Message::SwitchToTaskWindow(task_id) => {
+                let switch_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .and_then(|t| t.tmux_window.as_ref().map(|w| (p.slug(), w.clone())))
+                });
+
+                if let Some((project_slug, window_name)) = switch_info {
+                    if let Err(e) = crate::tmux::switch_to_task_window(&project_slug, &window_name) {
+                        commands.push(Message::Error(format!("Failed to switch: {}", e)));
+                    }
+                }
+            }
+
+            // === End of worktree-based task lifecycle ===
+
             Message::SelectTask(idx) => {
                 self.model.ui_state.selected_task_idx = idx;
                 self.model.ui_state.title_scroll_offset = 0;
@@ -899,86 +1217,151 @@ impl App {
             }
 
             Message::HookSignalReceived(signal) => {
-                // Find project by working directory (canonicalize for robust matching)
+                // Try to find task by task_id first (worktree-based tasks use task UUID as session_id)
+                let task_uuid = uuid::Uuid::parse_str(&signal.session_id).ok();
+
+                // Find the task either by UUID or by worktree path
                 let signal_dir = signal.project_dir.canonicalize().unwrap_or(signal.project_dir.clone());
-                if let Some(project) = self.model.projects.iter_mut().find(|p| {
-                    let project_dir = p.working_dir.canonicalize().unwrap_or(p.working_dir.clone());
-                    project_dir == signal_dir
-                }) {
-                    match signal.event.as_str() {
-                        "stop" => {
-                            // Claude finished responding - move task to Review
-                            // Match by InProgress status (we only allow one at a time per project)
-                            if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                t.status == TaskStatus::InProgress
-                            }) {
+
+                let mut found_task = false;
+
+                for project in &mut self.model.projects {
+                    // Find task by UUID or by worktree path
+                    let task_idx = project.tasks.iter().position(|t| {
+                        // Match by UUID (for worktree-based tasks)
+                        if let Some(uuid) = task_uuid {
+                            if t.id == uuid {
+                                return true;
+                            }
+                        }
+                        // Match by worktree path
+                        if let Some(ref wt_path) = t.worktree_path {
+                            let wt_canonical = wt_path.canonicalize().unwrap_or(wt_path.clone());
+                            if wt_canonical == signal_dir {
+                                return true;
+                            }
+                        }
+                        false
+                    });
+
+                    if let Some(idx) = task_idx {
+                        let task = &mut project.tasks[idx];
+                        found_task = true;
+                        match signal.event.as_str() {
+                            "stop" => {
                                 task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
                                 task.claude_session_id = Some(signal.session_id.clone());
                                 project.needs_attention = true;
-                                // Play notification sound and set tmux indicator
                                 notify::play_attention_sound();
                                 notify::set_attention_indicator(&project.name);
                             }
-                            // Check if there's a queued task to start next
-                            if let Some(next_task) = project.next_queued_task() {
-                                let next_task_id = next_task.id;
-                                commands.push(Message::StartTask(next_task_id));
-                            }
-                        }
-                        "end" => {
-                            // Session ended - move any InProgress task to Review
-                            if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                t.status == TaskStatus::InProgress
-                            }) {
+                            "end" => {
                                 task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Ended;
                                 task.claude_session_id = Some(signal.session_id.clone());
                                 project.needs_attention = true;
-                                // Play notification sound and set tmux indicator
                                 notify::play_attention_sound();
                                 notify::set_attention_indicator(&project.name);
                             }
-                            // Check if there's a queued task to start next
-                            if let Some(next_task) = project.next_queued_task() {
-                                let next_task_id = next_task.id;
-                                commands.push(Message::StartTask(next_task_id));
-                            }
-                        }
-                        "needs-input" => {
-                            // Claude needs user input - move task to NeedsInput
-                            if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                t.status == TaskStatus::InProgress
-                            }) {
+                            "needs-input" => {
                                 task.status = TaskStatus::NeedsInput;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
                                 task.claude_session_id = Some(signal.session_id.clone());
                                 project.needs_attention = true;
-                                // Play notification sound and set tmux indicator
                                 notify::play_attention_sound();
                                 notify::set_attention_indicator(&project.name);
                             }
-                        }
-                        "input-provided" | "working" => {
-                            // User provided input or Claude is working again - move task back to InProgress
-                            if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                t.status == TaskStatus::NeedsInput
-                            }) {
+                            "input-provided" | "working" => {
                                 task.status = TaskStatus::InProgress;
-                                // Clear attention since Claude is actively working
+                                task.session_state = crate::model::ClaudeSessionState::Working;
                                 project.needs_attention = false;
                                 notify::clear_attention_indicator();
                             }
+                            _ => {}
                         }
-                        _ => {}
+                        break;
                     }
-                    // Sync selection after task status changes to keep cursor on same task
-                    self.sync_selection();
-                } else {
-                    // No project matched - this could indicate a path mismatch
+                }
+
+                // Fall back to legacy behavior: match by project working directory
+                if !found_task {
+                    if let Some(project) = self.model.projects.iter_mut().find(|p| {
+                        let project_dir = p.working_dir.canonicalize().unwrap_or(p.working_dir.clone());
+                        project_dir == signal_dir
+                    }) {
+                        match signal.event.as_str() {
+                            "stop" => {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| {
+                                    t.status == TaskStatus::InProgress
+                                }) {
+                                    task.status = TaskStatus::Review;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                    found_task = true;
+                                }
+                                // Check if there's a queued task to start next
+                                if let Some(next_task) = project.next_queued_task() {
+                                    let next_task_id = next_task.id;
+                                    commands.push(Message::StartTask(next_task_id));
+                                }
+                            }
+                            "end" => {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| {
+                                    t.status == TaskStatus::InProgress
+                                }) {
+                                    task.status = TaskStatus::Review;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                    found_task = true;
+                                }
+                                if let Some(next_task) = project.next_queued_task() {
+                                    let next_task_id = next_task.id;
+                                    commands.push(Message::StartTask(next_task_id));
+                                }
+                            }
+                            "needs-input" => {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| {
+                                    t.status == TaskStatus::InProgress
+                                }) {
+                                    task.status = TaskStatus::NeedsInput;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                    found_task = true;
+                                }
+                            }
+                            "input-provided" | "working" => {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| {
+                                    t.status == TaskStatus::NeedsInput
+                                }) {
+                                    task.status = TaskStatus::InProgress;
+                                    project.needs_attention = false;
+                                    notify::clear_attention_indicator();
+                                    found_task = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                if !found_task {
                     commands.push(Message::SetStatusMessage(Some(
-                        format!("Hook '{}' received but no matching project for: {}",
+                        format!("Hook '{}' received but no matching task for: {} (session: {})",
                             signal.event,
-                            signal.project_dir.display())
+                            signal.project_dir.display(),
+                            signal.session_id)
                     )));
                 }
+
+                // Sync selection after task status changes
+                self.sync_selection();
             }
 
             Message::ClaudeOutputUpdated { project_id, output } => {
