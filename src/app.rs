@@ -826,11 +826,13 @@ impl App {
                         if let Err(e) = crate::tmux::switch_to_task_window(&project_slug, &window_name) {
                             commands.push(Message::Error(format!("Failed to switch to task window: {}", e)));
                         } else {
-                            // Update state
+                            // Update state - only update session state, NOT task status
+                            // Task status should only change when user actually provides input
+                            // (via input-provided signal from hook), not just by viewing the window
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     task.session_state = crate::model::ClaudeSessionState::Continuing;
-                                    task.status = TaskStatus::InProgress;
+                                    // Don't change task.status - let the hook signals manage it
                                 }
                                 project.needs_attention = false;
                                 notify::clear_attention_indicator();
@@ -1592,93 +1594,6 @@ impl App {
             Message::AddProject { name, working_dir } => {
                 let project = Project::new(name, working_dir);
                 self.model.projects.push(project);
-            }
-
-            Message::RefreshProjects => {
-                // First, migrate any legacy tmux_session fields
-                for project in &mut self.model.projects {
-                    project.migrate_legacy_session();
-                }
-
-                // Clean up worktree projects: remove stale ones and merge active ones
-                // Worktree projects have names starting with "task-" and paths containing "/worktrees/"
-                let mut projects_to_remove: Vec<usize> = Vec::new();
-
-                for (idx, project) in self.model.projects.iter().enumerate() {
-                    let path_str = project.working_dir.to_string_lossy();
-                    let is_worktree_project = project.name.starts_with("task-")
-                        && path_str.contains("/worktrees/");
-
-                    if is_worktree_project {
-                        // Extract the main project name from the worktree path
-                        // Path format: .../worktrees/{project_name}/task-{uuid}
-                        let main_project_name = path_str
-                            .find("/worktrees/")
-                            .and_then(|idx| {
-                                let after = &path_str[idx + "/worktrees/".len()..];
-                                after.find('/').map(|slash| &after[..slash])
-                            });
-
-                        if let Some(main_name) = main_project_name {
-                            // Check if we have a project with this name that's NOT a worktree
-                            let has_main = self.model.projects.iter().any(|p| {
-                                p.name == main_name && !p.name.starts_with("task-")
-                            });
-
-                            // Remove if: directory doesn't exist OR main project exists
-                            if !project.working_dir.exists() || has_main {
-                                projects_to_remove.push(idx);
-                            }
-                        } else if !project.working_dir.exists() {
-                            // Stale worktree with unparseable path - remove it
-                            projects_to_remove.push(idx);
-                        }
-                    }
-                }
-
-                // Remove worktree projects (in reverse order to maintain indices)
-                for idx in projects_to_remove.into_iter().rev() {
-                    self.model.projects.remove(idx);
-                }
-
-                // Adjust active_project_idx if needed
-                if self.model.active_project_idx >= self.model.projects.len() && !self.model.projects.is_empty() {
-                    self.model.active_project_idx = self.model.projects.len() - 1;
-                }
-
-                // Scan tmux sessions for Claude instances
-                if let Ok(sessions) = crate::tmux::detect_claude_sessions() {
-                    for session in sessions {
-                        // Get the main repo path (handles worktrees)
-                        // This groups worktrees with their main project
-                        let main_repo = crate::worktree::get_main_repo_path(&session.working_dir);
-
-                        // Check if we already have this project (by main repo path)
-                        let existing = self.model.projects.iter_mut().find(|p| {
-                            let p_main_repo = crate::worktree::get_main_repo_path(&p.working_dir);
-                            p_main_repo == main_repo
-                        });
-
-                        if let Some(project) = existing {
-                            // Add the detected session to existing project
-                            project.add_session(session.pane_id);
-                            // Check if hooks are installed
-                            project.hooks_installed = crate::hooks::hooks_installed(&project.working_dir);
-                        } else {
-                            // Create new project for this session
-                            // Use the main repo name, not the worktree folder name
-                            let name = main_repo
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| session.session_name.clone());
-
-                            let mut project = Project::new(name, session.working_dir.clone());
-                            project.add_session(session.pane_id);
-                            project.hooks_installed = crate::hooks::hooks_installed(&session.working_dir);
-                            self.model.projects.push(project);
-                        }
-                    }
-                }
             }
 
             Message::ReloadClaudeHooks => {

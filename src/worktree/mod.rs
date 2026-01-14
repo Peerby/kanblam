@@ -12,6 +12,6 @@ pub use git::{
     get_worktree_path, list_worktrees, WorktreeInfo, is_git_repo,
     get_task_diff, apply_task_changes, unapply_task_changes,
     needs_rebase, verify_rebase_success, generate_rebase_prompt,
-    is_rebase_in_progress, abort_rebase, is_worktree, get_main_repo_path,
+    is_rebase_in_progress, abort_rebase,
 };
 pub use settings::{setup_claude_settings, merge_with_project_settings, pre_trust_worktree, remove_worktree_trust};

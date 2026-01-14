@@ -438,47 +438,6 @@ pub fn is_git_repo(project_dir: &PathBuf) -> bool {
     output.map(|o| o.status.success()).unwrap_or(false)
 }
 
-/// Check if a directory is a git worktree (not the main repository)
-pub fn is_worktree(dir: &PathBuf) -> bool {
-    let git_path = dir.join(".git");
-    // In worktrees, .git is a file containing "gitdir: /path/to/main/.git/worktrees/..."
-    // In main repos, .git is a directory
-    git_path.is_file()
-}
-
-/// Get the main repository path for a worktree
-/// Returns the original path if it's not a worktree or detection fails
-pub fn get_main_repo_path(dir: &PathBuf) -> PathBuf {
-    // Only try git rev-parse if the directory exists
-    if !dir.exists() {
-        return dir.clone();
-    }
-
-    // Use git rev-parse --git-common-dir to get the common .git directory
-    // This returns the main repo's .git dir for worktrees
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            let common_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            // The common dir is the .git directory of the main repo
-            // The main repo path is the parent of .git
-            if let Some(main_repo) = PathBuf::from(&common_dir).parent() {
-                // Verify this is actually a valid directory
-                if main_repo.exists() && main_repo.is_dir() {
-                    return main_repo.to_path_buf();
-                }
-            }
-        }
-    }
-
-    // Fall back to original path
-    dir.clone()
-}
-
 /// Get the diff between main/master and a task branch
 pub fn get_task_diff(project_dir: &PathBuf, task_id: Uuid) -> Result<String> {
     let branch_name = format!("claude/{}", task_id);
