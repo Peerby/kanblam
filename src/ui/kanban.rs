@@ -32,12 +32,13 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     // Split into 3 rows x 2 columns for the six statuses
+    // Middle row (InProgress/NeedsInput) is smaller since those columns typically have fewer tasks
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
+            Constraint::Percentage(42),
+            Constraint::Percentage(17),
+            Constraint::Percentage(41),
         ])
         .split(inner);
 
