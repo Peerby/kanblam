@@ -1022,8 +1022,16 @@ impl App {
                         };
 
                         if let Some(win) = window_name {
+                            // Detect main branch name (master or main)
+                            let main_branch = std::process::Command::new("git")
+                                .current_dir(&project_dir)
+                                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                                .output()
+                                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                                .unwrap_or_else(|_| "master".to_string());
+
                             // Send rebase prompt to Claude
-                            let prompt = crate::worktree::generate_rebase_prompt();
+                            let prompt = crate::worktree::generate_rebase_prompt(&main_branch);
                             if let Err(e) = crate::tmux::send_task_to_window(&project_slug, &win, &prompt, &[]) {
                                 commands.push(Message::Error(format!("Failed to send rebase prompt: {}", e)));
                                 return commands;
@@ -1852,6 +1860,12 @@ impl App {
                                 }
                             }
                             "end" => {
+                                // If session ends while Accepting, cancel the accept
+                                if was_accepting {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Accept cancelled: Claude session ended during rebase.".to_string()
+                                    )));
+                                }
                                 task.status = TaskStatus::Review;
                                 task.session_state = crate::model::ClaudeSessionState::Ended;
                                 task.claude_session_id = Some(signal.session_id.clone());
@@ -1860,7 +1874,11 @@ impl App {
                                 notify::set_attention_indicator(&project.name);
                             }
                             "needs-input" => {
-                                task.status = TaskStatus::NeedsInput;
+                                // Don't change status if task is Accepting (mid-rebase)
+                                // but still notify user that Claude needs help
+                                if !was_accepting {
+                                    task.status = TaskStatus::NeedsInput;
+                                }
                                 task.session_state = crate::model::ClaudeSessionState::Paused;
                                 task.claude_session_id = Some(signal.session_id.clone());
                                 project.needs_attention = true;
@@ -1868,7 +1886,10 @@ impl App {
                                 notify::set_attention_indicator(&project.name);
                             }
                             "input-provided" | "working" => {
-                                task.status = TaskStatus::InProgress;
+                                // Don't change status if task is Accepting (mid-rebase)
+                                if !was_accepting {
+                                    task.status = TaskStatus::InProgress;
+                                }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                 project.needs_attention = false;
                                 notify::clear_attention_indicator();
