@@ -1,6 +1,6 @@
 //! Git worktree commands for task isolation
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
 use uuid::Uuid;
@@ -482,6 +482,114 @@ fn find_base_branch(project_dir: &PathBuf) -> Result<String> {
 
     // Fall back to HEAD
     Ok("HEAD".to_string())
+}
+
+/// Check if task branch is behind main (needs rebase before merge)
+pub fn needs_rebase(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // Get merge base between main and task branch
+    let merge_base = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "HEAD", &branch_name])
+        .output()
+        .context("Failed to get merge base")?;
+
+    if !merge_base.status.success() {
+        // Branch might not exist or no common ancestor
+        return Ok(false);
+    }
+
+    // Get current main HEAD
+    let main_head = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .context("Failed to get HEAD")?;
+
+    let merge_base_hash = String::from_utf8_lossy(&merge_base.stdout).trim().to_string();
+    let main_head_hash = String::from_utf8_lossy(&main_head.stdout).trim().to_string();
+
+    // If merge-base != main HEAD, branch is behind
+    Ok(merge_base_hash != main_head_hash)
+}
+
+/// Verify that the task branch has been rebased onto main
+/// Returns true if the branch is now on top of main (or equal)
+pub fn verify_rebase_success(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // Get task branch HEAD
+    let branch_head = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", &branch_name])
+        .output()
+        .context("Failed to get branch HEAD")?;
+
+    if !branch_head.status.success() {
+        return Ok(false);
+    }
+
+    // Check if main is an ancestor of the task branch
+    // (means task branch is on top of main)
+    let is_ancestor = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "--is-ancestor", "HEAD", &branch_name])
+        .status()
+        .context("Failed to check ancestry")?;
+
+    Ok(is_ancestor.success())
+}
+
+/// Generate a prompt for Claude to commit and rebase the current branch
+pub fn generate_rebase_prompt() -> String {
+    r#"The main branch has advanced while you were working. Please commit your changes and rebase onto main:
+
+1. First commit any uncommitted changes: git add -A && git commit -m "WIP: task changes"
+2. Fetch latest main: git fetch origin main
+3. Rebase onto main: git rebase origin/main
+4. If there are conflicts, resolve them - you wrote this code and understand it
+5. After resolving each conflict: git add <file> && git rebase --continue
+6. When done successfully, say "Rebase complete"
+
+If the rebase fails completely and you cannot resolve it, say "Rebase failed" so the user can help.
+
+Do not explain, just execute these steps."#.to_string()
+}
+
+/// Check if a rebase is currently in progress in the worktree
+pub fn is_rebase_in_progress(worktree_path: &PathBuf) -> bool {
+    let rebase_merge = worktree_path.join(".git/rebase-merge");
+    let rebase_apply = worktree_path.join(".git/rebase-apply");
+    // In worktrees, .git is a file pointing to the actual git dir
+    let git_file = worktree_path.join(".git");
+
+    if git_file.is_file() {
+        // Read the gitdir path from the .git file
+        if let Ok(content) = std::fs::read_to_string(&git_file) {
+            if let Some(gitdir) = content.strip_prefix("gitdir: ") {
+                let gitdir = PathBuf::from(gitdir.trim());
+                return gitdir.join("rebase-merge").exists() || gitdir.join("rebase-apply").exists();
+            }
+        }
+    }
+
+    rebase_merge.exists() || rebase_apply.exists()
+}
+
+/// Abort a rebase in progress
+pub fn abort_rebase(worktree_path: &PathBuf) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rebase", "--abort"])
+        .output()
+        .context("Failed to abort rebase")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to abort rebase: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

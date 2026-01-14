@@ -74,12 +74,13 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         && app.model.ui_state.focus == FocusArea::KanbanBoard;
 
     // (title, background color, contrasting foreground for selected items)
+    // Note: Accepting tasks appear in the Review column, so Accepting is styled like Review
     let (title, color, contrast_fg) = match status {
         TaskStatus::Planned => ("Planned", Color::Blue, Color::White),
         TaskStatus::Queued => ("Queued", Color::Cyan, Color::Black),
         TaskStatus::InProgress => ("In Progress", Color::Yellow, Color::Black),
         TaskStatus::NeedsInput => ("Needs Input", Color::Red, Color::White),
-        TaskStatus::Review => ("Review", Color::Magenta, Color::White),
+        TaskStatus::Review | TaskStatus::Accepting => ("Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("Done", Color::Green, Color::Black),
     };
 
@@ -180,10 +181,12 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         task.title.clone()
                     };
 
-                    // Add spinner for in-progress tasks, pulsing indicator for needs-input
+                    // Add spinner for in-progress tasks, pulsing indicator for needs-input,
+                    // merge animation for accepting tasks
                     let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                     let pulse_frames = ['◐', '◓', '◑', '◒'];
-                    let prefix = match status {
+                    let merge_frames = ['⟳', '↻', '⟲', '↺'];
+                    let prefix = match task.status {
                         TaskStatus::InProgress => {
                             let frame = app.model.ui_state.animation_frame % spinner_frames.len();
                             format!("{} ", spinner_frames[frame])
@@ -191,6 +194,10 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         TaskStatus::NeedsInput => {
                             let frame = app.model.ui_state.animation_frame % pulse_frames.len();
                             format!("{} ", pulse_frames[frame])
+                        }
+                        TaskStatus::Accepting => {
+                            let frame = app.model.ui_state.animation_frame % merge_frames.len();
+                            format!("{} ", merge_frames[frame])
                         }
                         _ => String::new(),
                     };
@@ -594,6 +601,9 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("/", desc_style),
             Span::styled("n", key_style),
             Span::styled(" accept/discard", desc_style),
+        ],
+        TaskStatus::Accepting => vec![
+            Span::styled("rebasing...", desc_style),
         ],
         TaskStatus::Done => vec![
             Span::styled("e", key_style),

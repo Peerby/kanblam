@@ -11,5 +11,7 @@ pub use git::{
     create_worktree, remove_worktree, merge_branch, delete_branch,
     get_worktree_path, list_worktrees, WorktreeInfo, is_git_repo,
     get_task_diff, apply_task_changes, unapply_task_changes,
+    needs_rebase, verify_rebase_success, generate_rebase_prompt,
+    is_rebase_in_progress, abort_rebase,
 };
 pub use settings::{setup_claude_settings, merge_with_project_settings, pre_trust_worktree, remove_worktree_trust};

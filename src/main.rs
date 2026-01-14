@@ -612,6 +612,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                                     return vec![Message::SwitchToTaskWindow(task.id)];
                                 }
                             }
+                            TaskStatus::Accepting => {
+                                // Task is being rebased - can't interact via Enter
+                            }
                             TaskStatus::Done => {
                                 // Can't do anything with done tasks via Enter
                             }
@@ -648,8 +651,12 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     let tasks = project.tasks_by_status(TaskStatus::Review);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
                         if let Some(task) = tasks.get(idx) {
+                            // Don't accept tasks that are already being accepted
+                            if task.status == TaskStatus::Accepting {
+                                return vec![];
+                            }
                             if task.worktree_path.is_some() {
-                                return vec![Message::AcceptTask(task.id)];
+                                return vec![Message::SmartAcceptTask(task.id)];
                             } else {
                                 // Legacy: just mark as done
                                 return vec![Message::MoveTask {

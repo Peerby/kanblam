@@ -148,7 +148,11 @@ impl Project {
 
     pub fn tasks_by_status(&self, status: TaskStatus) -> Vec<&Task> {
         // Return tasks in Vec order - allows manual reordering with +/-
-        self.tasks.iter().filter(|t| t.status == status).collect()
+        // Accepting tasks appear in the Review column
+        self.tasks.iter().filter(|t| {
+            t.status == status ||
+            (status == TaskStatus::Review && t.status == TaskStatus::Accepting)
+        }).collect()
     }
 
     pub fn in_progress_task(&self) -> Option<&Task> {
@@ -350,6 +354,7 @@ pub enum TaskStatus {
     InProgress,
     NeedsInput,
     Review,
+    Accepting, // Rebasing onto main before accepting
     Done,
 }
 
@@ -361,10 +366,12 @@ impl TaskStatus {
             TaskStatus::InProgress => "In Progress",
             TaskStatus::NeedsInput => "Needs Input",
             TaskStatus::Review => "Review",
+            TaskStatus::Accepting => "Accepting",
             TaskStatus::Done => "Done",
         }
     }
 
+    /// Get all status values that have their own columns (Accepting is shown in Review column)
     pub fn all() -> [TaskStatus; 6] {
         [
             TaskStatus::Planned,
@@ -377,13 +384,14 @@ impl TaskStatus {
     }
 
     /// Get array index for this status (for column_scroll_offsets)
+    /// Accepting tasks appear in the Review column
     pub fn index(&self) -> usize {
         match self {
             TaskStatus::Planned => 0,
             TaskStatus::Queued => 1,
             TaskStatus::InProgress => 2,
             TaskStatus::NeedsInput => 3,
-            TaskStatus::Review => 4,
+            TaskStatus::Review | TaskStatus::Accepting => 4,
             TaskStatus::Done => 5,
         }
     }

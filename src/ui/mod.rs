@@ -309,13 +309,13 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    // Get column color for the border
+    // Get column color for the border (Accepting tasks appear in Review column)
     let column_color = match app.model.ui_state.selected_column {
         crate::model::TaskStatus::Planned => Color::Blue,
         crate::model::TaskStatus::Queued => Color::Cyan,
         crate::model::TaskStatus::InProgress => Color::Yellow,
         crate::model::TaskStatus::NeedsInput => Color::Red,
-        crate::model::TaskStatus::Review => Color::Magenta,
+        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => Color::Magenta,
         crate::model::TaskStatus::Done => Color::Green,
     };
 
@@ -325,7 +325,7 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
         crate::model::TaskStatus::Queued => " 2. Queued ",
         crate::model::TaskStatus::InProgress => " 3. In Progress ",
         crate::model::TaskStatus::NeedsInput => " 4. Needs Input ",
-        crate::model::TaskStatus::Review => " 5. Review ",
+        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => " 5. Review ",
         crate::model::TaskStatus::Done => " 6. Done ",
     };
 

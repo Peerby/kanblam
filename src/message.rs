@@ -32,6 +32,10 @@ pub enum Message {
     ContinueTask(Uuid),
     /// Accept a task - merge changes to main, cleanup worktree
     AcceptTask(Uuid),
+    /// Smart accept - rebase onto main if needed, then accept
+    SmartAcceptTask(Uuid),
+    /// Complete accept after rebase verification (internal)
+    CompleteAcceptTask(Uuid),
     /// Discard a task - delete worktree and branch without merging
     DiscardTask(Uuid),
     /// Restart a task - discard all changes and start fresh
