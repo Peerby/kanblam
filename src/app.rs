@@ -1768,15 +1768,17 @@ impl App {
                             }
                             "needs-input" => {
                                 // Don't change status if task is Accepting (mid-rebase)
-                                // but still notify user that Claude needs help
-                                if !was_accepting {
+                                // or already in Review (Stop hook already fired - this is
+                                // likely idle_prompt firing after completion, not a real question)
+                                if !was_accepting && task.status != TaskStatus::Review {
                                     task.status = TaskStatus::NeedsInput;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
                                 }
-                                task.session_state = crate::model::ClaudeSessionState::Paused;
-                                task.claude_session_id = Some(signal.session_id.clone());
-                                project.needs_attention = true;
-                                notify::play_attention_sound();
-                                notify::set_attention_indicator(&project.name);
+                                // If already in Review, ignore - Stop hook already handled it
                             }
                             "input-provided" | "working" => {
                                 // Don't change status if task is Accepting (mid-rebase)
