@@ -232,6 +232,47 @@ impl App {
             }
 
             Message::DeleteTask(task_id) => {
+                // Get all necessary info before mutating (for worktree cleanup)
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.slug(),
+                            p.working_dir.clone(),
+                            t.tmux_window.clone(),
+                            t.worktree_path.clone(),
+                        ))
+                });
+
+                // Clean up worktree and associated resources if they exist
+                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                    // Kill tmux window if exists
+                    if let Some(ref window) = window_name {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window);
+                    }
+
+                    // Remove worktree
+                    if let Some(ref wt_path) = worktree_path {
+                        if let Err(e) = crate::worktree::remove_worktree(&project_dir, wt_path) {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Warning: Could not remove worktree: {}", e)
+                            )));
+                        }
+                    }
+
+                    // Delete branch
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                        // Don't warn if branch doesn't exist (task may never have been started)
+                        let err_str = e.to_string();
+                        if !err_str.contains("not found") && !err_str.contains("does not exist") {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Warning: Could not delete branch: {}", e)
+                            )));
+                        }
+                    }
+                }
+
+                // Remove the task from the project
                 if let Some(project) = self.model.active_project_mut() {
                     project.tasks.retain(|t| t.id != task_id);
                 }
