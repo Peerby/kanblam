@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Switch to a specific pane - handles both same-session and different-session cases
@@ -38,6 +39,63 @@ pub fn switch_to_session(pane_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Send a prompt to a tmux pane using paste-buffer for reliable submission.
+/// This is more reliable than send-keys because:
+/// 1. set-buffer stores the text atomically on the tmux server
+/// 2. paste-buffer inserts all text at once (no character-by-character race)
+/// 3. Enter is sent after paste completes
+fn send_prompt_via_paste_buffer(target: &str, text: &str) -> Result<()> {
+    // Step 1: Set the tmux buffer with our prompt text
+    let output = Command::new("tmux")
+        .args(["set-buffer", "--", text])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to set buffer: {}", stderr));
+    }
+
+    // Step 2: Paste the buffer into the target pane
+    let output = Command::new("tmux")
+        .args(["paste-buffer", "-t", target])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to paste buffer: {}", stderr));
+    }
+
+    // Step 3: Send Enter to submit the prompt
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", target, "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to send Enter: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Send a task to an already-running Claude Code session
+pub fn start_claude_task(pane_id: &str, task_description: &str, images: &[PathBuf]) -> Result<()> {
+    // Claude is already running - just send the task text directly
+
+    // If there are images, include their paths for Claude to read
+    let mut task = task_description.to_string();
+    if !images.is_empty() {
+        task.push_str("\n\nPlease read and analyze these images:");
+        for image in images {
+            task.push_str(&format!("\n{}", image.display()));
+        }
+    }
+
+    // Use paste-buffer for reliable prompt submission
+    // This is more reliable than send-keys because paste-buffer is atomic
+    send_prompt_via_paste_buffer(pane_id, &task)
 }
 
 // ============================================================================
@@ -214,27 +272,8 @@ pub fn send_task_to_window(
         }
     }
 
-    // Send using literal mode for special characters
-    let output = Command::new("tmux")
-        .args(["send-keys", "-t", &target, "-l", &task])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to send task: {}", stderr));
-    }
-
-    // Send Enter to submit
-    let output = Command::new("tmux")
-        .args(["send-keys", "-t", &target, "Enter"])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to submit: {}", stderr));
-    }
-
-    Ok(())
+    // Use paste-buffer for reliable prompt submission
+    send_prompt_via_paste_buffer(&target, &task)
 }
 
 /// Focus (select) a task window
