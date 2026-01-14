@@ -85,6 +85,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     if app.model.ui_state.show_help {
         render_help(frame);
     }
+
+    // Render queue dialog if active
+    if app.model.ui_state.is_queue_dialog_open() {
+        render_queue_dialog(frame, app);
+    }
 }
 
 /// Calculate the required height for the input area based on content
@@ -558,6 +563,87 @@ fn render_help(frame: &mut Frame) {
     // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(help, area);
+}
+
+/// Render queue dialog for selecting a session to queue a task for
+fn render_queue_dialog(frame: &mut Frame, app: &App) {
+    let area = centered_rect(50, 50, frame.area());
+
+    // Get the running sessions
+    let sessions: Vec<_> = if let Some(project) = app.model.active_project() {
+        project.tasks_with_active_sessions()
+            .iter()
+            .map(|t| (t.id, t.title.clone(), t.session_state))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Get the task being queued
+    let queuing_task_title = app.model.ui_state.queue_dialog_task_id
+        .and_then(|id| {
+            app.model.active_project()
+                .and_then(|p| p.tasks.iter().find(|t| t.id == id))
+                .map(|t| t.title.clone())
+        })
+        .unwrap_or_else(|| "Task".to_string());
+
+    let selected_idx = app.model.ui_state.queue_dialog_selected_idx;
+
+    // Build the dialog content
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Queue Task For Session",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Queuing: "),
+            Span::styled(&queuing_task_title, Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Select a running session:",
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )),
+    ];
+
+    for (i, (_id, title, state)) in sessions.iter().enumerate() {
+        let is_selected = i == selected_idx;
+        let prefix = if is_selected { "► " } else { "  " };
+        let state_str = format!(" [{}]", state.label());
+
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix.to_string(), style),
+            Span::styled(title.clone(), style),
+            Span::styled(state_str, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "j/k: Navigate  Enter: Confirm  q/Esc: Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let dialog = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Queue Task ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    // Clear area first
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(dialog, area);
 }
 
 /// Helper function to create a centered rect

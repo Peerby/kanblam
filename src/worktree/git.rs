@@ -131,29 +131,63 @@ pub fn remove_worktree(project_dir: &PathBuf, worktree_path: &PathBuf) -> Result
 }
 
 /// Merge a task branch into the base branch (squash merge)
+/// Handles dirty working directory by stashing local changes first
 pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
     let branch_name = format!("claude/{}", task_id);
 
-    // Get the current branch (usually main or master)
-    let output = Command::new("git")
+    // Check if there are local changes that need to be stashed
+    let status_check = Command::new("git")
         .current_dir(project_dir)
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["status", "--porcelain"])
         .output()?;
 
-    if !output.status.success() {
-        return Err(anyhow!("Failed to get current branch"));
+    let has_local_changes = !String::from_utf8_lossy(&status_check.stdout).trim().is_empty();
+
+    // Stash local changes if any
+    if has_local_changes {
+        let stash_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "push", "-m", "kanclaude: auto-stash before merge"])
+            .output()?;
+
+        if !stash_output.status.success() {
+            let stderr = String::from_utf8_lossy(&stash_output.stderr);
+            return Err(anyhow!("Failed to stash local changes: {}", stderr));
+        }
     }
 
-    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
     // Perform squash merge
-    let output = Command::new("git")
+    let merge_result = Command::new("git")
         .current_dir(project_dir)
         .args(["merge", "--squash", &branch_name])
-        .output()?;
+        .output();
+
+    // Helper to restore stash on error
+    let restore_stash = |project_dir: &PathBuf, had_changes: bool| {
+        if had_changes {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+    };
+
+    let output = match merge_result {
+        Ok(o) => o,
+        Err(e) => {
+            restore_stash(project_dir, has_local_changes);
+            return Err(anyhow!("Failed to run merge: {}", e));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // Abort the failed merge
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["merge", "--abort"])
+            .output();
+        restore_stash(project_dir, has_local_changes);
         return Err(anyhow!(
             "Merge failed (conflicts?): {}. Resolve in {} and commit manually.",
             stderr,
@@ -177,7 +211,26 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            restore_stash(project_dir, has_local_changes);
             return Err(anyhow!("Failed to commit merge: {}", stderr));
+        }
+    }
+
+    // Restore stashed changes
+    if has_local_changes {
+        let pop_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "pop"])
+            .output()?;
+
+        if !pop_output.status.success() {
+            // Stash pop might fail due to conflicts with merged changes
+            // This is expected - user will need to resolve manually
+            let stderr = String::from_utf8_lossy(&pop_output.stderr);
+            return Err(anyhow!(
+                "Merge committed but stash pop had conflicts: {}. Resolve manually with 'git stash pop'.",
+                stderr
+            ));
         }
     }
 
@@ -199,6 +252,129 @@ pub fn delete_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
         // Don't fail if branch doesn't exist
         if !stderr.contains("not found") {
             return Err(anyhow!("Failed to delete branch: {}", stderr));
+        }
+    }
+
+    Ok(())
+}
+
+/// Apply a task's changes to the main worktree (for testing)
+/// This stashes any existing changes, applies the diff, and tracks the stash for unapply
+/// Returns the stash ref if there were local changes that were stashed
+pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option<String>> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // Check if there are local changes that need to be stashed
+    let status_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    let has_local_changes = !String::from_utf8_lossy(&status_check.stdout).trim().is_empty();
+    let mut stash_ref = None;
+
+    // Stash local changes if any
+    if has_local_changes {
+        let stash_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "push", "-m", &format!("kanclaude: before applying task {}", task_id)])
+            .output()?;
+
+        if !stash_output.status.success() {
+            let stderr = String::from_utf8_lossy(&stash_output.stderr);
+            return Err(anyhow!("Failed to stash local changes: {}", stderr));
+        }
+
+        // Get the stash ref
+        let stash_list = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "list", "-1"])
+            .output()?;
+
+        if stash_list.status.success() {
+            let output = String::from_utf8_lossy(&stash_list.stdout);
+            if let Some(ref_part) = output.split(':').next() {
+                stash_ref = Some(ref_part.trim().to_string());
+            }
+        }
+    }
+
+    // Get the diff from the task branch and apply it
+    let diff_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "HEAD", &branch_name])
+        .output()?;
+
+    if !diff_output.status.success() {
+        // Restore stash if we made one
+        if stash_ref.is_some() {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        return Err(anyhow!("Failed to get diff: {}", stderr));
+    }
+
+    // Apply the diff
+    let mut apply_cmd = Command::new("git")
+        .current_dir(project_dir)
+        .args(["apply", "--3way"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()?;
+
+    if let Some(stdin) = apply_cmd.stdin.as_mut() {
+        use std::io::Write;
+        stdin.write_all(&diff_output.stdout)?;
+    }
+
+    let apply_result = apply_cmd.wait()?;
+
+    if !apply_result.success() {
+        // Restore stash if we made one
+        if stash_ref.is_some() {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+        return Err(anyhow!("Failed to apply changes. There may be conflicts."));
+    }
+
+    Ok(stash_ref)
+}
+
+/// Unapply task changes from the main worktree
+/// This discards all unstaged changes and optionally restores a stash
+pub fn unapply_task_changes(project_dir: &PathBuf, stash_ref: Option<&str>) -> Result<()> {
+    // Discard all changes (staged and unstaged)
+    let reset_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["checkout", "--", "."])
+        .output()?;
+
+    if !reset_output.status.success() {
+        let stderr = String::from_utf8_lossy(&reset_output.stderr);
+        return Err(anyhow!("Failed to discard changes: {}", stderr));
+    }
+
+    // Also unstage any staged changes
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["reset", "HEAD"])
+        .output();
+
+    // Restore the stash if we have one
+    if let Some(_ref) = stash_ref {
+        let pop_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "pop"])
+            .output()?;
+
+        if !pop_output.status.success() {
+            let stderr = String::from_utf8_lossy(&pop_output.stderr);
+            return Err(anyhow!("Failed to restore stashed changes: {}", stderr));
         }
     }
 

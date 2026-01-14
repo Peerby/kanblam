@@ -717,6 +717,14 @@ impl App {
                                 )));
                             }
 
+                            // Pre-trust the worktree in Claude's global config
+                            // This prevents the "Do you trust this folder?" dialog
+                            if let Err(e) = crate::worktree::pre_trust_worktree(&worktree_path) {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Warning: Could not pre-trust worktree: {}", e)
+                                )));
+                            }
+
                             // Create tmux window
                             match crate::tmux::create_task_window(
                                 &project_slug,
@@ -882,6 +890,8 @@ impl App {
                                 format!("Warning: Could not remove worktree: {}", e)
                             )));
                         }
+                        // Clean up trust entry from Claude's config
+                        let _ = crate::worktree::remove_worktree_trust(wt_path);
                     }
 
                     // Delete branch
@@ -938,6 +948,8 @@ impl App {
                                 format!("Warning: Could not remove worktree: {}", e)
                             )));
                         }
+                        // Clean up trust entry from Claude's config
+                        let _ = crate::worktree::remove_worktree_trust(wt_path);
                     }
 
                     // Delete branch
@@ -969,6 +981,60 @@ impl App {
                 }
             }
 
+            Message::RestartTask(task_id) => {
+                // Get all necessary info before mutating
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.slug(),
+                            p.working_dir.clone(),
+                            p.is_git_repo(),
+                            t.tmux_window.clone(),
+                            t.worktree_path.clone(),
+                            t.git_branch.clone(),
+                        ))
+                });
+
+                if let Some((project_slug, project_dir, is_git, window_name, worktree_path, git_branch)) = task_info {
+                    // Kill tmux window if exists
+                    if let Some(ref window) = window_name {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window);
+                    }
+
+                    // Remove worktree if exists
+                    if let Some(ref wt_path) = worktree_path {
+                        let _ = crate::worktree::remove_worktree(&project_dir, wt_path);
+                        // Clean up trust entry
+                        let _ = crate::worktree::remove_worktree_trust(wt_path);
+                    }
+
+                    // Delete branch if exists
+                    if git_branch.is_some() {
+                        let _ = crate::worktree::delete_branch(&project_dir, task_id);
+                    }
+
+                    // Reset task state to fresh Planned
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.status = TaskStatus::Planned;
+                            task.worktree_path = None;
+                            task.git_branch = None;
+                            task.tmux_window = None;
+                            task.claude_session_id = None;
+                            task.session_state = crate::model::ClaudeSessionState::NotStarted;
+                            task.started_at = None;
+                            task.completed_at = None;
+                            task.queued_for_session = None;
+                        }
+                    }
+
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task reset to Planned. Press Enter to start fresh.".to_string()
+                    )));
+                }
+            }
+
             Message::SwitchToTaskWindow(task_id) => {
                 let switch_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -979,6 +1045,267 @@ impl App {
                 if let Some((project_slug, window_name)) = switch_info {
                     if let Err(e) = crate::tmux::switch_to_task_window(&project_slug, &window_name) {
                         commands.push(Message::Error(format!("Failed to switch: {}", e)));
+                    }
+                }
+            }
+
+            Message::OpenTestShell(task_id) => {
+                let test_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .and_then(|t| t.worktree_path.as_ref().map(|wt| (p.slug(), wt.clone())))
+                });
+
+                if let Some((project_slug, worktree_path)) = test_info {
+                    match crate::tmux::create_test_shell(
+                        &project_slug,
+                        &task_id.to_string(),
+                        &worktree_path,
+                    ) {
+                        Ok(_window_name) => {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Opened test shell in {}", worktree_path.display())
+                            )));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to open test shell: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::ApplyTaskChanges(task_id) => {
+                // Check if changes are already applied
+                if self.model.ui_state.applied_task_id.is_some() {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Changes already applied. Press 'u' to unapply first.".to_string()
+                    )));
+                    return commands;
+                }
+
+                // Get task info and project dir
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (p.working_dir.clone(), t.git_branch.clone()))
+                });
+
+                if let Some((project_dir, git_branch)) = task_info {
+                    // Check if the task has a git branch reference
+                    let branch_name = match git_branch {
+                        Some(b) => b,
+                        None => {
+                            commands.push(Message::Error(
+                                "Task has no git branch. Was it started before worktree support?".to_string()
+                            ));
+                            return commands;
+                        }
+                    };
+
+                    // Check if the branch actually exists
+                    let branch_exists = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["rev-parse", "--verify", &branch_name])
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false);
+
+                    if !branch_exists {
+                        commands.push(Message::Error(format!(
+                            "Branch '{}' no longer exists. Task data is stale - the branch may have been deleted manually or during a failed accept.",
+                            branch_name
+                        )));
+                        return commands;
+                    }
+
+                    match crate::worktree::apply_task_changes(&project_dir, task_id) {
+                        Ok(stash_ref) => {
+                            self.model.ui_state.applied_task_id = Some(task_id);
+                            self.model.ui_state.applied_stash_ref = stash_ref;
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Changes applied to main worktree. Press 'u' to unapply.".to_string()
+                            )));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to apply changes: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::UnapplyTaskChanges => {
+                if self.model.ui_state.applied_task_id.is_none() {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "No changes applied to unapply.".to_string()
+                    )));
+                    return commands;
+                }
+
+                let project_dir = self.model.active_project().map(|p| p.working_dir.clone());
+                let stash_ref = self.model.ui_state.applied_stash_ref.clone();
+
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::unapply_task_changes(&project_dir, stash_ref.as_deref()) {
+                        Ok(()) => {
+                            self.model.ui_state.applied_task_id = None;
+                            self.model.ui_state.applied_stash_ref = None;
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Changes unapplied. Original work restored.".to_string()
+                            )));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to unapply changes: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            // === Task queueing ===
+
+            Message::ShowQueueDialog(task_id) => {
+                // Check if there are running sessions
+                if let Some(project) = self.model.active_project() {
+                    if project.tasks_with_active_sessions().is_empty() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "No running sessions to queue for".to_string()
+                        )));
+                    } else {
+                        self.model.ui_state.queue_dialog_task_id = Some(task_id);
+                        self.model.ui_state.queue_dialog_selected_idx = 0;
+                    }
+                }
+            }
+
+            Message::CloseQueueDialog => {
+                self.model.ui_state.queue_dialog_task_id = None;
+                self.model.ui_state.queue_dialog_selected_idx = 0;
+            }
+
+            Message::QueueDialogNavigate(delta) => {
+                if let Some(project) = self.model.active_project() {
+                    let sessions = project.tasks_with_active_sessions();
+                    if !sessions.is_empty() {
+                        let len = sessions.len();
+                        let current = self.model.ui_state.queue_dialog_selected_idx;
+                        let new_idx = if delta < 0 {
+                            if current == 0 { len - 1 } else { current - 1 }
+                        } else {
+                            (current + 1) % len
+                        };
+                        self.model.ui_state.queue_dialog_selected_idx = new_idx;
+                    }
+                }
+            }
+
+            Message::QueueDialogConfirm => {
+                // Get the task being queued and the session to queue it for
+                if let Some(task_to_queue) = self.model.ui_state.queue_dialog_task_id {
+                    let session_task_id = self.model.active_project()
+                        .and_then(|p| {
+                            let sessions = p.tasks_with_active_sessions();
+                            sessions.get(self.model.ui_state.queue_dialog_selected_idx)
+                                .map(|t| t.id)
+                        });
+
+                    if let Some(after_task_id) = session_task_id {
+                        commands.push(Message::QueueTaskForSession {
+                            task_id: task_to_queue,
+                            after_task_id,
+                        });
+                    }
+                }
+                // Close dialog
+                self.model.ui_state.queue_dialog_task_id = None;
+                self.model.ui_state.queue_dialog_selected_idx = 0;
+            }
+
+            Message::QueueTaskForSession { task_id, after_task_id } => {
+                // Find the end of the queue for this session
+                // (there might already be tasks queued for it)
+                let mut current_id = after_task_id;
+                while let Some(next) = self.model.active_project()
+                    .and_then(|p| p.next_queued_for(current_id).map(|t| t.id))
+                {
+                    current_id = next;
+                }
+
+                // Set the task to queue after the last task in the chain
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.queued_for_session = Some(current_id);
+                        task.status = TaskStatus::Queued;
+                    }
+                }
+
+                // Get task title for status message
+                let task_title = self.model.active_project()
+                    .and_then(|p| p.tasks.iter().find(|t| t.id == after_task_id))
+                    .map(|t| t.title.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                commands.push(Message::SetStatusMessage(Some(
+                    format!("Task queued after: {}", task_title)
+                )));
+            }
+
+            Message::SendQueuedTask { finished_task_id } => {
+                // Find the next task queued for this session
+                let next_task_info = self.model.active_project().and_then(|p| {
+                    p.next_queued_for(finished_task_id).map(|t| (
+                        t.id,
+                        t.title.clone(),
+                        t.images.clone(),
+                        p.slug(),
+                    ))
+                });
+
+                if let Some((next_task_id, title, images, project_slug)) = next_task_info {
+                    // Get worktree info from the finished task
+                    let worktree_info = self.model.active_project().and_then(|p| {
+                        p.tasks.iter().find(|t| t.id == finished_task_id).map(|t| (
+                            t.worktree_path.clone(),
+                            t.git_branch.clone(),
+                            t.tmux_window.clone(),
+                        ))
+                    });
+
+                    if let Some((worktree_path, git_branch, tmux_window)) = worktree_info {
+                        // Transfer session ownership to the next task
+                        if let Some(project) = self.model.active_project_mut() {
+                            // Update the next task with session info
+                            if let Some(next_task) = project.tasks.iter_mut().find(|t| t.id == next_task_id) {
+                                next_task.worktree_path = worktree_path.clone();
+                                next_task.git_branch = git_branch;
+                                next_task.tmux_window = tmux_window.clone();
+                                next_task.status = TaskStatus::InProgress;
+                                next_task.session_state = crate::model::ClaudeSessionState::Working;
+                                next_task.started_at = Some(Utc::now());
+                                next_task.queued_for_session = None; // Clear queue reference
+                            }
+
+                            // Clear session info from finished task (it's now in Review)
+                            if let Some(finished_task) = project.tasks.iter_mut().find(|t| t.id == finished_task_id) {
+                                finished_task.worktree_path = None;
+                                finished_task.tmux_window = None;
+                                // Keep git_branch so we know it was part of this chain
+                            }
+                        }
+
+                        // Send the task to the Claude session
+                        if let Some(ref window) = tmux_window {
+                            if let Err(e) = crate::tmux::send_task_to_window(
+                                &project_slug,
+                                window,
+                                &title,
+                                &images,
+                            ) {
+                                commands.push(Message::Error(format!("Failed to send queued task: {}", e)));
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Continuing with queued task: {}", title)
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -1245,16 +1572,31 @@ impl App {
                     });
 
                     if let Some(idx) = task_idx {
+                        let task_id = project.tasks[idx].id;
+                        // Check if there's a queued task before getting mutable ref
+                        let has_queued = project.next_queued_for(task_id).is_some();
+                        let project_name = project.name.clone();
+
                         let task = &mut project.tasks[idx];
                         found_task = true;
                         match signal.event.as_str() {
                             "stop" => {
-                                task.status = TaskStatus::Review;
-                                task.session_state = crate::model::ClaudeSessionState::Paused;
-                                task.claude_session_id = Some(signal.session_id.clone());
-                                project.needs_attention = true;
-                                notify::play_attention_sound();
-                                notify::set_attention_indicator(&project.name);
+                                if has_queued {
+                                    // Don't move to review - send the queued task instead
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    // Don't play attention sound - we're continuing automatically
+                                    commands.push(Message::SendQueuedTask { finished_task_id: task_id });
+                                } else {
+                                    // Normal stop - move to review and notify
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    task.claude_session_id = Some(signal.session_id.clone());
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project_name);
+                                }
                             }
                             "end" => {
                                 task.status = TaskStatus::Review;
@@ -1284,80 +1626,26 @@ impl App {
                     }
                 }
 
-                // Fall back to legacy behavior: match by project working directory
+                // Only process signals that match a specific task (by UUID or worktree path)
+                // Signals from the main project's Claude are silently ignored - use worktree isolation
                 if !found_task {
-                    if let Some(project) = self.model.projects.iter_mut().find(|p| {
-                        let project_dir = p.working_dir.canonicalize().unwrap_or(p.working_dir.clone());
-                        project_dir == signal_dir
-                    }) {
-                        match signal.event.as_str() {
-                            "stop" => {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                    t.status == TaskStatus::InProgress
-                                }) {
-                                    task.status = TaskStatus::Review;
-                                    task.claude_session_id = Some(signal.session_id.clone());
-                                    project.needs_attention = true;
-                                    notify::play_attention_sound();
-                                    notify::set_attention_indicator(&project.name);
-                                    found_task = true;
-                                }
-                                // Check if there's a queued task to start next
-                                if let Some(next_task) = project.next_queued_task() {
-                                    let next_task_id = next_task.id;
-                                    commands.push(Message::StartTask(next_task_id));
-                                }
-                            }
-                            "end" => {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                    t.status == TaskStatus::InProgress
-                                }) {
-                                    task.status = TaskStatus::Review;
-                                    task.claude_session_id = Some(signal.session_id.clone());
-                                    project.needs_attention = true;
-                                    notify::play_attention_sound();
-                                    notify::set_attention_indicator(&project.name);
-                                    found_task = true;
-                                }
-                                if let Some(next_task) = project.next_queued_task() {
-                                    let next_task_id = next_task.id;
-                                    commands.push(Message::StartTask(next_task_id));
-                                }
-                            }
-                            "needs-input" => {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                    t.status == TaskStatus::InProgress
-                                }) {
-                                    task.status = TaskStatus::NeedsInput;
-                                    task.claude_session_id = Some(signal.session_id.clone());
-                                    project.needs_attention = true;
-                                    notify::play_attention_sound();
-                                    notify::set_attention_indicator(&project.name);
-                                    found_task = true;
-                                }
-                            }
-                            "input-provided" | "working" => {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| {
-                                    t.status == TaskStatus::NeedsInput
-                                }) {
-                                    task.status = TaskStatus::InProgress;
-                                    project.needs_attention = false;
-                                    notify::clear_attention_indicator();
-                                    found_task = true;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                    // Check if this signal is from the main project directory (not a worktree)
+                    // This is expected when developing on the project itself with Claude
+                    let is_main_project = self.model.projects.iter().any(|p| {
+                        let main_dir = p.working_dir.canonicalize().unwrap_or(p.working_dir.clone());
+                        main_dir == signal_dir
+                    });
 
-                if !found_task {
-                    commands.push(Message::SetStatusMessage(Some(
-                        format!("Hook '{}' received but no matching task for: {} (session: {})",
-                            signal.event,
-                            signal.project_dir.display(),
-                            signal.session_id)
-                    )));
+                    if !is_main_project {
+                        // Only warn for unexpected signals (not from main project or known worktrees)
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Hook '{}' received but no matching task for: {} (session: {})",
+                                signal.event,
+                                signal.project_dir.display(),
+                                signal.session_id)
+                        )));
+                    }
+                    // Silently ignore signals from main project - they're from the dev Claude session
                 }
 
                 // Sync selection after task status changes

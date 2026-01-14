@@ -449,10 +449,35 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return vec![Message::ToggleHelp];
     }
 
+    // Handle queue dialog if open
+    if app.model.ui_state.is_queue_dialog_open() {
+        return handle_queue_dialog_key(key, app);
+    }
+
     // Normal mode keybindings
     match key.code {
-        // Quit
-        KeyCode::Char('q') => vec![Message::Quit],
+        // Queue task / Quit
+        // In Planned column with a task selected: open queue dialog
+        // Otherwise: quit
+        KeyCode::Char('q') => {
+            if app.model.ui_state.selected_column == TaskStatus::Planned {
+                if let Some(project) = app.model.active_project() {
+                    // Check if there are running sessions to queue for
+                    let running_sessions = project.tasks_with_active_sessions();
+                    if !running_sessions.is_empty() {
+                        // Get selected task
+                        let tasks = project.tasks_by_status(TaskStatus::Planned);
+                        if let Some(idx) = app.model.ui_state.selected_task_idx {
+                            if let Some(task) = tasks.get(idx) {
+                                return vec![Message::ShowQueueDialog(task.id)];
+                            }
+                        }
+                    }
+                }
+            }
+            // No running sessions or not in Planned - quit
+            vec![Message::Quit]
+        }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::Quit],
 
         // Help
@@ -475,9 +500,69 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::FocusChanged(next_focus)]
         }
 
-        // Switch to Claude session (switches tmux session)
+        // Switch to task's tmux window, or fallback to project session
         KeyCode::Char('o') => {
+            // If a task with a tmux window is selected, switch to that task's window
+            if let Some(project) = app.model.active_project() {
+                let column = app.model.ui_state.selected_column;
+                let tasks = project.tasks_by_status(column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        if task.tmux_window.is_some() {
+                            return vec![Message::SwitchToTaskWindow(task.id)];
+                        }
+                    }
+                }
+            }
+            // Fallback: switch to project's main session
             app.switch_to_claude_session();
+            vec![]
+        }
+
+        // Open test shell in task's worktree
+        KeyCode::Char('t') => {
+            let column = app.model.ui_state.selected_column;
+            // Only for tasks with worktrees (InProgress, Review, NeedsInput)
+            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            if task.worktree_path.is_some() {
+                                return vec![Message::OpenTestShell(task.id)];
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Apply task changes to main worktree (for testing)
+        KeyCode::Char('a') => {
+            let column = app.model.ui_state.selected_column;
+            // Only in Review column for tasks with a git branch
+            if column == TaskStatus::Review {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            // Check for git_branch (branch may exist even if worktree is gone)
+                            if task.git_branch.is_some() {
+                                return vec![Message::ApplyTaskChanges(task.id)];
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Unapply task changes from main worktree
+        KeyCode::Char('u') => {
+            if app.model.ui_state.applied_task_id.is_some() {
+                return vec![Message::UnapplyTaskChanges];
+            }
             vec![]
         }
 
@@ -602,6 +687,30 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // 'r' key: Restart task in Review/InProgress/NeedsInput, or move to Review from other columns
+        KeyCode::Char('r') => {
+            let column = app.model.ui_state.selected_column;
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // In Review, InProgress, or NeedsInput: restart the task (clean up and reset to Planned)
+                        if matches!(column, TaskStatus::Review | TaskStatus::InProgress | TaskStatus::NeedsInput) {
+                            return vec![Message::RestartTask(task.id)];
+                        }
+                        // In other columns: move to Review
+                        if column != TaskStatus::Review {
+                            return vec![Message::MoveTask {
+                                task_id: task.id,
+                                to_status: model::TaskStatus::Review,
+                            }];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
         // Delete task or divider
         KeyCode::Char('d') => {
             // If a divider is selected, delete it (no confirmation needed)
@@ -640,22 +749,6 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
                         return vec![Message::EditTask(task.id)];
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // Move to Review
-        KeyCode::Char('r') => {
-            if let Some(project) = app.model.active_project() {
-                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
-                if let Some(idx) = app.model.ui_state.selected_task_idx {
-                    if let Some(task) = tasks.get(idx) {
-                        return vec![Message::MoveTask {
-                            task_id: task.id,
-                            to_status: model::TaskStatus::Review,
-                        }];
                     }
                 }
             }
@@ -733,6 +826,33 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Paste image
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             vec![Message::PasteImage]
+        }
+
+        _ => vec![],
+    }
+}
+
+/// Handle key events when the queue dialog is open
+fn handle_queue_dialog_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
+    match key.code {
+        // Close dialog
+        KeyCode::Esc | KeyCode::Char('q') => {
+            vec![Message::CloseQueueDialog]
+        }
+
+        // Navigate up
+        KeyCode::Up | KeyCode::Char('k') => {
+            vec![Message::QueueDialogNavigate(-1)]
+        }
+
+        // Navigate down
+        KeyCode::Down | KeyCode::Char('j') => {
+            vec![Message::QueueDialogNavigate(1)]
+        }
+
+        // Confirm selection
+        KeyCode::Enter => {
+            vec![Message::QueueDialogConfirm]
         }
 
         _ => vec![],

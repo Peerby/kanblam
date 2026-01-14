@@ -162,6 +162,21 @@ impl Project {
         })
     }
 
+    /// Get all tasks that have an active Claude session (for queue dialog)
+    pub fn tasks_with_active_sessions(&self) -> Vec<&Task> {
+        self.tasks.iter().filter(|t| t.has_active_session()).collect()
+    }
+
+    /// Find the next task queued for a given session/task
+    pub fn next_queued_for(&self, task_id: Uuid) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.queued_for_session == Some(task_id))
+    }
+
+    /// Find the next task queued for a given session/task (mutable)
+    pub fn next_queued_for_mut(&mut self, task_id: Uuid) -> Option<&mut Task> {
+        self.tasks.iter_mut().find(|t| t.queued_for_session == Some(task_id))
+    }
+
     /// Get the next queued task (first one in queue order)
     pub fn next_queued_task(&self) -> Option<&Task> {
         self.tasks.iter().find(|t| t.status == TaskStatus::Queued)
@@ -262,6 +277,13 @@ pub struct Task {
     /// Current state of the Claude session
     #[serde(default)]
     pub session_state: ClaudeSessionState,
+
+    // === Task queueing ===
+
+    /// If set, this task is queued to run after the specified task finishes
+    /// (in the same Claude session/worktree)
+    #[serde(default)]
+    pub queued_for_session: Option<Uuid>,
 }
 
 impl Task {
@@ -285,6 +307,8 @@ impl Task {
             git_branch: None,
             tmux_window: None,
             session_state: ClaudeSessionState::NotStarted,
+            // Queueing
+            queued_for_session: None,
         }
     }
 
@@ -396,6 +420,19 @@ pub struct UiState {
     /// Last scroll position (visual index) for each column, preserved when leaving
     /// Order: Planned, Queued, InProgress, NeedsInput, Review, Done
     pub column_scroll_offsets: [usize; 6],
+
+    // Queue dialog state
+    /// Task ID being queued (None if queue dialog is closed)
+    pub queue_dialog_task_id: Option<Uuid>,
+    /// Selected index in the queue dialog session list
+    pub queue_dialog_selected_idx: usize,
+
+    // Applied changes state
+    /// Task ID whose changes are currently applied to main worktree (for testing)
+    /// When set, user can press 'u' to unapply the changes
+    pub applied_task_id: Option<Uuid>,
+    /// Stash ref created when applying task changes (to restore original work on unapply)
+    pub applied_stash_ref: Option<String>,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -443,6 +480,10 @@ impl Default for UiState {
             selected_is_divider_above: false,
             animation_frame: 0,
             column_scroll_offsets: [0; 6],
+            queue_dialog_task_id: None,
+            queue_dialog_selected_idx: 0,
+            applied_task_id: None,
+            applied_stash_ref: None,
         }
     }
 }
@@ -465,6 +506,11 @@ impl UiState {
         self.editor_state = EditorState::default();
         // Ensure we're in insert mode
         self.editor_state.mode = EditorMode::Insert;
+    }
+
+    /// Check if the queue dialog is open
+    pub fn is_queue_dialog_open(&self) -> bool {
+        self.queue_dialog_task_id.is_some()
     }
 }
 

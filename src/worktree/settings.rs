@@ -5,6 +5,91 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Get the path to Claude's global config file
+fn get_claude_config_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude.json")
+}
+
+/// Pre-trust a worktree directory in Claude's global config
+/// This prevents the "Do you trust this folder?" dialog
+pub fn pre_trust_worktree(worktree_path: &PathBuf) -> Result<()> {
+    let config_path = get_claude_config_path();
+
+    // Read existing config or create new one
+    let mut config: Value = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    // Ensure projects object exists
+    if config.get("projects").is_none() {
+        config["projects"] = json!({});
+    }
+
+    // Get the absolute path as the key
+    let path_key = worktree_path
+        .canonicalize()
+        .unwrap_or_else(|_| worktree_path.clone())
+        .to_string_lossy()
+        .to_string();
+
+    // Add or update the project entry with trust accepted
+    if let Some(projects) = config["projects"].as_object_mut() {
+        let project_entry = projects.entry(&path_key).or_insert_with(|| json!({}));
+        if let Some(obj) = project_entry.as_object_mut() {
+            obj.insert("hasTrustDialogAccepted".to_string(), json!(true));
+            obj.insert("hasCompletedProjectOnboarding".to_string(), json!(true));
+            // Initialize other required fields if not present
+            if !obj.contains_key("allowedTools") {
+                obj.insert("allowedTools".to_string(), json!([]));
+            }
+            if !obj.contains_key("ignorePatterns") {
+                obj.insert("ignorePatterns".to_string(), json!([]));
+            }
+        }
+    }
+
+    // Write back the config
+    let content = serde_json::to_string_pretty(&config)?;
+    std::fs::write(&config_path, content)?;
+
+    Ok(())
+}
+
+/// Remove trust entry for a worktree from Claude's global config
+pub fn remove_worktree_trust(worktree_path: &PathBuf) -> Result<()> {
+    let config_path = get_claude_config_path();
+
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&config_path)?;
+    let mut config: Value = serde_json::from_str(&content)?;
+
+    // Get the absolute path as the key
+    let path_key = worktree_path
+        .canonicalize()
+        .unwrap_or_else(|_| worktree_path.clone())
+        .to_string_lossy()
+        .to_string();
+
+    // Remove the project entry
+    if let Some(projects) = config["projects"].as_object_mut() {
+        projects.remove(&path_key);
+    }
+
+    // Write back the config
+    let content = serde_json::to_string_pretty(&config)?;
+    std::fs::write(&config_path, content)?;
+
+    Ok(())
+}
+
 /// Set up Claude Code settings in a worktree
 ///
 /// Creates `.claude/settings.json` with:
@@ -18,6 +103,12 @@ pub fn setup_claude_settings(
 ) -> Result<()> {
     let claude_dir = worktree_path.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
+
+    // Get the absolute path to the kanclaude binary
+    let kanclaude_bin = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("kanclaude"))
+        .to_string_lossy()
+        .to_string();
 
     // Build settings JSON with correct Claude Code format
     // Permissions: use tool names without parentheses for "allow all"
@@ -39,7 +130,7 @@ pub fn setup_claude_settings(
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("kanclaude signal stop {}", task_id)
+                    "command": format!("{} signal stop {}", kanclaude_bin, task_id)
                 }]
             }]
         }
@@ -68,6 +159,12 @@ pub fn merge_with_project_settings(
 ) -> Result<()> {
     let project_settings_path = project_dir.join(".claude").join("settings.json");
 
+    // Get the absolute path to the kanclaude binary
+    let kanclaude_bin = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("kanclaude"))
+        .to_string_lossy()
+        .to_string();
+
     // Start with our base settings (correct Claude Code format)
     let mut settings = json!({
         "permissions": {
@@ -86,7 +183,41 @@ pub fn merge_with_project_settings(
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("kanclaude signal stop {}", task_id)
+                    "command": format!("{} signal stop {}", kanclaude_bin, task_id)
+                }]
+            }],
+            "SessionEnd": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} signal end {}", kanclaude_bin, task_id)
+                }]
+            }],
+            "Notification": [
+                {
+                    "matcher": "permission_prompt",
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{} signal needs-input {}", kanclaude_bin, task_id)
+                    }]
+                },
+                {
+                    "matcher": "idle_prompt",
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{} signal needs-input {}", kanclaude_bin, task_id)
+                    }]
+                }
+            ],
+            "PreToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
+                }]
+            }],
+            "UserPromptSubmit": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} signal input-provided {}", kanclaude_bin, task_id)
                 }]
             }]
         }

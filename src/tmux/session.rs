@@ -478,7 +478,7 @@ pub fn start_claude_in_window(project_slug: &str, window_name: &str) -> Result<(
     let session_name = format!("kc-{}", project_slug);
     let target = format!("{}:{}", session_name, window_name);
 
-    // Start Claude
+    // Start Claude - trust is pre-configured via ~/.claude.json by pre_trust_worktree()
     let output = Command::new("tmux")
         .args(["send-keys", "-t", &target, "claude", "Enter"])
         .output()?;
@@ -504,26 +504,33 @@ pub fn wait_for_claude_ready(project_slug: &str, window_name: &str, timeout_ms: 
             return Ok(false);
         }
 
-        // Capture pane content
+        // Capture pane content (use -S for start line, negative = from bottom)
         let output = Command::new("tmux")
-            .args(["capture-pane", "-t", &target, "-p", "-l", "10"])
+            .args(["capture-pane", "-t", &target, "-p", "-S", "-15"])
             .output()?;
 
         if output.status.success() {
             let content = String::from_utf8_lossy(&output.stdout);
 
             // Look for Claude's prompt patterns
-            // Claude Code shows ">" when ready for input
-            // Also check for common ready patterns
+            // Claude Code shows "❯" (U+276F) when ready for input
             for line in content.lines().rev() {
                 let trimmed = line.trim();
-                if trimmed.starts_with(">") && !trimmed.contains("...") {
-                    return Ok(true);
+                // Claude's actual prompt character is ❯ (U+276F)
+                if trimmed.starts_with("❯") || trimmed.starts_with(">") {
+                    // Skip if showing loading/thinking indicator
+                    if !trimmed.contains("...") {
+                        return Ok(true);
+                    }
                 }
                 if trimmed.contains("What would you like") {
                     return Ok(true);
                 }
                 if trimmed.contains("How can I help") {
+                    return Ok(true);
+                }
+                // "Try" suggestions indicate ready state
+                if trimmed.contains("Try \"") {
                     return Ok(true);
                 }
             }
@@ -609,6 +616,66 @@ pub fn switch_to_task_window(project_slug: &str, window_name: &str) -> Result<()
         .output();
 
     Ok(())
+}
+
+/// Create a test shell window for a task and switch to it
+/// The window is created in the same session as the task, with a "test-" prefix
+pub fn create_test_shell(
+    project_slug: &str,
+    task_id: &str,
+    worktree_path: &std::path::Path,
+) -> Result<String> {
+    let session_name = format!("kc-{}", project_slug);
+    let window_name = format!("test-{}", &task_id[..8.min(task_id.len())]);
+
+    // Check if window already exists
+    let check = Command::new("tmux")
+        .args([
+            "list-windows",
+            "-t",
+            &session_name,
+            "-F",
+            "#{window_name}",
+        ])
+        .output()?;
+
+    let window_exists = if check.status.success() {
+        let windows = String::from_utf8_lossy(&check.stdout);
+        windows.lines().any(|w| w == window_name)
+    } else {
+        false
+    };
+
+    if !window_exists {
+        // Create new window in the session
+        let output = Command::new("tmux")
+            .args([
+                "new-window",
+                "-t",
+                &session_name,
+                "-n",
+                &window_name,
+                "-c",
+                &worktree_path.to_string_lossy(),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create test window: {}", stderr));
+        }
+    }
+
+    // Switch to the test window
+    let target = format!("{}:{}", session_name, window_name);
+    let _ = Command::new("tmux")
+        .args(["switch-client", "-t", &target])
+        .output();
+    let _ = Command::new("tmux")
+        .args(["select-window", "-t", &target])
+        .output();
+
+    Ok(window_name)
 }
 
 /// Kill a task window

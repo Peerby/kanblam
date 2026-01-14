@@ -34,8 +34,30 @@ pub enum Message {
     AcceptTask(Uuid),
     /// Discard a task - delete worktree and branch without merging
     DiscardTask(Uuid),
+    /// Restart a task - discard all changes and start fresh
+    RestartTask(Uuid),
     /// Switch to the task's tmux window (focuses the Claude session)
     SwitchToTaskWindow(Uuid),
+    /// Open a test shell in the task's worktree
+    OpenTestShell(Uuid),
+    /// Apply task's changes to main worktree (for testing)
+    ApplyTaskChanges(Uuid),
+    /// Unapply/revert previously applied task changes
+    UnapplyTaskChanges,
+
+    // Task queueing
+    /// Show the queue dialog to select a session to queue the task for
+    ShowQueueDialog(Uuid),
+    /// Queue a task to run after another task finishes (in the same session)
+    QueueTaskForSession { task_id: Uuid, after_task_id: Uuid },
+    /// Navigate up/down in the queue dialog
+    QueueDialogNavigate(i32),
+    /// Confirm selection in queue dialog
+    QueueDialogConfirm,
+    /// Close the queue dialog
+    CloseQueueDialog,
+    /// Send the next queued task to a session (internal, called when a task stops)
+    SendQueuedTask { finished_task_id: Uuid },
 
     // Project operations
     SwitchProject(usize),
