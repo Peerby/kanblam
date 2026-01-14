@@ -59,6 +59,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Fallback: Check tmux windows for InProgress tasks that are actually idle
+    // This catches cases where signals were lost or had wrong session IDs
+    detect_idle_tasks_from_tmux(&mut app);
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -955,4 +959,56 @@ fn handle_signal_command(args: &[String]) -> anyhow::Result<()> {
     hooks::write_signal(event, task_id, &cwd, None)?;
 
     Ok(())
+}
+
+/// Detect InProgress tasks whose Claude sessions are actually idle (waiting for input)
+/// This is a fallback for when signals are lost or have wrong session IDs
+fn detect_idle_tasks_from_tmux(app: &mut App) {
+    use std::process::Command;
+
+    for project in &mut app.model.projects {
+        let project_slug = project.slug();
+
+        for task in &mut project.tasks {
+            // Only check InProgress tasks with tmux windows
+            if task.status != model::TaskStatus::InProgress {
+                continue;
+            }
+            let Some(ref window_name) = task.tmux_window else {
+                continue;
+            };
+
+            // Check if window exists
+            if !tmux::task_window_exists(&project_slug, window_name) {
+                continue;
+            }
+
+            // Capture the last 15 lines of the pane
+            let target = format!("kc-{}:{}", project_slug, window_name);
+            let output = Command::new("tmux")
+                .args(["capture-pane", "-t", &target, "-p", "-S", "-15"])
+                .output();
+
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stdout);
+
+                    // Check for Claude's prompt indicators (idle state)
+                    let is_idle = content.lines().rev().take(5).any(|line| {
+                        let trimmed = line.trim();
+                        // Claude's prompt character is ❯ (U+276F)
+                        // Also check for > as fallback
+                        (trimmed.starts_with('❯') || trimmed.starts_with('>'))
+                            && !trimmed.contains("...")  // Skip loading indicators
+                    });
+
+                    if is_idle {
+                        // Claude is waiting for input - move to Review
+                        task.status = model::TaskStatus::Review;
+                        task.session_state = model::ClaudeSessionState::Paused;
+                    }
+                }
+            }
+        }
+    }
 }
