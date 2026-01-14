@@ -223,7 +223,9 @@ pub fn merge_with_project_settings(
         }
     });
 
-    // If project has settings, merge them (project settings take precedence for most fields)
+    // If project has settings, merge ONLY non-hook settings
+    // IMPORTANT: Do NOT merge hooks - worktrees have their own task-specific hooks.
+    // Merging project hooks would add duplicate hooks with wrong task IDs.
     if project_settings_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&project_settings_path) {
             if let Ok(project_settings) = serde_json::from_str::<Value>(&content) {
@@ -231,26 +233,9 @@ pub fn merge_with_project_settings(
                 if let Some(obj) = project_settings.as_object() {
                     for (key, value) in obj {
                         match key.as_str() {
-                            // Keep our hooks, but merge with project hooks
+                            // NEVER merge hooks - worktree has its own task-specific hooks
                             "hooks" => {
-                                if let (Some(our_hooks), Some(project_hooks)) = (
-                                    settings["hooks"].as_object_mut(),
-                                    value.as_object(),
-                                ) {
-                                    for (hook_name, hook_value) in project_hooks {
-                                        // Append project hooks to our hooks (ours come first)
-                                        if let Some(existing) = our_hooks.get_mut(hook_name) {
-                                            if let (Some(existing_arr), Some(new_arr)) = (
-                                                existing.as_array_mut(),
-                                                hook_value.as_array(),
-                                            ) {
-                                                existing_arr.extend(new_arr.clone());
-                                            }
-                                        } else {
-                                            our_hooks.insert(hook_name.clone(), hook_value.clone());
-                                        }
-                                    }
-                                }
+                                // Skip - do not merge project hooks into worktree
                             }
                             // Merge permissions (union of allow, intersection of deny)
                             "permissions" => {
