@@ -184,6 +184,7 @@ impl App {
                 self.model.ui_state.selected_is_divider = false;
                 self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
+                self.model.ui_state.title_scroll_delay = 0;
             }
 
             Message::EditTask(task_id) => {
@@ -1543,6 +1544,7 @@ impl App {
             Message::SelectTask(idx) => {
                 self.model.ui_state.selected_task_idx = idx;
                 self.model.ui_state.title_scroll_offset = 0;
+                self.model.ui_state.title_scroll_delay = 0;
             }
 
             Message::SelectColumn(status) => {
@@ -1556,6 +1558,7 @@ impl App {
                 self.model.ui_state.selected_is_divider = false;
                 self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
+                self.model.ui_state.title_scroll_delay = 0;
             }
 
             Message::ClickedTask { status, task_idx } => {
@@ -1565,6 +1568,7 @@ impl App {
                 self.model.ui_state.selected_is_divider = false;
                 self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
+                self.model.ui_state.title_scroll_delay = 0;
             }
 
             Message::SwitchProject(idx) => {
@@ -1940,15 +1944,18 @@ impl App {
                             self.model.ui_state.selected_is_divider = false;
                             self.model.ui_state.selected_is_divider_above = false;
                             self.model.ui_state.title_scroll_offset = 0;
+                            self.model.ui_state.title_scroll_delay = 0;
                         }
                     } else if self.model.ui_state.selected_is_divider {
                         // If we're on a divider below, move back to the task
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else if idx == 0 && first_has_divider_above {
                         // At first task and there's a divider above - select it
                         self.model.ui_state.selected_is_divider_above = true;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else if idx > 0 {
                         // Check if previous task has a divider - if so, select it
                         let prev_has_divider = self.model.active_project()
@@ -1966,6 +1973,7 @@ impl App {
                             self.model.ui_state.selected_is_divider = false;
                         }
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else if let Some(status) = above_status {
                         // At top of column - move to column above
                         self.save_scroll_offset();
@@ -1978,6 +1986,7 @@ impl App {
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     }
                 } else if let Some(status) = above_status {
                     // No task selected (empty column) - move to column above
@@ -1991,6 +2000,7 @@ impl App {
                     self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 }
             }
 
@@ -2034,12 +2044,14 @@ impl App {
                     self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.selected_task_idx = if tasks_len > 0 { Some(0) } else { None };
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 // If on a divider_below, move to next task
                 } else if self.model.ui_state.selected_is_divider {
                     if current_idx + 1 < tasks_len {
                         self.model.ui_state.selected_task_idx = Some(current_idx + 1);
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else if let Some(status) = below_status {
                         // Move to column below
                         self.save_scroll_offset();
@@ -2048,6 +2060,7 @@ impl App {
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else {
                         // At bottom of Review/Done - focus task input
                         self.save_scroll_offset();
@@ -2060,6 +2073,7 @@ impl App {
                     self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 } else if self.model.ui_state.selected_task_idx.is_none() && tasks_len == 0 {
                     // Empty column - move to column below or focus task input
                     if let Some(status) = below_status {
@@ -2069,6 +2083,7 @@ impl App {
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     } else {
                         // At bottom row (Review/Done) - focus task input
                         self.save_scroll_offset();
@@ -2078,10 +2093,12 @@ impl App {
                     // Current task has a divider - select it
                     self.model.ui_state.selected_is_divider = true;
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 } else if current_idx + 1 < tasks_len {
                     self.model.ui_state.selected_task_idx = Some(current_idx + 1);
                     self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 } else if let Some(status) = below_status {
                     // At bottom of column - move to column below
                     self.save_scroll_offset();
@@ -2090,6 +2107,7 @@ impl App {
                     self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 } else {
                     // At bottom of Review/Done column - focus task input
                     self.save_scroll_offset();
@@ -2110,6 +2128,7 @@ impl App {
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     }
                 }
             }
@@ -2127,6 +2146,7 @@ impl App {
                         self.model.ui_state.selected_is_divider = false;
                         self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
                     }
                 }
             }
@@ -2144,6 +2164,8 @@ impl App {
                 self.model.ui_state.animation_frame = self.model.ui_state.animation_frame.wrapping_add(1);
 
                 // Animate scroll for long task titles (every tick = ~100ms)
+                // Wait ~1 second (10 ticks) before starting to scroll so user can read the first word
+                const SCROLL_DELAY_TICKS: usize = 10;
                 if let Some(task_idx) = self.model.ui_state.selected_task_idx {
                     if let Some(project) = self.model.active_project() {
                         let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
@@ -2151,10 +2173,16 @@ impl App {
                             let title_len = task.title.chars().count();
                             // Only scroll if title is long (assume ~30 char display width)
                             if title_len > 25 {
-                                self.model.ui_state.title_scroll_offset += 1;
-                                // Wrap around with a pause at the start
-                                if self.model.ui_state.title_scroll_offset > title_len + 5 {
-                                    self.model.ui_state.title_scroll_offset = 0;
+                                if self.model.ui_state.title_scroll_delay < SCROLL_DELAY_TICKS {
+                                    // Wait before starting to scroll
+                                    self.model.ui_state.title_scroll_delay += 1;
+                                } else {
+                                    self.model.ui_state.title_scroll_offset += 1;
+                                    // Wrap around with a pause at the start
+                                    if self.model.ui_state.title_scroll_offset > title_len + 5 {
+                                        self.model.ui_state.title_scroll_offset = 0;
+                                        self.model.ui_state.title_scroll_delay = 0;
+                                    }
                                 }
                             }
                         }

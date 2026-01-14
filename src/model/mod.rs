@@ -357,6 +357,8 @@ pub struct UiState {
     pub editing_divider_is_above: bool,
     /// Scroll offset for long task titles (marquee effect)
     pub title_scroll_offset: usize,
+    /// Delay counter before scrolling starts (ticks to wait)
+    pub title_scroll_delay: usize,
     /// Pending images to attach to next created task
     pub pending_images: Vec<PathBuf>,
     /// If true, a divider below is selected (below the task at selected_task_idx)
@@ -427,6 +429,7 @@ impl Default for UiState {
             editing_divider_id: None,
             editing_divider_is_above: false,
             title_scroll_offset: 0,
+            title_scroll_delay: 0,
             pending_images: Vec::new(),
             selected_is_divider: false,
             selected_is_divider_above: false,
