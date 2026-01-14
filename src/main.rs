@@ -42,9 +42,6 @@ fn main() -> anyhow::Result<()> {
     let model = load_state().unwrap_or_default();
     let mut app = App::with_model(model);
 
-    // Scan for existing Claude sessions
-    app.update(Message::RefreshProjects);
-
     // Create hook watcher for completion detection
     let hook_watcher = HookWatcher::new().ok();
 
@@ -505,7 +502,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::FocusChanged(next_focus)]
         }
 
-        // Switch to task's tmux window, or fallback to project session
+        // Switch to task's tmux window
         KeyCode::Char('o') => {
             // If a task with a tmux window is selected, switch to that task's window
             if let Some(project) = app.model.active_project() {
@@ -519,8 +516,6 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     }
                 }
             }
-            // Fallback: switch to project's main session
-            app.switch_to_claude_session();
             vec![]
         }
 
@@ -571,10 +566,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Refresh - re-scan tmux for Claude sessions
-        KeyCode::Char('R') => vec![Message::RefreshProjects],
-
-        // Reload Claude hooks (Ctrl-R) - reset Claude to pick up new hooks
+        // Reload Claude hooks (Ctrl-R) - install hooks for active project
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             vec![Message::ReloadClaudeHooks]
         }
@@ -824,15 +816,6 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             let idx = c.to_digit(10).unwrap() as usize - 1;
             vec![Message::SwitchProject(idx)]
-        }
-
-        // Session switching within project
-        KeyCode::Char(']') => vec![Message::NextSession],
-        KeyCode::Char('[') => vec![Message::PrevSession],
-
-        // Spawn new Claude session
-        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            vec![Message::SpawnNewSession]
         }
 
         // Paste image (Ctrl+V)

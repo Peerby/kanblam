@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-/// Render the status bar with project tabs and summary
+/// Render the status bar with project info and summary
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     // If there's a pending confirmation, show it prominently
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
@@ -37,20 +37,20 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(20),      // Session info
+            Constraint::Min(20),      // Project info
             Constraint::Length(30),   // Summary stats
         ])
         .split(area);
 
-    // Render session info for current project
-    render_session_info(frame, chunks[0], app);
+    // Render project info
+    render_project_info(frame, chunks[0], app);
 
     // Render summary
     render_summary(frame, chunks[1], app);
 }
 
-/// Render session info for the current project
-fn render_session_info(frame: &mut Frame, area: Rect, app: &App) {
+/// Render project info for the current project
+fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
     let Some(project) = app.model.active_project() else {
         let no_project = Paragraph::new(Span::styled(
             " No project selected ",
@@ -60,46 +60,23 @@ fn render_session_info(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
+    // Count active tasks
+    let active_count = project.tasks.iter()
+        .filter(|t| t.session_state.is_active())
+        .count();
+
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        &project.name,
+        Style::default().fg(Color::Cyan),
+    ));
 
-    // Show tmux sessions for this project
-    if project.tmux_sessions.is_empty() {
+    if active_count > 0 {
         spans.push(Span::styled(
-            "No Claude sessions",
-            Style::default().fg(Color::DarkGray),
+            format!(" ({} active Claude session{})", active_count, if active_count == 1 { "" } else { "s" }),
+            Style::default().fg(Color::Green),
         ));
-        spans.push(Span::styled(
-            " - press Enter on a task to start one",
-            Style::default().fg(Color::DarkGray),
-        ));
-    } else {
-        spans.push(Span::styled("Claude sessions: ", Style::default().fg(Color::Gray)));
-
-        for (idx, _session) in project.tmux_sessions.iter().enumerate() {
-            let is_active = idx == project.active_session_idx;
-
-            let style = if is_active {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-
-            // Show user-friendly session number (1-9)
-            let session_text = format!(" {} ", idx + 1);
-            spans.push(Span::styled(session_text, style));
-        }
-
-        // Show keyboard hint for switching
-        if project.tmux_sessions.len() > 1 {
-            spans.push(Span::styled(
-                " [/] to switch",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
     }
 
     let info = Paragraph::new(ratatui::text::Line::from(spans));

@@ -71,15 +71,6 @@ impl App {
         }
     }
 
-    /// Switch tmux client to the session containing the Claude session for active project
-    pub fn switch_to_claude_session(&self) {
-        if let Some(project) = self.model.active_project() {
-            if let Some(pane_id) = project.active_tmux_session() {
-                let _ = crate::tmux::switch_to_session(pane_id);
-            }
-        }
-    }
-
     /// Calculate and save the current visual scroll position for the current column
     /// Call this before switching to a different column
     fn save_scroll_offset(&mut self) {
@@ -628,17 +619,18 @@ impl App {
             }
 
             Message::StartTask(task_id) => {
+                // Legacy StartTask handler for non-git repos
+                // For git repos, use StartTaskWithWorktree instead
                 if let Some(project) = self.model.active_project_mut() {
                     // Get task status first
                     let task_status = project.tasks.iter()
                         .find(|t| t.id == task_id)
                         .map(|t| t.status);
 
-                    // Handle reset tasks from Review or NeedsInput
+                    // Handle reset tasks from Review or NeedsInput (legacy path)
                     if matches!(task_status, Some(TaskStatus::Review) | Some(TaskStatus::NeedsInput)) {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.status = TaskStatus::InProgress;
-                            // Clear attention state since we're actively working on it
                             project.needs_attention = false;
                             notify::clear_attention_indicator();
                             commands.push(Message::SetStatusMessage(Some(
@@ -659,51 +651,11 @@ impl App {
                                 )));
                             }
                         }
-                    } else if matches!(task_status, Some(TaskStatus::Planned) | Some(TaskStatus::Queued)) {
-                        // No active task - start immediately
-                        // Check if we have an active session, if not spawn one
-                        if project.tmux_sessions.is_empty() {
-                            // Spawn a new session for this project
-                            let working_dir = project.working_dir.clone();
-                            let project_name = project.name.clone();
-                            match crate::tmux::spawn_claude_session(&working_dir, &project_name) {
-                                Ok(pane_id) => {
-                                    project.add_session(pane_id.clone());
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        format!("Started new Claude session: {}", pane_id)
-                                    )));
-                                    // Note: We'll need to wait for Claude to initialize
-                                    // For now, just record the session - user can retry starting the task
-                                    return commands;
-                                }
-                                Err(e) => {
-                                    commands.push(Message::Error(format!("Failed to spawn Claude session: {}", e)));
-                                    return commands;
-                                }
-                            }
-                        }
-
-                        // Get pane_id first (before mutable borrow of tasks)
-                        let pane_id = project.active_tmux_session().cloned();
-
-                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                            // Start Claude with the task using the active session
-                            if let Some(pane_id) = pane_id {
-                                match crate::tmux::start_claude_task(
-                                    &pane_id,
-                                    &task.title,
-                                    &task.images,
-                                ) {
-                                    Ok(()) => {
-                                        task.status = TaskStatus::InProgress;
-                                        task.started_at = Some(Utc::now());
-                                    }
-                                    Err(e) => {
-                                        commands.push(Message::Error(format!("Failed to start Claude: {}", e)));
-                                    }
-                                }
-                            }
-                        }
+                    } else {
+                        // For non-git repos, just show an error - worktree isolation required
+                        commands.push(Message::Error(
+                            "Cannot start task: project is not a git repository. Worktree isolation requires git.".to_string()
+                        ));
                     }
                 }
             }
@@ -1642,41 +1594,6 @@ impl App {
                 self.model.projects.push(project);
             }
 
-            Message::RefreshProjects => {
-                // First, migrate any legacy tmux_session fields
-                for project in &mut self.model.projects {
-                    project.migrate_legacy_session();
-                }
-
-                // Scan tmux sessions for Claude instances
-                if let Ok(sessions) = crate::tmux::detect_claude_sessions() {
-                    for session in sessions {
-                        // Check if we already have this project
-                        let existing = self.model.projects.iter_mut().find(|p| {
-                            p.working_dir == session.working_dir
-                        });
-
-                        if let Some(project) = existing {
-                            // Add the detected session to existing project
-                            project.add_session(session.pane_id);
-                            // Check if hooks are installed
-                            project.hooks_installed = crate::hooks::hooks_installed(&project.working_dir);
-                        } else {
-                            // Create new project for this session
-                            let name = session.working_dir
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| session.session_name.clone());
-
-                            let mut project = Project::new(name, session.working_dir.clone());
-                            project.add_session(session.pane_id);
-                            project.hooks_installed = crate::hooks::hooks_installed(&session.working_dir);
-                            self.model.projects.push(project);
-                        }
-                    }
-                }
-            }
-
             Message::ReloadClaudeHooks => {
                 if let Some(project) = self.model.active_project() {
                     let name = project.name.clone();
@@ -1692,15 +1609,10 @@ impl App {
                             action: PendingAction::InstallHooks,
                         });
                     } else {
-                        // Just ask to reload
-                        commands.push(Message::ShowConfirmation {
-                            message: format!(
-                                "Reload Claude for '{}'? This will run /exit then 'claude --continue'. (y/n)\n\
-                                 Manual: wait for Claude to be idle, then /exit and run 'claude --continue'",
-                                name
-                            ),
-                            action: PendingAction::ReloadClaude,
-                        });
+                        // Hooks already installed - show status
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Hooks already installed for '{}'. To reload: /exit then 'claude --continue'", name)
+                        )));
                     }
                 }
             }
@@ -1739,18 +1651,10 @@ impl App {
                             }
                         }
                         PendingAction::ReloadClaude => {
-                            // Reload the active project's Claude session
-                            if let Some(project) = self.model.active_project() {
-                                if let Some(pane_id) = project.active_tmux_session().cloned() {
-                                    if let Err(e) = crate::tmux::reload_claude_session(&pane_id) {
-                                        commands.push(Message::Error(format!("Failed to reload: {}", e)));
-                                    } else {
-                                        commands.push(Message::SetStatusMessage(Some(
-                                            "Claude reloading... hooks will be active on reset.".to_string()
-                                        )));
-                                    }
-                                }
-                            }
+                            // Hooks installed - show manual reload instructions
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Hooks installed! To reload: /exit in Claude, then run 'claude --continue'".to_string()
+                            )));
                         }
                         PendingAction::DeleteTask(task_id) => {
                             // Actually delete the task
@@ -1783,38 +1687,6 @@ impl App {
 
             Message::SetStatusMessage(msg) => {
                 self.model.ui_state.status_message = msg;
-            }
-
-            Message::NextSession => {
-                if let Some(project) = self.model.active_project_mut() {
-                    project.next_session();
-                }
-            }
-
-            Message::PrevSession => {
-                if let Some(project) = self.model.active_project_mut() {
-                    project.prev_session();
-                }
-            }
-
-            Message::SpawnNewSession => {
-                if let Some(project) = self.model.active_project_mut() {
-                    let working_dir = project.working_dir.clone();
-                    let project_name = project.name.clone();
-                    match crate::tmux::spawn_claude_session(&working_dir, &project_name) {
-                        Ok(pane_id) => {
-                            project.add_session(pane_id.clone());
-                            // Make the new session active
-                            project.active_session_idx = project.tmux_sessions.len() - 1;
-                            commands.push(Message::SetStatusMessage(Some(
-                                format!("Started new Claude session: {}", pane_id)
-                            )));
-                        }
-                        Err(e) => {
-                            commands.push(Message::Error(format!("Failed to spawn Claude session: {}", e)));
-                        }
-                    }
-                }
             }
 
             Message::HookSignalReceived(signal) => {

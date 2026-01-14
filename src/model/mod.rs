@@ -48,15 +48,6 @@ pub struct Project {
     pub name: String,
     pub working_dir: PathBuf,
     pub tasks: Vec<Task>,
-    /// Multiple tmux sessions can be associated with a project
-    #[serde(default)]
-    pub tmux_sessions: Vec<String>,
-    /// Which session is currently active/highlighted
-    #[serde(default)]
-    pub active_session_idx: usize,
-    /// Legacy field for backward compatibility - will be migrated to tmux_sessions
-    #[serde(default, skip_serializing)]
-    pub tmux_session: Option<String>,
     pub needs_attention: bool,
     pub created_at: DateTime<Utc>,
     #[serde(skip)]
@@ -72,9 +63,6 @@ impl Project {
             name,
             working_dir,
             tasks: Vec::new(),
-            tmux_sessions: Vec::new(),
-            active_session_idx: 0,
-            tmux_session: None, // Legacy, will be migrated
             needs_attention: false,
             created_at: Utc::now(),
             captured_output: String::new(),
@@ -96,54 +84,6 @@ impl Project {
     /// Check if project directory is a git repository
     pub fn is_git_repo(&self) -> bool {
         crate::worktree::git::is_git_repo(&self.working_dir)
-    }
-
-    /// Migrate legacy tmux_session to tmux_sessions if needed
-    pub fn migrate_legacy_session(&mut self) {
-        if let Some(session) = self.tmux_session.take() {
-            if !self.tmux_sessions.contains(&session) {
-                self.tmux_sessions.push(session);
-            }
-        }
-    }
-
-    /// Get the currently active tmux session
-    pub fn active_tmux_session(&self) -> Option<&String> {
-        self.tmux_sessions.get(self.active_session_idx)
-    }
-
-    /// Add a tmux session if not already present
-    pub fn add_session(&mut self, session: String) {
-        if !self.tmux_sessions.contains(&session) {
-            self.tmux_sessions.push(session);
-        }
-    }
-
-    /// Remove a tmux session
-    pub fn remove_session(&mut self, session: &str) {
-        self.tmux_sessions.retain(|s| s != session);
-        // Adjust active_session_idx if needed
-        if self.active_session_idx >= self.tmux_sessions.len() && !self.tmux_sessions.is_empty() {
-            self.active_session_idx = self.tmux_sessions.len() - 1;
-        }
-    }
-
-    /// Select next session (wrap around)
-    pub fn next_session(&mut self) {
-        if !self.tmux_sessions.is_empty() {
-            self.active_session_idx = (self.active_session_idx + 1) % self.tmux_sessions.len();
-        }
-    }
-
-    /// Select previous session (wrap around)
-    pub fn prev_session(&mut self) {
-        if !self.tmux_sessions.is_empty() {
-            if self.active_session_idx == 0 {
-                self.active_session_idx = self.tmux_sessions.len() - 1;
-            } else {
-                self.active_session_idx -= 1;
-            }
-        }
     }
 
     pub fn tasks_by_status(&self, status: TaskStatus) -> Vec<&Task> {

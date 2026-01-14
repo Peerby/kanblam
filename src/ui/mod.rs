@@ -101,7 +101,7 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
 fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
     if app.model.projects.is_empty() {
         let no_projects = Paragraph::new(Span::styled(
-            " No projects - waiting for Claude sessions... ",
+            " No projects - create one or add tasks ",
             Style::default().fg(Color::DarkGray),
         ));
         frame.render_widget(no_projects, area);
@@ -415,17 +415,11 @@ fn render_help(frame: &mut Frame) {
         Line::from("  u          Undo"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Sessions", Style::default().add_modifier(Modifier::UNDERLINED)),
-        ]),
-        Line::from("  o          Switch to Claude session"),
-        Line::from("  [/]        Prev/Next session in project"),
-        Line::from("  Ctrl-N     Spawn new Claude session"),
-        Line::from("  R          Refresh (re-scan tmux)"),
-        Line::from("  Ctrl-R     Install hooks & reload Claude"),
-        Line::from(""),
-        Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
+        Line::from("  o          Switch to task's Claude session"),
+        Line::from("  t          Open test shell in worktree"),
+        Line::from("  Ctrl-R     Install hooks"),
         Line::from("  ?          Toggle this help"),
         Line::from("  q          Quit"),
         Line::from(""),

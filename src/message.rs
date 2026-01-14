@@ -66,13 +66,7 @@ pub enum Message {
     // Project operations
     SwitchProject(usize),
     AddProject { name: String, working_dir: PathBuf },
-    RefreshProjects,
     ReloadClaudeHooks,
-
-    // Session operations (within a project)
-    NextSession,
-    PrevSession,
-    SpawnNewSession,
 
     // Claude/Hook events
     HookSignalReceived(HookSignal),
