@@ -201,10 +201,12 @@ pub fn merge_with_project_settings(
                     }]
                 },
                 {
+                    // idle_prompt fires after 60+ seconds of Claude being idle at the prompt
+                    // This means Claude is done, not waiting for input - send stop signal
                     "matcher": "idle_prompt",
                     "hooks": [{
                         "type": "command",
-                        "command": format!("{} signal needs-input {}", kanclaude_bin, task_id)
+                        "command": format!("{} signal stop {}", kanclaude_bin, task_id)
                     }]
                 }
             ],
