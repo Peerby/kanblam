@@ -38,8 +38,8 @@ pub enum Message {
     CompleteAcceptTask(Uuid),
     /// Discard a task - delete worktree and branch without merging
     DiscardTask(Uuid),
-    /// Restart a task - discard all changes and start fresh
-    RestartTask(Uuid),
+    /// Reset a task - discard all changes and start fresh (moved to top of Planned)
+    ResetTask(Uuid),
     /// Switch to the task's tmux window (focuses the Claude session)
     SwitchToTaskWindow(Uuid),
     /// Open a test shell in the task's worktree

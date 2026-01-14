@@ -5,6 +5,24 @@
       {
         "hooks": [
           {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal needs-input 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ],
+        "matcher": "permission_prompt"
+      },
+      {
+        "hooks": [
+          {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal needs-input 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ],
+        "matcher": "idle_prompt"
+      },
+      {
+        "hooks": [
+          {
             "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal needs-input a6004105-fcef-40d3-8741-c259fdefc420",
             "type": "command"
           }
@@ -43,6 +61,14 @@
       {
         "hooks": [
           {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal working 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
             "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal working a6004105-fcef-40d3-8741-c259fdefc420",
             "type": "command"
           }
@@ -58,6 +84,14 @@
       }
     ],
     "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal end 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ]
+      },
       {
         "hooks": [
           {
@@ -79,6 +113,14 @@
       {
         "hooks": [
           {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal stop 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
             "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal stop a6004105-fcef-40d3-8741-c259fdefc420",
             "type": "command"
           }
@@ -94,6 +136,14 @@
       }
     ],
     "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "/Users/daan/code/kanclaude/target/debug/kanclaude signal input-provided 0263f889-aa98-4835-86a5-a56508e54a82",
+            "type": "command"
+          }
+        ]
+      },
       {
         "hooks": [
           {

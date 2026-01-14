@@ -634,7 +634,7 @@ impl App {
                         .find(|t| t.id == task_id)
                         .map(|t| t.status);
 
-                    // Handle restarting tasks from Review or NeedsInput
+                    // Handle reset tasks from Review or NeedsInput
                     if matches!(task_status, Some(TaskStatus::Review) | Some(TaskStatus::NeedsInput)) {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.status = TaskStatus::InProgress;
@@ -642,7 +642,7 @@ impl App {
                             project.needs_attention = false;
                             notify::clear_attention_indicator();
                             commands.push(Message::SetStatusMessage(Some(
-                                "Task restarted".to_string()
+                                "Task reset".to_string()
                             )));
                         }
                         return commands;
@@ -886,7 +886,7 @@ impl App {
                         }
                     } else {
                         commands.push(Message::SetStatusMessage(Some(
-                            "Task window no longer exists. Restart with Enter.".to_string()
+                            "Task window no longer exists. Reset with Enter.".to_string()
                         )));
                     }
                 } else {
@@ -994,7 +994,7 @@ impl App {
                             if crate::tmux::task_window_exists(&project_slug, win) {
                                 Some(win.clone())
                             } else {
-                                // Session ended - restart Claude in the worktree
+                                // Session ended - reset Claude in the worktree
                                 if let Some(ref wt_path) = worktree_path {
                                     match crate::tmux::create_task_window(&project_slug, &task_id.to_string(), wt_path) {
                                         Ok(new_win) => {
@@ -1236,7 +1236,7 @@ impl App {
                 }
             }
 
-            Message::RestartTask(task_id) => {
+            Message::ResetTask(task_id) => {
                 // Get all necessary info before mutating
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -1269,9 +1269,13 @@ impl App {
                         let _ = crate::worktree::delete_branch(&project_dir, task_id);
                     }
 
-                    // Reset task state to fresh Planned
+                    // Reset task state to fresh Planned and move to top of Planned list
                     if let Some(project) = self.model.active_project_mut() {
-                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        // Find and remove the task from its current position
+                        if let Some(task_idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                            let mut task = project.tasks.remove(task_idx);
+
+                            // Reset task state
                             task.status = TaskStatus::Planned;
                             task.worktree_path = None;
                             task.git_branch = None;
@@ -1281,11 +1285,26 @@ impl App {
                             task.started_at = None;
                             task.completed_at = None;
                             task.queued_for_session = None;
+
+                            // Find the position of the first Planned task to insert before it
+                            let insert_pos = project.tasks.iter()
+                                .position(|t| t.status == TaskStatus::Planned)
+                                .unwrap_or(0);
+
+                            // Insert at top of Planned list
+                            project.tasks.insert(insert_pos, task);
                         }
                     }
 
+                    // Select the Planned column and highlight the reset task
+                    self.model.ui_state.selected_column = TaskStatus::Planned;
+                    self.model.ui_state.selected_task_idx = Some(0);
+                    self.model.ui_state.selected_task_id = Some(task_id);
+                    self.model.ui_state.selected_is_divider = false;
+                    self.model.ui_state.selected_is_divider_above = false;
+
                     commands.push(Message::SetStatusMessage(Some(
-                        "Task reset to Planned. Press Enter to start fresh.".to_string()
+                        "Task reset to Planned (top). Press Enter to start fresh.".to_string()
                     )));
                 }
             }
@@ -1727,7 +1746,7 @@ impl App {
                                         commands.push(Message::Error(format!("Failed to reload: {}", e)));
                                     } else {
                                         commands.push(Message::SetStatusMessage(Some(
-                                            "Claude reloading... hooks will be active on restart.".to_string()
+                                            "Claude reloading... hooks will be active on reset.".to_string()
                                         )));
                                     }
                                 }

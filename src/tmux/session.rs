@@ -231,7 +231,7 @@ pub fn send_to_pane(pane_id: &str, text: &str) -> Result<()> {
 }
 
 /// Reload Claude session to pick up new hooks
-/// Sends /exit then `claude --continue` to restart with fresh config
+/// Sends /exit then `claude --continue` to reset with fresh config
 pub fn reload_claude_session(pane_id: &str) -> Result<()> {
     // Send /exit command
     let output = Command::new("tmux")
@@ -246,14 +246,14 @@ pub fn reload_claude_session(pane_id: &str) -> Result<()> {
     // Wait for Claude to exit
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // Restart with --continue to resume the session with fresh hooks
+    // Reset with --continue to resume the session with fresh hooks
     let output = Command::new("tmux")
         .args(["send-keys", "-t", pane_id, "claude --continue", "Enter"])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Failed to restart Claude: {}", stderr));
+        return Err(anyhow!("Failed to reset Claude: {}", stderr));
     }
 
     Ok(())

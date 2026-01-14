@@ -437,7 +437,7 @@ fn render_task_preview(frame: &mut Frame, area: Rect, app: &App) {
                     Span::styled("p", key_style),
                     Span::styled(" plan  ", desc_style),
                     Span::styled("⏎", key_style),
-                    Span::styled(" restart ", desc_style),
+                    Span::styled(" Reset ", desc_style),
                 ])
             }
         }

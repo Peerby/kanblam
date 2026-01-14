@@ -569,7 +569,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Refresh - re-scan tmux for Claude sessions
         KeyCode::Char('R') => vec![Message::RefreshProjects],
 
-        // Reload Claude hooks (Ctrl-R) - restart Claude to pick up new hooks
+        // Reload Claude hooks (Ctrl-R) - reset Claude to pick up new hooks
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             vec![Message::ReloadClaudeHooks]
         }
@@ -602,7 +602,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                                 if task.worktree_path.is_some() {
                                     return vec![Message::ContinueTask(task.id)];
                                 } else {
-                                    // Legacy: restart without worktree
+                                    // Legacy: reset without worktree
                                     return vec![Message::StartTask(task.id)];
                                 }
                             }
@@ -694,16 +694,16 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // 'r' key: Restart task in Review/InProgress/NeedsInput, or move to Review from other columns
+        // 'r' key: Reset task in Review/InProgress/NeedsInput, or move to Review from other columns
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // In Review, InProgress, or NeedsInput: restart the task (clean up and reset to Planned)
+                        // In Review, InProgress, or NeedsInput: reset the task (clean up and reset to top of Planned)
                         if matches!(column, TaskStatus::Review | TaskStatus::InProgress | TaskStatus::NeedsInput) {
-                            return vec![Message::RestartTask(task.id)];
+                            return vec![Message::ResetTask(task.id)];
                         }
                         // In other columns: move to Review
                         if column != TaskStatus::Review {
