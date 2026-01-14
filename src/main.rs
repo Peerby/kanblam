@@ -45,6 +45,20 @@ fn main() -> anyhow::Result<()> {
     // Create hook watcher for completion detection
     let hook_watcher = HookWatcher::new().ok();
 
+    // Process any signals that arrived while app was not running
+    if let Some(ref watcher) = hook_watcher {
+        let pending_events = watcher.process_all_pending();
+        for event in pending_events {
+            if let Some(msg) = convert_watcher_event(event) {
+                let commands = app.update(msg);
+                // Process any commands generated
+                for cmd in commands {
+                    app.update(cmd);
+                }
+            }
+        }
+    }
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();

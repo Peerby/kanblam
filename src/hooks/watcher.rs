@@ -144,6 +144,76 @@ impl HookWatcher {
     pub fn signal_dir(&self) -> &PathBuf {
         &self.signal_dir
     }
+
+    /// Process all existing signal files in the directory
+    /// Call this on startup to catch signals written while app was not running
+    pub fn process_all_pending(&self) -> Vec<WatcherEvent> {
+        let mut events = Vec::new();
+
+        let entries = match std::fs::read_dir(&self.signal_dir) {
+            Ok(entries) => entries,
+            Err(_) => return events,
+        };
+
+        // Collect and sort signal files by name (includes timestamp)
+        let mut signal_files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "json")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        // Sort by filename to process in chronological order
+        signal_files.sort_by_key(|e| e.file_name());
+
+        for entry in signal_files {
+            let path = entry.path();
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
+                    // Delete the signal file after reading
+                    let _ = std::fs::remove_file(&path);
+
+                    let event = match signal.event.as_str() {
+                        "stop" => Some(WatcherEvent::ClaudeStopped {
+                            session_id: signal.session_id,
+                            project_dir: signal.project_dir,
+                        }),
+                        "end" => Some(WatcherEvent::SessionEnded {
+                            session_id: signal.session_id,
+                            project_dir: signal.project_dir,
+                            reason: signal.reason,
+                        }),
+                        "needs-input" => Some(WatcherEvent::NeedsInput {
+                            session_id: signal.session_id,
+                            project_dir: signal.project_dir,
+                            input_type: signal.input_type,
+                        }),
+                        "input-provided" => Some(WatcherEvent::InputProvided {
+                            session_id: signal.session_id,
+                            project_dir: signal.project_dir,
+                        }),
+                        "working" => Some(WatcherEvent::Working {
+                            session_id: signal.session_id,
+                            project_dir: signal.project_dir,
+                        }),
+                        _ => None,
+                    };
+
+                    if let Some(e) = event {
+                        events.push(e);
+                    }
+                } else {
+                    // Invalid JSON - delete corrupted file
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+
+        events
+    }
 }
 
 /// Get the signal directory path
