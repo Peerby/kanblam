@@ -207,6 +207,53 @@ pub fn start_claude_in_window(project_slug: &str, window_name: &str) -> Result<(
     Ok(())
 }
 
+/// Start Claude with --resume in a task window (for CLI handoff from SDK)
+pub fn send_resume_command(project_slug: &str, window_name: &str, session_id: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Send claude --resume <session_id> command
+    let resume_cmd = format!("claude --resume {}", session_id);
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", &target, &resume_cmd, "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to send resume command: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Send a key sequence to a tmux pane (for interactive modal)
+pub fn send_key_to_pane(target: &str, key: &str) -> Result<()> {
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", target, key])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to send key: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Capture pane content with ANSI escape codes (for terminal rendering)
+pub fn capture_pane_with_escapes(target: &str) -> Result<String> {
+    let output = Command::new("tmux")
+        .args(["capture-pane", "-t", target, "-p", "-e"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to capture pane: {}", stderr));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// Wait for Claude to be ready (shows prompt) with timeout
 pub fn wait_for_claude_ready(project_slug: &str, window_name: &str, timeout_ms: u64) -> Result<bool> {
     let session_name = format!("kc-{}", project_slug);

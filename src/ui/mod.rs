@@ -1,3 +1,4 @@
+mod interactive_modal;
 mod kanban;
 mod output;
 mod status_bar;
@@ -14,6 +15,7 @@ use ratatui::{
     Frame,
 };
 
+pub use interactive_modal::render_interactive_modal;
 pub use kanban::render_kanban;
 pub use output::render_output;
 pub use status_bar::render_status_bar;
@@ -22,6 +24,12 @@ pub use status_bar::render_status_bar;
 /// In tmux-split mode, we only render the kanban board (left pane)
 /// The Claude session runs in an actual tmux pane on the right
 pub fn view(frame: &mut Frame, app: &mut App) {
+    // Check if interactive modal is active - it takes over the entire screen
+    if let Some(ref modal) = app.model.ui_state.interactive_modal {
+        render_interactive_modal(frame, modal);
+        return;
+    }
+
     // Calculate dynamic input height based on editor content
     let frame_width = frame.area().width.saturating_sub(4) as usize; // Account for borders
     let input_height = calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width);
@@ -417,7 +425,7 @@ fn render_help(frame: &mut Frame) {
         Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  o          Switch to task's Claude session"),
+        Line::from("  o          Interactive Claude (Ctrl-Esc to exit)"),
         Line::from("  t          Open test shell in worktree"),
         Line::from("  Ctrl-R     Install hooks"),
         Line::from("  ?          Toggle this help"),

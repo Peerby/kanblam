@@ -4,6 +4,7 @@ mod image;
 mod message;
 mod model;
 mod notify;
+mod sidecar;
 mod tmux;
 mod ui;
 mod worktree;
@@ -40,7 +41,17 @@ fn main() -> anyhow::Result<()> {
 
     // Load saved state
     let model = load_state().unwrap_or_default();
-    let mut app = App::with_model(model);
+
+    // Start sidecar and connect
+    let sidecar_client = match sidecar::ensure_sidecar_running() {
+        Ok(()) => sidecar::SidecarClient::connect().ok(),
+        Err(_) => None,
+    };
+
+    // Create event receiver for sidecar notifications
+    let sidecar_receiver = sidecar::SidecarEventReceiver::connect().ok();
+
+    let mut app = App::with_model(model).with_sidecar(sidecar_client);
 
     // Create hook watcher for completion detection
     let hook_watcher = HookWatcher::new().ok();
@@ -71,7 +82,7 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Run the main loop
-    let result = run_app(&mut terminal, &mut app, hook_watcher);
+    let result = run_app(&mut terminal, &mut app, hook_watcher, sidecar_receiver);
 
     // Restore terminal
     disable_raw_mode()?;
@@ -94,6 +105,7 @@ fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     hook_watcher: Option<HookWatcher>,
+    mut sidecar_receiver: Option<sidecar::SidecarEventReceiver>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -114,8 +126,33 @@ where
             }
         }
 
+        // Poll sidecar events (SDK session notifications)
+        if let Some(ref mut receiver) = sidecar_receiver {
+            // Poll multiple times to catch queued events
+            for _ in 0..10 {
+                match receiver.try_recv(Duration::from_millis(1)) {
+                    Ok(Some(event)) => {
+                        let msg = Message::SidecarEvent(event);
+                        let commands = app.update(msg);
+                        for cmd in commands {
+                            app.update(cmd);
+                        }
+                    }
+                    Ok(None) => break, // No more events
+                    Err(_) => break,   // Error, stop polling
+                }
+            }
+        }
+
         // Handle events with timeout for tick
-        if event::poll(Duration::from_millis(100))? {
+        // Use shorter timeout when modal is open for responsive rendering
+        let poll_timeout = if app.model.ui_state.interactive_modal.is_some() {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(100)
+        };
+
+        if event::poll(poll_timeout)? {
             match event::read()? {
                 Event::Key(key) => {
                     // Only handle Press events, ignore Release and Repeat
@@ -123,8 +160,17 @@ where
                         continue;
                     }
 
-                    // Handle input mode directly with textarea
-                    if app.model.ui_state.focus == FocusArea::TaskInput {
+                    // Check if interactive modal is active
+                    if app.model.ui_state.interactive_modal.is_some() {
+                        let messages = handle_interactive_modal_input(key, app);
+                        for msg in messages {
+                            let commands = app.update(msg);
+                            for cmd in commands {
+                                app.update(cmd);
+                            }
+                        }
+                    } else if app.model.ui_state.focus == FocusArea::TaskInput {
+                        // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
                         for msg in messages {
                             let commands = app.update(msg);
@@ -143,6 +189,10 @@ where
                     }
                 }
                 Event::Mouse(mouse) => {
+                    // Ignore mouse events when modal is open
+                    if app.model.ui_state.interactive_modal.is_some() {
+                        continue;
+                    }
                     let size = terminal.size()?;
                     let rect = Rect::new(0, 0, size.width, size.height);
                     if let Some(msg) = handle_mouse_event(mouse, app, rect) {
@@ -165,6 +215,98 @@ where
     }
 
     Ok(())
+}
+
+/// Handle keyboard input when the interactive modal is active
+/// Ctrl-Esc closes the modal, PageUp/PageDown scroll, other keys are forwarded to tmux
+fn handle_interactive_modal_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Ctrl-Esc or Ctrl-q: close the modal and return to app
+    if ctrl && (key.code == KeyCode::Esc || key.code == KeyCode::Char('q')) {
+        return vec![Message::CloseInteractiveModal];
+    }
+
+    // PageUp/PageDown: scroll the modal view (don't forward to tmux)
+    match key.code {
+        KeyCode::PageUp => {
+            if let Some(ref mut modal) = app.model.ui_state.interactive_modal {
+                modal.scroll_offset = modal.scroll_offset.saturating_sub(10);
+            }
+            return vec![];
+        }
+        KeyCode::PageDown => {
+            if let Some(ref mut modal) = app.model.ui_state.interactive_modal {
+                modal.scroll_offset = modal.scroll_offset.saturating_add(10);
+            }
+            return vec![];
+        }
+        _ => {}
+    }
+
+    // Get the tmux target from the modal
+    let Some(ref modal) = app.model.ui_state.interactive_modal else {
+        return vec![];
+    };
+
+    // Forward the key to tmux
+    let key_sequence = key_event_to_tmux_sequence(key);
+    if !key_sequence.is_empty() {
+        if let Err(_e) = tmux::send_key_to_pane(&modal.tmux_target, &key_sequence) {
+            // Window is gone - close the modal automatically
+            return vec![Message::CloseInteractiveModal];
+        }
+    }
+
+    vec![]
+}
+
+/// Convert a crossterm KeyEvent to a tmux send-keys sequence
+fn key_event_to_tmux_sequence(key: event::KeyEvent) -> String {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+    match key.code {
+        // Special keys
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "BSpace".to_string(),
+        KeyCode::Esc => "Escape".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Delete => "DC".to_string(),
+        KeyCode::Insert => "IC".to_string(),
+
+        // Function keys
+        KeyCode::F(n) => format!("F{}", n),
+
+        // Character keys with modifiers
+        KeyCode::Char(c) => {
+            if ctrl {
+                // Ctrl+key: send as C-<key>
+                format!("C-{}", c)
+            } else if alt {
+                // Alt+key: send as M-<key>
+                format!("M-{}", c)
+            } else {
+                // Plain character - may need escaping for tmux
+                match c {
+                    ';' => "\\;".to_string(),
+                    ' ' => "Space".to_string(),
+                    _ => c.to_string(),
+                }
+            }
+        }
+
+        // Unhandled keys
+        _ => String::new(),
+    }
 }
 
 /// Handle mouse events - clicks on columns and tasks
@@ -454,10 +596,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         };
     }
 
-    // Clear status message on any key press
-    if app.model.ui_state.status_message.is_some() {
-        return vec![Message::SetStatusMessage(None)];
-    }
+    // Note: Status messages are cleared via tick, not by consuming keypresses
 
     // Handle help overlay
     if app.model.ui_state.show_help {
@@ -520,16 +659,17 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::FocusChanged(next_focus)]
         }
 
-        // Switch to task's tmux window
+        // Open interactive modal for Claude session (replaces switching to tmux window)
         KeyCode::Char('o') => {
-            // If a task with a tmux window is selected, switch to that task's window
+            // If a task with an SDK session is selected, open interactive modal
             if let Some(project) = app.model.active_project() {
                 let column = app.model.ui_state.selected_column;
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        if task.tmux_window.is_some() {
-                            return vec![Message::SwitchToTaskWindow(task.id)];
+                        // Check for SDK session ID (tmux window is created on-demand)
+                        if task.claude_session_id.is_some() {
+                            return vec![Message::OpenInteractiveModal(task.id)];
                         }
                     }
                 }
@@ -1012,5 +1152,127 @@ fn detect_idle_tasks_from_tmux(app: &mut App) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_enter() {
+        let key = make_key_event(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "Enter");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_tab() {
+        let key = make_key_event(KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "Tab");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_backspace() {
+        let key = make_key_event(KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "BSpace");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_escape() {
+        let key = make_key_event(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "Escape");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_arrows() {
+        let test_cases = vec![
+            (KeyCode::Up, "Up"),
+            (KeyCode::Down, "Down"),
+            (KeyCode::Left, "Left"),
+            (KeyCode::Right, "Right"),
+        ];
+
+        for (code, expected) in test_cases {
+            let key = make_key_event(code, KeyModifiers::NONE);
+            assert_eq!(key_event_to_tmux_sequence(key), expected);
+        }
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_navigation() {
+        let test_cases = vec![
+            (KeyCode::Home, "Home"),
+            (KeyCode::End, "End"),
+            (KeyCode::PageUp, "PageUp"),
+            (KeyCode::PageDown, "PageDown"),
+            (KeyCode::Delete, "DC"),
+            (KeyCode::Insert, "IC"),
+        ];
+
+        for (code, expected) in test_cases {
+            let key = make_key_event(code, KeyModifiers::NONE);
+            assert_eq!(key_event_to_tmux_sequence(key), expected);
+        }
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_function_keys() {
+        for n in 1..=12 {
+            let key = make_key_event(KeyCode::F(n), KeyModifiers::NONE);
+            assert_eq!(key_event_to_tmux_sequence(key), format!("F{}", n));
+        }
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_plain_char() {
+        let key = make_key_event(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "a");
+
+        let key = make_key_event(KeyCode::Char('Z'), KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "Z");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_ctrl_char() {
+        let key = make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(key_event_to_tmux_sequence(key), "C-c");
+
+        let key = make_key_event(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(key_event_to_tmux_sequence(key), "C-a");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_alt_char() {
+        let key = make_key_event(KeyCode::Char('x'), KeyModifiers::ALT);
+        assert_eq!(key_event_to_tmux_sequence(key), "M-x");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_space() {
+        let key = make_key_event(KeyCode::Char(' '), KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "Space");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_semicolon() {
+        let key = make_key_event(KeyCode::Char(';'), KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "\\;");
+    }
+
+    #[test]
+    fn test_key_event_to_tmux_unhandled() {
+        // Null key should return empty
+        let key = make_key_event(KeyCode::Null, KeyModifiers::NONE);
+        assert_eq!(key_event_to_tmux_sequence(key), "");
     }
 }

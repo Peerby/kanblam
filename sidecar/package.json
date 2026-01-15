@@ -1,0 +1,23 @@
+{
+  "name": "kanclaude-sidecar",
+  "version": "0.1.0",
+  "description": "Claude Code Agent SDK sidecar for KanClaude",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --outfile=dist/main.cjs",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx tests/sdk-integration.test.ts",
+    "test:ipc": "tsx tests/ipc-integration.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
