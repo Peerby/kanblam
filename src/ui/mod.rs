@@ -220,35 +220,50 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         .render(inner, frame.buffer_mut());
 
     // Render hints at bottom-right of the border
+    // Only show full hints when focused; when unfocused just show ^V hint
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
-    let hints = if pending_count > 0 {
+    let (hints, hints_width) = if !is_focused {
+        // When unfocused, only show paste image hint
+        (
+            Line::from(vec![
+                Span::styled("^V", key_style),
+                Span::styled(" img", desc_style),
+            ]),
+            6u16,
+        )
+    } else if pending_count > 0 {
         // Show image management hints when images are pending
-        Line::from(vec![
-            Span::styled("^V", key_style),
-            Span::styled("+img ", desc_style),
-            Span::styled("^X", key_style),
-            Span::styled("-1 ", desc_style),
-            Span::styled("^U", key_style),
-            Span::styled("clr ", desc_style),
-            Span::styled("⏎", key_style),
-            Span::styled(" submit ", desc_style),
-            Span::styled("\\⏎", key_style),
-            Span::styled(" newline ", desc_style),
-        ])
+        (
+            Line::from(vec![
+                Span::styled("^V", key_style),
+                Span::styled("+img ", desc_style),
+                Span::styled("^X", key_style),
+                Span::styled("-1 ", desc_style),
+                Span::styled("^U", key_style),
+                Span::styled("clr ", desc_style),
+                Span::styled("⏎", key_style),
+                Span::styled(" submit ", desc_style),
+                Span::styled("\\⏎", key_style),
+                Span::styled(" newline ", desc_style),
+            ]),
+            38u16,
+        )
     } else {
-        Line::from(vec![
-            Span::styled("^V", key_style),
-            Span::styled(" img  ", desc_style),
-            Span::styled("^C", key_style),
-            Span::styled(" cancel  ", desc_style),
-            Span::styled("⏎", key_style),
-            Span::styled(" submit ", desc_style),
-            Span::styled("\\⏎", key_style),
-            Span::styled(" newline ", desc_style),
-        ])
+        (
+            Line::from(vec![
+                Span::styled("^V", key_style),
+                Span::styled(" img  ", desc_style),
+                Span::styled("^C", key_style),
+                Span::styled(" cancel  ", desc_style),
+                Span::styled("⏎", key_style),
+                Span::styled(" submit ", desc_style),
+                Span::styled("\\⏎", key_style),
+                Span::styled(" newline ", desc_style),
+            ]),
+            38u16,
+        )
     };
-    let hints_width = 38u16; // Approximate width of hints text
     let hints_area = Rect {
         x: area.x + area.width.saturating_sub(hints_width + 1),
         y: area.y + area.height.saturating_sub(1),
