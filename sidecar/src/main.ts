@@ -108,6 +108,7 @@ class SidecarServer {
             });
           }
           const sessionId = await this.sessionManager.startSession(p);
+          console.log(`[RPC] start_session returning session_id: ${sessionId} for task: ${p.task_id}`);
           return createResponse(id, { session_id: sessionId });
         }
 

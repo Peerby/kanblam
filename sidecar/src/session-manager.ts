@@ -217,6 +217,7 @@ export class SessionManager {
         // Capture session ID from init message
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
+          console.log(`[SessionManager] Captured session_id from SDK init: ${sessionId} for task ${taskId}`);
 
           // Store session
           this.sessions.set(taskId, {

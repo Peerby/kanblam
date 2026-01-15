@@ -16,3 +16,7 @@ Thumbs.db
 
 # Task worktrees (created by KanClaude for isolated Claude sessions)
 worktrees/
+
+# Sidecar build artifacts
+sidecar/node_modules/
+sidecar/dist/
