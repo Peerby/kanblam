@@ -9,5 +9,6 @@ pub use session::{
     wait_for_claude_ready, send_task_to_window, focus_task_window, switch_to_task_window,
     kill_task_window, task_window_exists, capture_task_output, create_test_shell,
     // SDK/CLI handoff support
-    send_resume_command, send_key_to_pane, capture_pane_with_escapes,
+    send_resume_command, send_start_command, send_key_to_pane, capture_pane_with_escapes,
+    resize_pane, send_sigwinch, get_pane_size, open_popup,
 };

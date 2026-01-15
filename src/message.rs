@@ -72,6 +72,14 @@ pub enum Message {
     HookSignalReceived(HookSignal),
     ClaudeOutputUpdated { project_id: Uuid, output: String },
 
+    // Async background task results
+    /// Create worktree for a task (deferred to allow UI render first)
+    CreateWorktree { task_id: Uuid, project_dir: PathBuf },
+    /// Worktree creation completed successfully (from background task)
+    WorktreeCreated { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    /// Worktree creation failed (from background task)
+    WorktreeCreationFailed { task_id: Uuid, error: String },
+
     // Sidecar/SDK events
     /// Event received from the SDK sidecar
     SidecarEvent(crate::sidecar::SidecarEvent),
@@ -79,6 +87,8 @@ pub enum Message {
     StartSdkSession { task_id: Uuid },
     /// SDK session started successfully
     SdkSessionStarted { task_id: Uuid, session_id: String },
+    /// SDK session start failed
+    SdkSessionFailed { task_id: Uuid, error: String, project_dir: PathBuf, worktree_path: PathBuf },
     /// SDK session output received
     SdkSessionOutput { task_id: Uuid, output: String },
     /// Open interactive modal for a task (hand off to CLI)

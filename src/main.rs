@@ -26,9 +26,11 @@ use ratatui::{
 };
 use std::io;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // Check for CLI subcommands (used by hooks)
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "hook-signal" {
@@ -110,9 +112,22 @@ fn run_app<B: ratatui::backend::Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
+    // Deferred commands are processed after the next render for responsive UI
+    let mut deferred_commands: std::collections::VecDeque<Message> = std::collections::VecDeque::new();
+
     loop {
-        // Render
+        // Render first for responsive UI
         terminal.draw(|frame| ui::view(frame, app))?;
+
+        // Process ONE deferred command per iteration (after render)
+        // This ensures the UI stays responsive during multi-step operations
+        if let Some(cmd) = deferred_commands.pop_front() {
+            let more_commands = app.update(cmd);
+            // Add new commands back to the queue for subsequent iterations
+            for c in more_commands {
+                deferred_commands.push_back(c);
+            }
+        }
 
         // Check for hook events (completion detection)
         if let Some(ref watcher) = hook_watcher {
@@ -182,9 +197,8 @@ where
                         let messages = handle_key_event(key, app);
                         for msg in messages {
                             let commands = app.update(msg);
-                            for cmd in commands {
-                                app.update(cmd);
-                            }
+                            // Defer commands to next iteration for responsive UI
+                            deferred_commands.extend(commands);
                         }
                     }
                 }

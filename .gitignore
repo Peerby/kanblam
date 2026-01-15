@@ -13,3 +13,6 @@ Thumbs.db
 # Debug
 *.log
 .claude/
+
+# Task worktrees (created by KanClaude for isolated Claude sessions)
+worktrees/

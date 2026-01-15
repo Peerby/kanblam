@@ -13,31 +13,23 @@ pub struct WorktreeInfo {
     pub head: String,
 }
 
-/// Get the base directory for worktrees
-fn worktree_base_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanclaude")
-        .join("worktrees")
-}
-
 /// Get the worktree path for a specific project and task
-pub fn get_worktree_path(project_slug: &str, task_id: Uuid) -> PathBuf {
-    worktree_base_dir()
-        .join(project_slug)
+/// Worktrees are stored in {project_dir}/worktrees/task-{task_id}/
+pub fn get_worktree_path(project_dir: &PathBuf, task_id: Uuid) -> PathBuf {
+    project_dir
+        .join("worktrees")
         .join(format!("task-{}", task_id))
 }
 
 /// Create a new worktree for a task
 ///
-/// Creates a worktree at `~/.kanclaude/worktrees/{project}/{task-id}/`
+/// Creates a worktree at `{project_dir}/.worktrees/task-{task-id}/`
 /// on branch `claude/{task-id}` based on the current HEAD.
 pub fn create_worktree(
     project_dir: &PathBuf,
-    project_slug: &str,
     task_id: Uuid,
 ) -> Result<PathBuf> {
-    let worktree_path = get_worktree_path(project_slug, task_id);
+    let worktree_path = get_worktree_path(project_dir, task_id);
     let branch_name = format!("claude/{}", task_id);
 
     // Ensure parent directory exists
@@ -611,8 +603,10 @@ mod tests {
     #[test]
     fn test_worktree_path() {
         let task_id = Uuid::new_v4();
-        let path = get_worktree_path("my-project", task_id);
-        assert!(path.to_string_lossy().contains("my-project"));
+        let project_dir = PathBuf::from("/Users/test/my-project");
+        let path = get_worktree_path(&project_dir, task_id);
+        assert!(path.to_string_lossy().contains(".worktrees"));
         assert!(path.to_string_lossy().contains(&format!("task-{}", task_id)));
+        assert!(path.starts_with(&project_dir));
     }
 }

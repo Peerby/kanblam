@@ -226,6 +226,123 @@ pub fn send_resume_command(project_slug: &str, window_name: &str, session_id: &s
     Ok(())
 }
 
+/// Start Claude fresh in a task window (for when there's no resumable session)
+pub fn send_start_command(project_slug: &str, window_name: &str) -> Result<()> {
+    let session_name = format!("kc-{}", project_slug);
+    let target = format!("{}:{}", session_name, window_name);
+
+    // Just start claude without --resume
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", &target, "claude", "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to send start command: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Resize a tmux pane to specific dimensions
+pub fn resize_pane(target: &str, width: u16, height: u16) -> Result<()> {
+    // Resize width
+    let output = Command::new("tmux")
+        .args(["resize-pane", "-t", target, "-x", &width.to_string()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to resize pane width: {}", stderr));
+    }
+
+    // Resize height
+    let output = Command::new("tmux")
+        .args(["resize-pane", "-t", target, "-y", &height.to_string()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to resize pane height: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Send SIGWINCH to a tmux pane to trigger terminal resize handling
+pub fn send_sigwinch(target: &str) -> Result<()> {
+    // Use tmux refresh-client to signal window size change
+    let output = Command::new("tmux")
+        .args(["refresh-client", "-t", target, "-S"])
+        .output()?;
+
+    if !output.status.success() {
+        // Try alternative: send resize-pane with current size to trigger redraw
+        let _ = Command::new("tmux")
+            .args(["resize-pane", "-t", target, "-Z"])  // Toggle zoom to force redraw
+            .output();
+        let _ = Command::new("tmux")
+            .args(["resize-pane", "-t", target, "-Z"])  // Toggle back
+            .output();
+    }
+
+    Ok(())
+}
+
+/// Get the dimensions of a tmux pane
+pub fn get_pane_size(target: &str) -> Result<(u16, u16)> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", target, "-p", "#{pane_width} #{pane_height}"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to get pane size: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("Unexpected pane size output: {}", stdout));
+    }
+
+    let width: u16 = parts[0].parse().map_err(|e| anyhow!("Invalid width: {}", e))?;
+    let height: u16 = parts[1].parse().map_err(|e| anyhow!("Invalid height: {}", e))?;
+
+    Ok((width, height))
+}
+
+/// Open a tmux popup with Claude running inside
+/// This uses tmux's native display-popup which handles terminal rendering natively
+pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> Result<()> {
+    // Build claude command - resume if we have a valid session_id
+    let claude_cmd = match session_id {
+        Some(id) => format!("claude --resume {}", id),
+        None => "claude".to_string(),
+    };
+
+    // Use login shell to get user's PATH (so `claude` command is found)
+    // Add pause after claude exits so user can see any error messages
+    let shell_cmd = format!(
+        "cd '{}' && {}; echo ''; echo 'Press any key to close...'; read -n 1",
+        worktree_path.to_string_lossy(),
+        claude_cmd
+    );
+
+    Command::new("tmux")
+        .args([
+            "display-popup",
+            "-E",           // Close popup when command exits
+            "-w", "95%",    // 95% width
+            "-h", "95%",    // 95% height
+            "-T", " Claude Interactive | /exit to close ",
+            "bash", "-l", "-c", &shell_cmd,
+        ])
+        .spawn()?;
+
+    Ok(())
+}
+
 /// Send a key sequence to a tmux pane (for interactive modal)
 pub fn send_key_to_pane(target: &str, key: &str) -> Result<()> {
     let output = Command::new("tmux")

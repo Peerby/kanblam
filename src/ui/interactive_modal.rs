@@ -17,6 +17,11 @@ pub fn render_interactive_modal(frame: &mut Frame, modal: &InteractiveModal) {
     // Use full screen for the terminal
     let area = frame.area();
 
+    // Get the actual tmux pane size to parse content correctly
+    let pane_width = crate::tmux::get_pane_size(&modal.tmux_target)
+        .map(|(w, _)| w as usize)
+        .unwrap_or(area.width.saturating_sub(2) as usize);
+
     // Capture current pane content (with escape codes for styling)
     let terminal_content = match crate::tmux::capture_pane_with_escapes(&modal.tmux_target) {
         Ok(content) => content,
@@ -30,8 +35,8 @@ pub fn render_interactive_modal(frame: &mut Frame, modal: &InteractiveModal) {
         }
     };
 
-    // Parse terminal content using vt100 for proper ANSI handling
-    let lines = parse_terminal_output(&terminal_content, area.width.saturating_sub(2) as usize, modal.scroll_offset);
+    // Parse terminal content using vt100 with the ACTUAL pane width
+    let lines = parse_terminal_output(&terminal_content, pane_width, modal.scroll_offset);
 
     // Create the terminal block with info bar
     let title = format!(
