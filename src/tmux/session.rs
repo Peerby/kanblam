@@ -67,7 +67,10 @@ fn send_prompt_via_paste_buffer(target: &str, text: &str) -> Result<()> {
         return Err(anyhow!("Failed to paste buffer: {}", stderr));
     }
 
-    // Step 3: Send Enter to submit the prompt
+    // Step 3: Brief delay to ensure paste is fully processed before Enter
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Step 4: Send Enter to submit the prompt
     let output = Command::new("tmux")
         .args(["send-keys", "-t", target, "Enter"])
         .output()?;
