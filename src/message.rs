@@ -72,6 +72,22 @@ pub enum Message {
     HookSignalReceived(HookSignal),
     ClaudeOutputUpdated { project_id: Uuid, output: String },
 
+    // Sidecar/SDK events
+    /// Event received from the SDK sidecar
+    SidecarEvent(crate::sidecar::SidecarEvent),
+    /// SDK session started successfully
+    SdkSessionStarted { task_id: Uuid, session_id: String },
+    /// SDK session output received
+    SdkSessionOutput { task_id: Uuid, output: String },
+    /// Open interactive modal for a task (hand off to CLI)
+    OpenInteractiveModal(Uuid),
+    /// Close interactive modal (return control to app)
+    CloseInteractiveModal,
+    /// CLI session ended, hand back to SDK
+    CliSessionEnded { task_id: Uuid },
+    /// Resume SDK session after CLI handoff
+    ResumeSdkSession { task_id: Uuid },
+
     // Image handling
     PasteImage,
     AttachImage { task_id: Uuid, path: PathBuf },

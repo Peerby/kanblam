@@ -1832,6 +1832,159 @@ impl App {
                 }
             }
 
+            // === Sidecar/SDK Events ===
+
+            Message::SidecarEvent(event) => {
+                // Handle events from the SDK sidecar
+                use crate::sidecar::SessionEventType;
+
+                let task_id = event.task_id;
+
+                for project in &mut self.model.projects {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        // Update session_id if provided
+                        if let Some(ref session_id) = event.session_id {
+                            task.claude_session_id = Some(session_id.clone());
+                        }
+
+                        match event.event_type {
+                            SessionEventType::Started => {
+                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                task.session_mode = crate::model::SessionMode::SdkManaged;
+                            }
+                            SessionEventType::Stopped => {
+                                task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
+                                project.needs_attention = true;
+                                notify::play_attention_sound();
+                                notify::set_attention_indicator(&project.name);
+                            }
+                            SessionEventType::Ended => {
+                                task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Ended;
+                                project.needs_attention = true;
+                                notify::play_attention_sound();
+                                notify::set_attention_indicator(&project.name);
+                            }
+                            SessionEventType::NeedsInput => {
+                                task.status = TaskStatus::NeedsInput;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
+                                project.needs_attention = true;
+                                notify::play_attention_sound();
+                                notify::set_attention_indicator(&project.name);
+                            }
+                            SessionEventType::Working | SessionEventType::ToolUse => {
+                                task.status = TaskStatus::InProgress;
+                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                project.needs_attention = false;
+                                notify::clear_attention_indicator();
+                            }
+                            SessionEventType::Output => {
+                                // Store output for display (could be used by output panel)
+                                if let Some(ref output) = event.output {
+                                    project.captured_output.push_str(output);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                self.sync_selection();
+            }
+
+            Message::SdkSessionStarted { task_id, session_id } => {
+                // Update task with session ID from SDK
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.claude_session_id = Some(session_id);
+                        task.session_state = crate::model::ClaudeSessionState::Working;
+                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                    }
+                }
+            }
+
+            Message::SdkSessionOutput { task_id, output } => {
+                // Store SDK output for display
+                for project in &mut self.model.projects {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        // Append to captured output
+                        project.captured_output.push_str(&output);
+                        break;
+                    }
+                }
+            }
+
+            Message::OpenInteractiveModal(task_id) => {
+                // Gather task info first (immutable borrow)
+                let modal_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).and_then(|task| {
+                        task.tmux_window.as_ref().map(|window| {
+                            (
+                                format!("kc-{}:{}", project.slug(), window),
+                                project.slug(),
+                                window.clone(),
+                                task.claude_session_id.clone(),
+                            )
+                        })
+                    })
+                });
+
+                // Now we can mutate
+                if let Some((tmux_target, project_slug, window_name, session_id)) = modal_info {
+                    // Open interactive modal
+                    self.model.ui_state.interactive_modal = Some(crate::model::InteractiveModal {
+                        task_id,
+                        tmux_target,
+                        terminal_buffer: String::new(),
+                        scroll_offset: 0,
+                    });
+
+                    // If we have a session ID, start Claude with --resume in the tmux window
+                    if let Some(session_id) = session_id {
+                        // Send claude --resume command to the tmux window
+                        if let Err(e) = crate::tmux::send_resume_command(
+                            &project_slug,
+                            &window_name,
+                            &session_id,
+                        ) {
+                            commands.push(Message::Error(format!(
+                                "Failed to start interactive session: {}", e
+                            )));
+                            self.model.ui_state.interactive_modal = None;
+                        } else {
+                            // Update session mode to CLI
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.session_mode = crate::model::SessionMode::CliInteractive;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Message::CloseInteractiveModal => {
+                // Close the modal, keep Claude running in background
+                self.model.ui_state.interactive_modal = None;
+            }
+
+            Message::CliSessionEnded { task_id } => {
+                // CLI session ended, resume with SDK
+                commands.push(Message::ResumeSdkSession { task_id });
+            }
+
+            Message::ResumeSdkSession { task_id } => {
+                // Resume the SDK session after CLI handoff
+                // This will be handled by the sidecar client
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                        // Note: Actual SDK resume happens asynchronously via sidecar
+                        // The new session_id will arrive via SidecarEvent::Started
+                    }
+                }
+            }
+
             Message::PasteImage => {
                 // Check clipboard for image and save it
                 match crate::image::paste_image_from_clipboard() {
