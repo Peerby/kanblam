@@ -774,6 +774,43 @@ impl App {
                 });
 
                 if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                    // CRITICAL: Commit any uncommitted changes in the worktree FIRST
+                    // This ensures we don't lose work that Claude did but didn't commit
+                    if let Some(ref wt_path) = worktree_path {
+                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                            Ok(true) => {
+                                // Changes were committed
+                            }
+                            Ok(false) => {
+                                // Nothing to commit, that's fine
+                            }
+                            Err(e) => {
+                                commands.push(Message::Error(format!(
+                                    "Failed to commit worktree changes: {}. Changes preserved in worktree.",
+                                    e
+                                )));
+                                return commands;
+                            }
+                        }
+                    }
+
+                    // Verify there are changes to merge before proceeding
+                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                        Ok(true) => {
+                            // Good, there are changes to merge
+                        }
+                        Ok(false) => {
+                            commands.push(Message::Error(
+                                "Nothing to merge. The task branch has no changes beyond main.".to_string()
+                            ));
+                            return commands;
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to check for changes: {}", e)));
+                            return commands;
+                        }
+                    }
+
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -979,6 +1016,54 @@ impl App {
                                 commands.push(Message::Error(format!("Error verifying rebase: {}", e)));
                                 return commands;
                             }
+                        }
+                    }
+
+                    // CRITICAL: Commit any uncommitted changes in the worktree FIRST
+                    if let Some(ref wt_path) = worktree_path {
+                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                            Ok(_) => {
+                                // Changes committed (or nothing to commit)
+                            }
+                            Err(e) => {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.status = TaskStatus::Review;
+                                    }
+                                }
+                                commands.push(Message::Error(format!(
+                                    "Failed to commit worktree changes: {}. Changes preserved.",
+                                    e
+                                )));
+                                return commands;
+                            }
+                        }
+                    }
+
+                    // Verify there are changes to merge
+                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                        Ok(true) => {
+                            // Good, there are changes
+                        }
+                        Ok(false) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Review;
+                                }
+                            }
+                            commands.push(Message::Error(
+                                "Nothing to merge. The task branch has no changes beyond main.".to_string()
+                            ));
+                            return commands;
+                        }
+                        Err(e) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Review;
+                                }
+                            }
+                            commands.push(Message::Error(format!("Failed to check for changes: {}", e)));
+                            return commands;
                         }
                     }
 

@@ -122,6 +122,79 @@ pub fn remove_worktree(project_dir: &PathBuf, worktree_path: &PathBuf) -> Result
     Ok(())
 }
 
+/// Commit any uncommitted changes in a worktree
+/// Returns true if changes were committed, false if nothing to commit
+pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result<bool> {
+    // Check if there are any changes (staged or unstaged)
+    let status_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    let status = String::from_utf8_lossy(&status_output.stdout);
+    if status.trim().is_empty() {
+        // Nothing to commit
+        return Ok(false);
+    }
+
+    // Stage all changes
+    let add_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["add", "-A"])
+        .output()?;
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        return Err(anyhow!("Failed to stage changes: {}", stderr));
+    }
+
+    // Commit
+    let commit_msg = format!("Task {} final changes", task_id);
+    let commit_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["commit", "-m", &commit_msg])
+        .output()?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        // Check if it's just "nothing to commit"
+        if stderr.contains("nothing to commit") ||
+           String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit") {
+            return Ok(false);
+        }
+        return Err(anyhow!("Failed to commit changes: {}", stderr));
+    }
+
+    Ok(true)
+}
+
+/// Check if a task branch has any changes compared to main
+pub fn has_changes_to_merge(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // Get the merge base
+    let merge_base_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "HEAD", &branch_name])
+        .output()?;
+
+    if !merge_base_output.status.success() {
+        // Branch might not exist
+        return Ok(false);
+    }
+
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout).trim().to_string();
+
+    // Check if branch has commits beyond merge base
+    let log_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["log", "--oneline", &format!("{}..{}", merge_base, branch_name)])
+        .output()?;
+
+    let log = String::from_utf8_lossy(&log_output.stdout);
+    Ok(!log.trim().is_empty())
+}
+
 /// Merge a task branch into the base branch (squash merge)
 /// Handles dirty working directory by stashing local changes first
 pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {

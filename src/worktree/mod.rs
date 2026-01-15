@@ -13,5 +13,6 @@ pub use git::{
     get_task_diff, apply_task_changes, unapply_task_changes,
     needs_rebase, verify_rebase_success, generate_rebase_prompt,
     is_rebase_in_progress, abort_rebase,
+    commit_worktree_changes, has_changes_to_merge,
 };
 pub use settings::{setup_claude_settings, merge_with_project_settings, pre_trust_worktree, remove_worktree_trust};
