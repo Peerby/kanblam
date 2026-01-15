@@ -100,30 +100,65 @@ class SidecarServer {
       switch (method) {
         case 'start_session': {
           const p = params as StartSessionParams;
+          // Validate required params
+          if (!p?.task_id || !p?.worktree_path || !p?.prompt) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required params: task_id, worktree_path, prompt',
+            });
+          }
           const sessionId = await this.sessionManager.startSession(p);
           return createResponse(id, { session_id: sessionId });
         }
 
         case 'resume_session': {
           const p = params as ResumeSessionParams;
+          // Validate required params
+          if (!p?.task_id || !p?.session_id) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required params: task_id, session_id',
+            });
+          }
           const sessionId = await this.sessionManager.resumeSession(p);
           return createResponse(id, { session_id: sessionId });
         }
 
         case 'send_prompt': {
           const p = params as SendPromptParams;
+          // Validate required params
+          if (!p?.task_id || !p?.prompt) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required params: task_id, prompt',
+            });
+          }
           await this.sessionManager.sendPrompt(p);
           return createResponse(id, { success: true });
         }
 
         case 'stop_session': {
           const p = params as StopSessionParams;
+          // Validate required params
+          if (!p?.task_id) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required param: task_id',
+            });
+          }
           this.sessionManager.stopSession(p.task_id);
           return createResponse(id, { success: true });
         }
 
         case 'get_session': {
           const p = params as { task_id: string };
+          // Validate required params
+          if (!p?.task_id) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required param: task_id',
+            });
+          }
           const session = this.sessionManager.getSession(p.task_id);
           if (session) {
             return createResponse(id, {

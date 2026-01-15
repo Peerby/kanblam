@@ -190,6 +190,8 @@ pub enum SessionMode {
     SdkManaged,
     /// User has taken over via interactive CLI (`claude --resume`)
     CliInteractive,
+    /// Modal closed, waiting for CLI to exit before resuming SDK
+    WaitingForCliExit,
 }
 
 /// A task to be executed by Claude Code

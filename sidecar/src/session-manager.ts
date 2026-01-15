@@ -2,7 +2,7 @@
  * Manages Claude Code Agent SDK sessions
  */
 
-import { query, type ClaudeCodeOptions } from '@anthropic-ai/claude-code';
+import { query, type Options } from '@anthropic-ai/claude-code';
 import {
   type SessionEventParams,
   type StartSessionParams,
@@ -28,6 +28,42 @@ export class SessionManager {
     this.onEvent = onEvent;
   }
 
+  /**
+   * Find the Claude Code executable path
+   */
+  private async findClaudePath(): Promise<string | undefined> {
+    const { execSync } = await import('child_process');
+    const path = await import('path');
+    const fs = await import('fs');
+    const os = await import('os');
+
+    // Try which command first
+    try {
+      const result = execSync('which claude', { encoding: 'utf8' }).trim();
+      if (result && fs.existsSync(result)) {
+        return result;
+      }
+    } catch {
+      // which failed, try other locations
+    }
+
+    // Common installation paths
+    const homedir = os.homedir();
+    const candidates = [
+      path.join(homedir, '.bun', 'bin', 'claude'),
+      path.join(homedir, '.local', 'bin', 'claude'),
+      '/usr/local/bin/claude',
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return undefined;
+  }
+
   async startSession(params: StartSessionParams): Promise<string> {
     const { task_id, worktree_path, prompt, images } = params;
 
@@ -38,35 +74,42 @@ export class SessionManager {
 
     const abortController = new AbortController();
 
-    const options: ClaudeCodeOptions = {
+    // Find Claude executable - try common locations
+    const claudePath = process.env.CLAUDE_PATH ||
+      (await this.findClaudePath());
+
+    const options: Options = {
       cwd: worktree_path,
       abortController,
+      pathToClaudeCodeExecutable: claudePath,
     };
 
-    let sessionId = '';
+    // Create a promise that resolves when session ID is captured
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout waiting for SDK session to initialize'));
+      }, 30000); // 30 second timeout
 
-    // Start processing in background
-    this.processQuery(task_id, prompt, options, images).catch((err) => {
-      console.error(`Session ${task_id} error:`, err);
-      this.onEvent({
+      // Start processing - this will capture session ID and resolve our promise
+      this.processQueryWithCallback(
         task_id,
-        event: 'ended',
-        session_id: sessionId,
-        message: err.message,
+        prompt,
+        options,
+        images,
+        (sessionId) => {
+          clearTimeout(timeout);
+          resolve(sessionId);
+        },
+        (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      ).catch((err) => {
+        // Catch any errors from the async processing itself
+        clearTimeout(timeout);
+        reject(err);
       });
     });
-
-    // Wait briefly to capture session ID from init message
-    // The actual session ID is captured in processQuery
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    const session = this.sessions.get(task_id);
-    if (session) {
-      return session.sessionId;
-    }
-
-    // Return placeholder - real ID will be sent via event
-    return 'pending';
   }
 
   async resumeSession(params: ResumeSessionParams): Promise<string> {
@@ -81,7 +124,7 @@ export class SessionManager {
 
     const abortController = new AbortController();
 
-    const options: ClaudeCodeOptions = {
+    const options: Options = {
       resume: session_id,
       abortController,
     };
@@ -136,20 +179,38 @@ export class SessionManager {
   private async processQuery(
     taskId: string,
     prompt: string,
-    options: ClaudeCodeOptions,
+    options: Options,
     images?: string[]
+  ): Promise<void> {
+    await this.processQueryWithCallback(taskId, prompt, options, images, () => {}, () => {});
+  }
+
+  /**
+   * Process a query with callbacks for when session ID is captured and on error.
+   * This allows the caller to wait for the session to initialize.
+   */
+  private async processQueryWithCallback(
+    taskId: string,
+    prompt: string,
+    options: Options,
+    images: string[] | undefined,
+    onSessionStarted: (sessionId: string) => void,
+    onError: (err: Error) => void
   ): Promise<void> {
     let sessionId = '';
     let hasStarted = false;
+    let sessionIdResolved = false;
 
     try {
+      // Note: images are not directly supported by SDK options
+      // TODO: Support images by including them in user message content
+      if (images?.length) {
+        console.warn('Images provided but not yet supported in SDK mode');
+      }
+
       const response = query({
         prompt,
-        options: {
-          ...options,
-          // Include images if provided
-          ...(images?.length && { images }),
-        },
+        options,
       });
 
       for await (const message of response) {
@@ -173,6 +234,12 @@ export class SessionManager {
               event: 'started',
               session_id: sessionId,
             });
+          }
+
+          // Notify caller that session started with ID
+          if (!sessionIdResolved) {
+            sessionIdResolved = true;
+            onSessionStarted(sessionId);
           }
         }
 
@@ -215,6 +282,13 @@ export class SessionManager {
           });
         }
       }
+    } catch (err) {
+      // Notify caller of error if session hasn't started yet
+      if (!sessionIdResolved) {
+        sessionIdResolved = true;
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+      throw err;
     } finally {
       // Mark session as inactive but keep it for potential resume
       const session = this.sessions.get(taskId);

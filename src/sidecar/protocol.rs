@@ -174,3 +174,193 @@ pub mod error_codes {
     pub const SESSION_ALREADY_EXISTS: i32 = -32001;
     pub const SDK_ERROR: i32 = -32002;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_json_rpc_request_serialization() {
+        let request = JsonRpcRequest::new(1, "test_method", Some(json!({"key": "value"})));
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"method\":\"test_method\""));
+        assert!(json.contains("\"params\":{\"key\":\"value\"}"));
+    }
+
+    #[test]
+    fn test_json_rpc_request_without_params() {
+        let request = JsonRpcRequest::new(42, "ping", None);
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(json.contains("\"id\":42"));
+        assert!(json.contains("\"method\":\"ping\""));
+        assert!(!json.contains("params")); // params should be skipped
+    }
+
+    #[test]
+    fn test_json_rpc_response_deserialization() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":{"session_id":"abc123"}}"#;
+        let response: JsonRpcResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.jsonrpc, "2.0");
+        assert_eq!(response.id, 1);
+        assert!(response.result.is_some());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_error_response() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Session not found"}}"#;
+        let response: JsonRpcResponse = serde_json::from_str(json).unwrap();
+
+        assert!(response.result.is_none());
+        assert!(response.error.is_some());
+
+        let error = response.error.unwrap();
+        assert_eq!(error.code, error_codes::SESSION_NOT_FOUND);
+        assert_eq!(error.message, "Session not found");
+    }
+
+    #[test]
+    fn test_json_rpc_notification_deserialization() {
+        let json = r#"{"jsonrpc":"2.0","method":"session_event","params":{"task_id":"abc","event":"started"}}"#;
+        let notification: JsonRpcNotification = serde_json::from_str(json).unwrap();
+
+        assert_eq!(notification.method, "session_event");
+        assert!(notification.params.is_some());
+    }
+
+    #[test]
+    fn test_start_session_params_serialization() {
+        let params = StartSessionParams {
+            task_id: "task-123".to_string(),
+            worktree_path: "/path/to/worktree".to_string(),
+            prompt: "Implement feature X".to_string(),
+            images: Some(vec!["/path/to/image.png".to_string()]),
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        assert!(json.contains("\"task_id\":\"task-123\""));
+        assert!(json.contains("\"worktree_path\":\"/path/to/worktree\""));
+        assert!(json.contains("\"prompt\":\"Implement feature X\""));
+        assert!(json.contains("\"images\":[\"/path/to/image.png\"]"));
+    }
+
+    #[test]
+    fn test_start_session_params_without_images() {
+        let params = StartSessionParams {
+            task_id: "task-123".to_string(),
+            worktree_path: "/path/to/worktree".to_string(),
+            prompt: "Implement feature X".to_string(),
+            images: None,
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        assert!(!json.contains("images")); // should be skipped
+    }
+
+    #[test]
+    fn test_session_event_type_deserialization() {
+        let test_cases = vec![
+            ("\"started\"", SessionEventType::Started),
+            ("\"stopped\"", SessionEventType::Stopped),
+            ("\"ended\"", SessionEventType::Ended),
+            ("\"needs_input\"", SessionEventType::NeedsInput),
+            ("\"working\"", SessionEventType::Working),
+            ("\"tool_use\"", SessionEventType::ToolUse),
+            ("\"output\"", SessionEventType::Output),
+        ];
+
+        for (json, expected) in test_cases {
+            let parsed: SessionEventType = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected, "Failed for {}", json);
+        }
+    }
+
+    #[test]
+    fn test_session_event_params_full() {
+        let json = r#"{
+            "task_id": "550e8400-e29b-41d4-a716-446655440000",
+            "event": "tool_use",
+            "session_id": "session-abc",
+            "message": "Using tool",
+            "tool_name": "Read",
+            "output": "File contents here"
+        }"#;
+
+        let params: SessionEventParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.task_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(params.event, SessionEventType::ToolUse);
+        assert_eq!(params.session_id.as_deref(), Some("session-abc"));
+        assert_eq!(params.tool_name.as_deref(), Some("Read"));
+    }
+
+    #[test]
+    fn test_session_event_params_minimal() {
+        let json = r#"{"task_id": "task-123", "event": "started"}"#;
+        let params: SessionEventParams = serde_json::from_str(json).unwrap();
+
+        assert_eq!(params.task_id, "task-123");
+        assert_eq!(params.event, SessionEventType::Started);
+        assert!(params.session_id.is_none());
+        assert!(params.message.is_none());
+    }
+
+    #[test]
+    fn test_sidecar_event_conversion() {
+        let params = SessionEventParams {
+            task_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            event: SessionEventType::Started,
+            session_id: Some("session-123".to_string()),
+            message: None,
+            tool_name: None,
+            output: None,
+        };
+
+        let event: SidecarEvent = params.try_into().unwrap();
+        assert_eq!(event.task_id.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(event.event_type, SessionEventType::Started);
+        assert_eq!(event.session_id.as_deref(), Some("session-123"));
+    }
+
+    #[test]
+    fn test_sidecar_event_invalid_uuid() {
+        let params = SessionEventParams {
+            task_id: "not-a-valid-uuid".to_string(),
+            event: SessionEventType::Started,
+            session_id: None,
+            message: None,
+            tool_name: None,
+            output: None,
+        };
+
+        let result: Result<SidecarEvent, _> = params.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resume_session_params() {
+        let params = ResumeSessionParams {
+            task_id: "task-123".to_string(),
+            session_id: "session-456".to_string(),
+            prompt: Some("Continue working".to_string()),
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        assert!(json.contains("\"session_id\":\"session-456\""));
+        assert!(json.contains("\"prompt\":\"Continue working\""));
+    }
+
+    #[test]
+    fn test_get_session_result() {
+        let json = r#"{"session_id": "sess-123", "is_active": true}"#;
+        let result: GetSessionResult = serde_json::from_str(json).unwrap();
+
+        assert_eq!(result.session_id, "sess-123");
+        assert!(result.is_active);
+    }
+}

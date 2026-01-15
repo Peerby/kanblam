@@ -75,6 +75,8 @@ pub enum Message {
     // Sidecar/SDK events
     /// Event received from the SDK sidecar
     SidecarEvent(crate::sidecar::SidecarEvent),
+    /// Start SDK session for a task (called after worktree is ready)
+    StartSdkSession { task_id: Uuid },
     /// SDK session started successfully
     SdkSessionStarted { task_id: Uuid, session_id: String },
     /// SDK session output received

@@ -182,23 +182,36 @@ impl SidecarClient {
         writeln!(stream, "{}", request_json)?;
         stream.flush()?;
 
-        // Read response
+        // Read responses, skipping notifications until we get our response
         let mut reader = BufReader::new(&*stream);
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line)?;
 
-        let response: JsonRpcResponse = serde_json::from_str(&line)?;
+            if line.trim().is_empty() {
+                continue;
+            }
 
-        // Verify response ID matches
-        if response.id != id {
-            return Err(anyhow!(
-                "Response ID mismatch: expected {}, got {}",
-                id,
-                response.id
-            ));
+            // Try to parse as a generic JSON value first to check if it's a notification
+            let json_value: serde_json::Value = serde_json::from_str(&line)?;
+
+            // Notifications have "method" but no "id"
+            // Responses have "id"
+            if json_value.get("id").is_some() {
+                // This is a response, parse it properly
+                let response: JsonRpcResponse = serde_json::from_value(json_value)?;
+
+                // Verify response ID matches
+                if response.id != id {
+                    // Not our response, could be from a different request - skip it
+                    // (This shouldn't happen in practice with our single-threaded usage)
+                    continue;
+                }
+
+                return Ok(response);
+            }
+            // If no "id", it's a notification - skip it and keep reading
         }
-
-        Ok(response)
     }
 }
 
@@ -238,13 +251,23 @@ impl SidecarEventReceiver {
 
     /// Try to read an event with timeout
     pub fn try_recv(&mut self, timeout: Duration) -> Result<Option<SidecarEvent>> {
-        self.stream.set_read_timeout(Some(timeout))?;
+        // Use minimum 1ms timeout to avoid issues with zero timeout
+        let actual_timeout = if timeout.is_zero() {
+            Duration::from_millis(1)
+        } else {
+            timeout
+        };
+        self.stream.set_read_timeout(Some(actual_timeout))?;
 
         match self.recv() {
             Ok(event) => Ok(Some(event)),
             Err(e) => {
-                // Check if it was a timeout
-                if e.to_string().contains("timed out") {
+                let err_str = e.to_string().to_lowercase();
+                // Check if it was a timeout or would-block error
+                if err_str.contains("timed out")
+                    || err_str.contains("would block")
+                    || err_str.contains("resource temporarily unavailable")
+                {
                     Ok(None)
                 } else {
                     Err(e)
@@ -252,6 +275,45 @@ impl SidecarEventReceiver {
             }
         }
     }
+}
+
+/// Find the sidecar main.cjs path
+fn find_sidecar_path() -> Option<std::path::PathBuf> {
+    // Try production path first (next to executable)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let prod_path = exe_dir.join("sidecar").join("dist").join("main.cjs");
+            if prod_path.exists() {
+                return Some(prod_path);
+            }
+        }
+    }
+
+    // Try development path (relative to Cargo manifest)
+    // During cargo build/run, CARGO_MANIFEST_DIR is set
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let dev_path = std::path::PathBuf::from(&manifest_dir)
+            .join("sidecar")
+            .join("dist")
+            .join("main.cjs");
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+    }
+
+    // Try walking up from executable to find sidecar
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut dir = exe_path.parent();
+        while let Some(parent) = dir {
+            let candidate = parent.join("sidecar").join("dist").join("main.cjs");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            dir = parent.parent();
+        }
+    }
+
+    None
 }
 
 /// Spawn the sidecar process if not already running
@@ -265,17 +327,9 @@ pub fn ensure_sidecar_running() -> Result<()> {
         }
     }
 
-    // Start the sidecar
-    let sidecar_path = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot determine executable directory"))?
-        .join("sidecar")
-        .join("dist")
-        .join("main.js");
-
-    if !sidecar_path.exists() {
-        return Err(anyhow!("Sidecar not found at {:?}", sidecar_path));
-    }
+    // Find the sidecar
+    let sidecar_path = find_sidecar_path()
+        .ok_or_else(|| anyhow!("Sidecar not found. Looked in exe dir, CARGO_MANIFEST_DIR, and parent directories."))?;
 
     // Spawn node process in background
     std::process::Command::new("node")

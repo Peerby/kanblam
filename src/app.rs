@@ -1,6 +1,7 @@
 use crate::message::Message;
-use crate::model::{AppModel, FocusArea, PendingAction, PendingConfirmation, Project, Task, TaskStatus};
+use crate::model::{AppModel, FocusArea, PendingAction, PendingConfirmation, Project, Task, TaskStatus, SessionMode};
 use crate::notify;
+use crate::sidecar::SidecarClient;
 use anyhow::Result;
 use chrono::Utc;
 use std::path::PathBuf;
@@ -9,6 +10,8 @@ use std::path::PathBuf;
 pub struct App {
     pub model: AppModel,
     pub should_quit: bool,
+    /// Sidecar client for SDK session management (if available)
+    pub sidecar_client: Option<SidecarClient>,
 }
 
 impl App {
@@ -16,6 +19,7 @@ impl App {
         Self {
             model: AppModel::default(),
             should_quit: false,
+            sidecar_client: None,
         }
     }
 
@@ -23,7 +27,13 @@ impl App {
         Self {
             model,
             should_quit: false,
+            sidecar_client: None,
         }
+    }
+
+    pub fn with_sidecar(mut self, client: Option<SidecarClient>) -> Self {
+        self.sidecar_client = client;
+        self
     }
 
     /// Sync selected_task_idx based on selected_task_id
@@ -719,77 +729,20 @@ impl App {
                                 )));
                             }
 
-                            // Create tmux window
-                            match crate::tmux::create_task_window(
-                                &project_slug,
-                                &task_id.to_string(),
-                                &worktree_path,
-                            ) {
-                                Ok(window_name) => {
-                                    // Update task with worktree info
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.worktree_path = Some(worktree_path.clone());
-                                            task.git_branch = Some(format!("claude/{}", task_id));
-                                            task.tmux_window = Some(window_name.clone());
-                                            task.session_state = crate::model::ClaudeSessionState::Starting;
-                                            task.status = TaskStatus::InProgress;
-                                            task.started_at = Some(Utc::now());
-                                        }
-                                    }
-
-                                    // Start Claude in the window
-                                    if let Err(e) = crate::tmux::start_claude_in_window(&project_slug, &window_name) {
-                                        commands.push(Message::Error(format!("Failed to start Claude: {}", e)));
-                                        return commands;
-                                    }
-
-                                    // Wait for Claude to be ready (with timeout)
-                                    let ready = crate::tmux::wait_for_claude_ready(
-                                        &project_slug,
-                                        &window_name,
-                                        15000, // 15 second timeout
-                                    ).unwrap_or(false);
-
-                                    if ready {
-                                        // Get task info for sending
-                                        let task_info = self.model.active_project()
-                                            .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
-                                            .map(|t| (t.title.clone(), t.images.clone()));
-
-                                        if let Some((title, images)) = task_info {
-                                            // Send task to Claude
-                                            if let Err(e) = crate::tmux::send_task_to_window(
-                                                &project_slug,
-                                                &window_name,
-                                                &title,
-                                                &images,
-                                            ) {
-                                                commands.push(Message::Error(format!("Failed to send task: {}", e)));
-                                            } else {
-                                                // Update state to Working
-                                                if let Some(project) = self.model.active_project_mut() {
-                                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                                        task.session_state = crate::model::ClaudeSessionState::Working;
-                                                    }
-                                                }
-                                                commands.push(Message::SetStatusMessage(Some(
-                                                    format!("Task started in worktree: {}", worktree_path.display())
-                                                )));
-                                            }
-                                        }
-                                    } else {
-                                        commands.push(Message::SetStatusMessage(Some(
-                                            "Claude started but not ready yet. Switch to window with 'o' to interact.".to_string()
-                                        )));
-                                    }
-                                }
-                                Err(e) => {
-                                    commands.push(Message::Error(format!("Failed to create tmux window: {}", e)));
-                                    // Clean up worktree
-                                    let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
+                            // Update task with worktree info (no tmux window yet - SDK runs headlessly)
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.worktree_path = Some(worktree_path.clone());
+                                    task.git_branch = Some(format!("claude/{}", task_id));
+                                    // tmux_window stays None - created on-demand when user opens interactive modal
+                                    task.session_state = crate::model::ClaudeSessionState::Starting;
+                                    task.status = TaskStatus::Queued; // Starting SDK session
+                                    task.started_at = Some(Utc::now());
                                 }
                             }
+
+                            // Queue the SDK session start (so UI updates with Queued status first)
+                            commands.push(Message::StartSdkSession { task_id });
                         }
                         Err(e) => {
                             commands.push(Message::Error(format!("Failed to create worktree: {}", e)));
@@ -1728,10 +1681,20 @@ impl App {
                         // Check if there's a queued task before getting mutable ref
                         let has_queued = project.next_queued_for(task_id).is_some();
                         let was_accepting = project.tasks[idx].status == TaskStatus::Accepting;
+                        let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
 
                         let task = &mut project.tasks[idx];
                         found_task = true;
+
+                        // Check if we're waiting for CLI to exit (SDK handoff case)
+                        if was_waiting_for_cli && matches!(signal.event.as_str(), "stop" | "end") {
+                            // CLI exited - resume SDK session
+                            task.claude_session_id = Some(signal.session_id.clone());
+                            commands.push(Message::CliSessionEnded { task_id });
+                            break;
+                        }
+
                         match signal.event.as_str() {
                             "stop" => {
                                 if was_accepting {
@@ -1834,6 +1797,77 @@ impl App {
 
             // === Sidecar/SDK Events ===
 
+            Message::StartSdkSession { task_id } => {
+                // Get task info for SDK call
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.title.clone(),
+                            task.images.clone(),
+                            task.worktree_path.clone(),
+                            project.working_dir.clone(),
+                        )
+                    })
+                });
+
+                if let Some((title, images, Some(worktree_path), project_dir)) = task_info {
+                    // Start SDK session via sidecar (headless - no tmux)
+                    if let Some(ref client) = self.sidecar_client {
+                        let images_str: Option<Vec<String>> = if !images.is_empty() {
+                            Some(images.iter().map(|p| p.to_string_lossy().to_string()).collect())
+                        } else {
+                            None
+                        };
+
+                        match client.start_session(task_id, &worktree_path, &title, images_str) {
+                            Ok(session_id) => {
+                                // Update task with session ID and state
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.claude_session_id = Some(session_id);
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                        task.session_mode = SessionMode::SdkManaged;
+                                    }
+                                }
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Task started via SDK in worktree: {}", worktree_path.display())
+                                )));
+                            }
+                            Err(e) => {
+                                commands.push(Message::Error(format!("Failed to start SDK session: {}", e)));
+                                // Clean up worktree since SDK failed
+                                let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
+                                // Reset task state
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.session_state = crate::model::ClaudeSessionState::NotStarted;
+                                        task.status = TaskStatus::Planned;
+                                        task.worktree_path = None;
+                                        task.git_branch = None;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // No sidecar available - cannot start task
+                        commands.push(Message::Error(
+                            "Cannot start task: Sidecar not connected. Ensure sidecar is running.".to_string()
+                        ));
+                        // Reset task state
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.session_state = crate::model::ClaudeSessionState::NotStarted;
+                                task.status = TaskStatus::Planned;
+                                task.worktree_path = None;
+                                task.git_branch = None;
+                            }
+                        }
+                        // Clean up worktree since we can't start
+                        let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
+                    }
+                }
+            }
+
             Message::SidecarEvent(event) => {
                 // Handle events from the SDK sidecar
                 use crate::sidecar::SessionEventType;
@@ -1849,6 +1883,7 @@ impl App {
 
                         match event.event_type {
                             SessionEventType::Started => {
+                                task.status = TaskStatus::InProgress; // Move from Queued to InProgress
                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                 task.session_mode = crate::model::SessionMode::SdkManaged;
                             }
@@ -1917,20 +1952,81 @@ impl App {
             Message::OpenInteractiveModal(task_id) => {
                 // Gather task info first (immutable borrow)
                 let modal_info = self.model.active_project().and_then(|project| {
-                    project.tasks.iter().find(|t| t.id == task_id).and_then(|task| {
-                        task.tmux_window.as_ref().map(|window| {
-                            (
-                                format!("kc-{}:{}", project.slug(), window),
-                                project.slug(),
-                                window.clone(),
-                                task.claude_session_id.clone(),
-                            )
-                        })
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            project.slug(),
+                            task.worktree_path.clone(),
+                            task.tmux_window.clone(),
+                            task.claude_session_id.clone(),
+                        )
                     })
                 });
 
                 // Now we can mutate
-                if let Some((tmux_target, project_slug, window_name, session_id)) = modal_info {
+                if let Some((project_slug, worktree_path, existing_window, session_id)) = modal_info {
+                    // Require a session ID to open interactive mode
+                    let Some(session_id) = session_id else {
+                        commands.push(Message::Error(
+                            "Cannot open interactive mode: no SDK session ID. Task may still be starting.".to_string()
+                        ));
+                        return commands;
+                    };
+
+                    // Require worktree path for creating window
+                    let Some(worktree_path) = worktree_path else {
+                        commands.push(Message::Error(
+                            "Cannot open interactive mode: no worktree path.".to_string()
+                        ));
+                        return commands;
+                    };
+
+                    // Create or get the tmux window (on-demand)
+                    let window_name = match existing_window {
+                        Some(ref w) if crate::tmux::task_window_exists(&project_slug, w) => w.clone(),
+                        _ => {
+                            // Create the window on-demand
+                            match crate::tmux::create_task_window(&project_slug, &task_id.to_string(), &worktree_path) {
+                                Ok(name) => {
+                                    // Store the window name in the task
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                            task.tmux_window = Some(name.clone());
+                                        }
+                                    }
+                                    name
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!(
+                                        "Failed to create interactive window: {}", e
+                                    )));
+                                    return commands;
+                                }
+                            }
+                        }
+                    };
+
+                    let tmux_target = format!("kc-{}:{}", project_slug, window_name);
+
+                    // Stop SDK session first (if running) before CLI takeover
+                    if let Some(ref client) = self.sidecar_client {
+                        if let Err(e) = client.stop_session(task_id) {
+                            // Log but don't fail - session might not be running
+                            eprintln!("Note: Could not stop SDK session: {}", e);
+                        }
+                    }
+
+                    // Send claude --resume command to the tmux window
+                    if let Err(e) = crate::tmux::send_resume_command(
+                        &project_slug,
+                        &window_name,
+                        &session_id,
+                    ) {
+                        commands.push(Message::Error(format!(
+                            "Failed to start interactive session: {}", e
+                        )));
+                        return commands;
+                    }
+
                     // Open interactive modal
                     self.model.ui_state.interactive_modal = Some(crate::model::InteractiveModal {
                         task_id,
@@ -1939,31 +2035,28 @@ impl App {
                         scroll_offset: 0,
                     });
 
-                    // If we have a session ID, start Claude with --resume in the tmux window
-                    if let Some(session_id) = session_id {
-                        // Send claude --resume command to the tmux window
-                        if let Err(e) = crate::tmux::send_resume_command(
-                            &project_slug,
-                            &window_name,
-                            &session_id,
-                        ) {
-                            commands.push(Message::Error(format!(
-                                "Failed to start interactive session: {}", e
-                            )));
-                            self.model.ui_state.interactive_modal = None;
-                        } else {
-                            // Update session mode to CLI
-                            if let Some(project) = self.model.active_project_mut() {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.session_mode = crate::model::SessionMode::CliInteractive;
-                                }
-                            }
+                    // Update session mode to CLI
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.session_mode = crate::model::SessionMode::CliInteractive;
                         }
                     }
                 }
             }
 
             Message::CloseInteractiveModal => {
+                // Get the task_id before closing the modal
+                if let Some(modal) = &self.model.ui_state.interactive_modal {
+                    let task_id = modal.task_id;
+
+                    // Mark task as waiting for CLI to exit
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.session_mode = crate::model::SessionMode::WaitingForCliExit;
+                        }
+                    }
+                }
+
                 // Close the modal, keep Claude running in background
                 self.model.ui_state.interactive_modal = None;
             }
@@ -1974,14 +2067,46 @@ impl App {
             }
 
             Message::ResumeSdkSession { task_id } => {
-                // Resume the SDK session after CLI handoff
-                // This will be handled by the sidecar client
-                if let Some(project) = self.model.active_project_mut() {
-                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.session_mode = crate::model::SessionMode::SdkManaged;
-                        // Note: Actual SDK resume happens asynchronously via sidecar
-                        // The new session_id will arrive via SidecarEvent::Started
+                // Get the session_id from the task first (immutable borrow)
+                let session_id = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id)
+                        .and_then(|task| task.claude_session_id.clone())
+                });
+
+                // Resume the SDK session via sidecar
+                if let Some(session_id) = session_id {
+                    if let Some(ref client) = self.sidecar_client {
+                        match client.resume_session(task_id, &session_id, None) {
+                            Ok(new_session_id) => {
+                                // Update task with new session ID and mode
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.claude_session_id = Some(new_session_id);
+                                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                    }
+                                }
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "SDK session resumed".to_string()
+                                )));
+                            }
+                            Err(e) => {
+                                commands.push(Message::Error(format!("Failed to resume SDK session: {}", e)));
+                                // Fallback: just mark as SDK managed and hope events come in
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // No sidecar client available
+                        commands.push(Message::Error("Cannot resume: sidecar not connected".to_string()));
                     }
+                } else {
+                    // No session to resume
+                    commands.push(Message::Error("Cannot resume: no session ID found".to_string()));
                 }
             }
 
