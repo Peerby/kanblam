@@ -182,6 +182,16 @@ impl ClaudeSessionState {
     }
 }
 
+/// Mode of Claude session management
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SessionMode {
+    /// Session managed by the SDK sidecar
+    #[default]
+    SdkManaged,
+    /// User has taken over via interactive CLI (`claude --resume`)
+    CliInteractive,
+}
+
 /// A task to be executed by Claude Code
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -221,6 +231,9 @@ pub struct Task {
     /// Current state of the Claude session
     #[serde(default)]
     pub session_state: ClaudeSessionState,
+    /// Whether session is SDK-managed or CLI-interactive
+    #[serde(default)]
+    pub session_mode: SessionMode,
 
     // === Task queueing ===
 
@@ -251,6 +264,7 @@ impl Task {
             git_branch: None,
             tmux_window: None,
             session_state: ClaudeSessionState::NotStarted,
+            session_mode: SessionMode::SdkManaged,
             // Queueing
             queued_for_session: None,
         }
@@ -387,6 +401,23 @@ pub struct UiState {
     // Task preview modal
     /// If true, show the task preview modal for the selected task
     pub show_task_preview: bool,
+
+    // Interactive terminal modal
+    /// If set, the interactive modal is open for this task
+    pub interactive_modal: Option<InteractiveModal>,
+}
+
+/// State for the interactive Claude terminal modal
+#[derive(Debug, Clone)]
+pub struct InteractiveModal {
+    /// Task being interacted with
+    pub task_id: Uuid,
+    /// Tmux target for this session (e.g., "kc-project:task-abc123")
+    pub tmux_target: String,
+    /// Captured terminal output (parsed vt100)
+    pub terminal_buffer: String,
+    /// Scroll offset in the terminal output
+    pub scroll_offset: usize,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -440,7 +471,15 @@ impl Default for UiState {
             applied_task_id: None,
             applied_stash_ref: None,
             show_task_preview: false,
+            interactive_modal: None,
         }
+    }
+}
+
+impl UiState {
+    /// Check if the interactive modal is open
+    pub fn is_interactive_modal_open(&self) -> bool {
+        self.interactive_modal.is_some()
     }
 }
 

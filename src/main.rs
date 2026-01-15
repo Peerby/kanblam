@@ -4,6 +4,7 @@ mod image;
 mod message;
 mod model;
 mod notify;
+mod sidecar;
 mod tmux;
 mod ui;
 mod worktree;
