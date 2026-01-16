@@ -40,6 +40,7 @@ export interface StartSessionParams {
 export interface ResumeSessionParams {
   task_id: string;
   session_id: string;
+  worktree_path: string;
   prompt?: string;
 }
 

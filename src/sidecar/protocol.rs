@@ -69,6 +69,7 @@ pub struct StartSessionParams {
 pub struct ResumeSessionParams {
     pub task_id: String,
     pub session_id: String,
+    pub worktree_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
 }
@@ -347,11 +348,13 @@ mod tests {
         let params = ResumeSessionParams {
             task_id: "task-123".to_string(),
             session_id: "session-456".to_string(),
+            worktree_path: "/path/to/worktree".to_string(),
             prompt: Some("Continue working".to_string()),
         };
 
         let json = serde_json::to_string(&params).unwrap();
         assert!(json.contains("\"session_id\":\"session-456\""));
+        assert!(json.contains("\"worktree_path\":\"/path/to/worktree\""));
         assert!(json.contains("\"prompt\":\"Continue working\""));
     }
 

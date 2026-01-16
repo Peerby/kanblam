@@ -170,11 +170,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_focused = app.model.ui_state.focus == FocusArea::TaskInput;
     let is_editing_task = app.model.ui_state.editing_task_id.is_some();
     let is_editing_divider = app.model.ui_state.editing_divider_id.is_some();
+    let is_feedback_mode = app.model.ui_state.feedback_task_id.is_some();
     let is_editing = is_editing_task || is_editing_divider;
 
-    // Choose title based on whether we're editing or creating, show image indicator
+    // Choose title based on mode
     let pending_count = app.model.ui_state.pending_images.len();
-    let title = if is_editing_divider {
+    let title = if is_feedback_mode {
+        " Feedback ".to_string()
+    } else if is_editing_divider {
         " Divider Title ".to_string()
     } else if is_editing_task {
         " Edit Task ".to_string()
@@ -184,9 +187,15 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         " New Task ".to_string()
     };
 
-    // Choose colors based on focus and edit state
+    // Choose colors based on focus and mode
     let (border_color, text_color) = if is_focused {
-        let color = if is_editing { Color::Magenta } else { Color::Yellow };
+        let color = if is_feedback_mode {
+            Color::Cyan
+        } else if is_editing {
+            Color::Magenta
+        } else {
+            Color::Yellow
+        };
         (color, color)
     } else {
         (Color::DarkGray, Color::DarkGray)
@@ -554,6 +563,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 Span::styled(" d ", key_style), Span::styled(" Decline: discard changes and mark done", label_style),
             ]));
             lines.push(Line::from(vec![
+                Span::styled(" f ", key_style), Span::styled(" Feedback: send follow-up instructions", label_style),
+            ]));
+            lines.push(Line::from(vec![
                 Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
             ]));
             lines.push(Line::from(vec![
@@ -679,6 +691,7 @@ fn render_help(frame: &mut Frame) {
         ]),
         Line::from("  a          Accept: merge changes and mark done"),
         Line::from("  d          Decline: discard changes and mark done"),
+        Line::from("  f          Feedback: send follow-up instructions"),
         Line::from("  x          Reset: cleanup & move to Planned"),
         Line::from(""),
         Line::from(vec![

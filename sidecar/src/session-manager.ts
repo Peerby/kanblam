@@ -135,7 +135,7 @@ export class SessionManager {
   }
 
   async resumeSession(params: ResumeSessionParams): Promise<string> {
-    const { task_id, session_id, prompt } = params;
+    const { task_id, session_id, worktree_path, prompt } = params;
 
     // Remove any existing session for this task
     const existing = this.sessions.get(task_id);
@@ -146,9 +146,14 @@ export class SessionManager {
 
     const abortController = new AbortController();
 
+    // Find Claude executable
+    const claudePath = process.env.CLAUDE_PATH || (await this.findClaudePath());
+
     const options: Options = {
       resume: session_id,
+      cwd: worktree_path,
       abortController,
+      pathToClaudeCodeExecutable: claudePath,
     };
 
     // Start processing with resume

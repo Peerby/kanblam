@@ -146,11 +146,19 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         && is_selected
                         && app.model.ui_state.selected_is_divider_above;
 
+                    // Check if this task is the one being feedbacked
+                    let is_feedback_task = app.model.ui_state.feedback_task_id == Some(task.id);
+
                     let style = if is_task_selected {
                         Style::default()
                             .fg(contrast_fg)
                             .bg(color)
                             .add_modifier(Modifier::BOLD)
+                    } else if is_feedback_task {
+                        // Dim highlight for the task receiving feedback
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::DIM)
                     } else {
                         Style::default().fg(Color::White)
                     };
@@ -612,6 +620,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("ccept ", desc_style),
             Span::styled("d", key_style),
             Span::styled("ecline ", desc_style),
+            Span::styled("f", key_style),
+            Span::styled("eedback ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-reset", desc_style),
         ],

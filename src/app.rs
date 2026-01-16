@@ -2473,16 +2473,16 @@ impl App {
             }
 
             Message::ResumeSdkSession { task_id } => {
-                // Get the session_id from the task first (immutable borrow)
-                let session_id = self.model.active_project().and_then(|project| {
+                // Get the session_id and worktree_path from the task first (immutable borrow)
+                let task_info = self.model.active_project().and_then(|project| {
                     project.tasks.iter().find(|t| t.id == task_id)
-                        .and_then(|task| task.claude_session_id.clone())
+                        .map(|task| (task.claude_session_id.clone(), task.worktree_path.clone()))
                 });
 
                 // Resume the SDK session via sidecar
-                if let Some(session_id) = session_id {
+                if let Some((Some(session_id), Some(worktree_path))) = task_info {
                     if let Some(ref client) = self.sidecar_client {
-                        match client.resume_session(task_id, &session_id, None) {
+                        match client.resume_session(task_id, &session_id, &worktree_path, None) {
                             Ok(new_session_id) => {
                                 // Update task with new session ID and mode
                                 if let Some(project) = self.model.active_project_mut() {
@@ -2577,6 +2577,109 @@ impl App {
                 }
             }
 
+            Message::EnterFeedbackMode(task_id) => {
+                // Verify task exists and is in Review status
+                let can_enter = self.model.active_project().map_or(false, |project| {
+                    project.tasks.iter().any(|t| t.id == task_id && t.status == TaskStatus::Review)
+                });
+
+                if can_enter {
+                    // Enter feedback mode: set the feedback task and focus the input
+                    self.model.ui_state.feedback_task_id = Some(task_id);
+                    self.model.ui_state.focus = crate::model::FocusArea::TaskInput;
+                    self.model.ui_state.clear_input();
+                    // Ensure we're in insert mode for typing
+                    self.model.ui_state.editor_state.mode = edtui::EditorMode::Insert;
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Enter feedback (Esc to cancel, Enter to send)".to_string()
+                    )));
+                } else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task must be in Review status to send feedback".to_string()
+                    )));
+                }
+            }
+
+            Message::CancelFeedbackMode => {
+                if self.model.ui_state.feedback_task_id.is_some() {
+                    self.model.ui_state.feedback_task_id = None;
+                    self.model.ui_state.clear_input();
+                    self.model.ui_state.focus = crate::model::FocusArea::KanbanBoard;
+                    commands.push(Message::SetStatusMessage(None));
+                }
+            }
+
+            Message::SendFeedback { task_id, feedback } => {
+                // Always clear feedback mode first, regardless of outcome
+                self.model.ui_state.feedback_task_id = None;
+                self.model.ui_state.clear_input();
+                self.model.ui_state.focus = crate::model::FocusArea::KanbanBoard;
+
+                // Get task info needed for sending feedback
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.claude_session_id.clone(),
+                            task.tmux_window.clone(),
+                            task.worktree_path.clone(),
+                            project.slug(),
+                        )
+                    })
+                });
+
+                if let Some((session_id_opt, tmux_window_opt, worktree_path_opt, project_slug)) = task_info {
+                    // Kill any existing tmux window to avoid sync issues
+                    if let Some(ref window_name) = tmux_window_opt {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window_name);
+                    }
+
+                    if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
+                        // Resume SDK session with feedback - preserves full conversation context
+                        if let Some(ref client) = self.sidecar_client {
+                            match client.resume_session(task_id, session_id, worktree_path, Some(&feedback)) {
+                                Ok(new_session_id) => {
+                                    // Update task state: move to InProgress and set Working state
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                            task.claude_session_id = Some(new_session_id);
+                                            task.status = TaskStatus::InProgress;
+                                            task.session_state = crate::model::ClaudeSessionState::Working;
+                                            task.session_mode = crate::model::SessionMode::SdkManaged;
+                                            task.last_activity_at = Some(chrono::Utc::now());
+                                            // Clear tmux window since we killed it
+                                            task.tmux_window = None;
+                                        }
+                                        project.needs_attention = false;
+                                        notify::clear_attention_indicator();
+                                    }
+
+                                    // Move selection to InProgress column
+                                    commands.push(Message::SelectColumn(TaskStatus::InProgress));
+
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Feedback sent - task resumed".to_string()
+                                    )));
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!("Failed to send feedback: {}", e)));
+                                }
+                            }
+                        } else {
+                            commands.push(Message::Error("Cannot send feedback: sidecar not connected".to_string()));
+                        }
+                    } else {
+                        let reason = match (&session_id_opt, &worktree_path_opt) {
+                            (None, _) => "no session ID (task has no prior Claude session)",
+                            (_, None) => "no worktree path",
+                            _ => "unknown reason",
+                        };
+                        commands.push(Message::Error(format!("Cannot send feedback: {}", reason)));
+                    }
+                } else {
+                    commands.push(Message::Error("Task not found".to_string()));
+                }
+            }
+
             Message::PasteImage => {
                 // Check clipboard for image and save it
                 match crate::image::paste_image_from_clipboard() {
@@ -2620,8 +2723,17 @@ impl App {
                 // Get text from editor
                 let input = self.model.ui_state.get_input_text().trim().to_string();
 
+                // Check if we're in feedback mode
+                if let Some(task_id) = self.model.ui_state.feedback_task_id {
+                    if !input.is_empty() {
+                        commands.push(Message::SendFeedback { task_id, feedback: input });
+                    } else {
+                        // Empty feedback cancels the mode
+                        commands.push(Message::CancelFeedbackMode);
+                    }
+                }
                 // Check if we're editing a divider title
-                if let Some(task_id) = self.model.ui_state.editing_divider_id {
+                else if let Some(task_id) = self.model.ui_state.editing_divider_id {
                     // Empty input clears the title, non-empty sets it
                     let title = if input.is_empty() { None } else { Some(input) };
                     commands.push(Message::UpdateDividerTitle { task_id, title });

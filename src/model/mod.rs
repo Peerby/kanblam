@@ -558,6 +558,11 @@ pub struct UiState {
     pub open_project_dialog_slot: Option<usize>,
     /// Directory browser for the open project dialog
     pub directory_browser: Option<DirectoryBrowser>,
+
+    // Feedback mode
+    /// If set, we're entering feedback for this task (task must be in Review status)
+    /// The input area will be used to capture feedback text
+    pub feedback_task_id: Option<Uuid>,
 }
 
 /// State for the interactive Claude terminal modal
@@ -627,6 +632,7 @@ impl Default for UiState {
             interactive_modal: None,
             open_project_dialog_slot: None,
             directory_browser: None,
+            feedback_task_id: None,
         }
     }
 }

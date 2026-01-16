@@ -113,6 +113,12 @@ pub enum Message {
     ResumeSdkSession { task_id: Uuid },
     /// Start SDK rebase session for smart merge (internal)
     StartRebaseSession { task_id: Uuid },
+    /// Enter feedback mode for a task in Review (focus input for feedback text)
+    EnterFeedbackMode(Uuid),
+    /// Cancel feedback mode
+    CancelFeedbackMode,
+    /// Send feedback to a task in Review and resume the SDK session
+    SendFeedback { task_id: Uuid, feedback: String },
 
     // Image handling
     PasteImage,

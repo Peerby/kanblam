@@ -86,11 +86,13 @@ impl SidecarClient {
         &self,
         task_id: uuid::Uuid,
         session_id: &str,
+        worktree_path: &std::path::PathBuf,
         prompt: Option<&str>,
     ) -> Result<String> {
         let params = ResumeSessionParams {
             task_id: task_id.to_string(),
             session_id: session_id.to_string(),
+            worktree_path: worktree_path.to_string_lossy().to_string(),
             prompt: prompt.map(|s| s.to_string()),
         };
 

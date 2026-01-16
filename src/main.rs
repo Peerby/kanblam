@@ -534,9 +534,23 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::InputSubmit]
         }
 
-        // Ctrl+C unfocuses editor, cancels edit if editing (keeps pending images)
+        // Escape cancels feedback mode or unfocuses editor
+        KeyCode::Esc => {
+            if app.model.ui_state.feedback_task_id.is_some() {
+                vec![Message::CancelFeedbackMode]
+            } else if app.model.ui_state.editing_task_id.is_some() {
+                vec![Message::CancelEdit]
+            } else {
+                app.model.ui_state.clear_input();
+                vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+            }
+        }
+
+        // Ctrl+C unfocuses editor, cancels edit/feedback if active (keeps pending images)
         KeyCode::Char('c') if ctrl => {
-            if app.model.ui_state.editing_task_id.is_some() {
+            if app.model.ui_state.feedback_task_id.is_some() {
+                vec![Message::CancelFeedbackMode]
+            } else if app.model.ui_state.editing_task_id.is_some() {
                 vec![Message::CancelEdit]
             } else {
                 app.model.ui_state.clear_input();
@@ -886,6 +900,23 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // Send feedback to a task in Review - 'f' key
+        KeyCode::Char('f') if app.model.ui_state.selected_column == TaskStatus::Review => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(TaskStatus::Review);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // Don't allow feedback on tasks being accepted
+                        if task.status == TaskStatus::Accepting {
+                            return vec![];
+                        }
+                        return vec![Message::EnterFeedbackMode(task.id)];
+                    }
+                }
+            }
+            vec![]
+        }
+
         // 'r' key: Move to Review (from InProgress, NeedsInput, Done)
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;
@@ -1188,6 +1219,22 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                         action: model::PendingAction::DeleteTask(task.id),
                     },
                 ]
+            }
+        }
+
+        // Feedback: send follow-up instructions (Review only)
+        KeyCode::Char('f') => {
+            if task.status == TaskStatus::Review {
+                // Don't allow feedback on tasks that are already being accepted
+                if task.status == TaskStatus::Accepting {
+                    return vec![];
+                }
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::EnterFeedbackMode(task.id),
+                ]
+            } else {
+                vec![]
             }
         }
 
