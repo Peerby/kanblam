@@ -49,7 +49,7 @@ pub fn render_output(frame: &mut Frame, area: Rect, app: &App) {
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        "Select a task and press Enter to start",
+                        "Select a task and press 's' to start",
                         Style::default().fg(Color::DarkGray),
                     )),
                 ],

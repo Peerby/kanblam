@@ -412,10 +412,10 @@ fn render_help(frame: &mut Frame) {
         Line::from(vec![
             Span::styled("Actions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  v/Space    View task details"),
+        Line::from("  Enter/v    View task details"),
         Line::from("  i          Add new task"),
         Line::from("  e          Edit selected task"),
-        Line::from("  Enter      Start selected task"),
+        Line::from("  s          Start selected task"),
         Line::from("  d          Delete selected task"),
         Line::from("  r          Move to Review"),
         Line::from("  x          Mark as Done"),

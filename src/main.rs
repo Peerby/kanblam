@@ -746,11 +746,24 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Enter input mode
         KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
 
+        // View task details (Enter opens task preview modal)
+        KeyCode::Enter => {
+            // Only show preview if a task is selected (not a divider)
+            if app.model.ui_state.selected_task_idx.is_some()
+                && !app.model.ui_state.selected_is_divider
+                && !app.model.ui_state.selected_is_divider_above
+            {
+                vec![Message::ToggleTaskPreview]
+            } else {
+                vec![]
+            }
+        }
+
         // Start/Continue task
         // In Planned/Queued: Start with worktree isolation
-        // In Review: Continue the task
+        // In Review/NeedsInput: Continue the task
         // In InProgress: Switch to task window
-        KeyCode::Enter => {
+        KeyCode::Char('s') => {
             if let Some(project) = app.model.active_project() {
                 let column = app.model.ui_state.selected_column;
                 let tasks = project.tasks_by_status(column);
@@ -782,10 +795,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                                 }
                             }
                             TaskStatus::Accepting => {
-                                // Task is being rebased - can't interact via Enter
+                                // Task is being rebased - can't interact via s
                             }
                             TaskStatus::Done => {
-                                // Can't do anything with done tasks via Enter
+                                // Can't do anything with done tasks via s
                             }
                         }
                     }
