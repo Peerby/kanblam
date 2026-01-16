@@ -317,12 +317,14 @@ fn find_sidecar_path() -> Option<std::path::PathBuf> {
 }
 
 /// Spawn the sidecar process if not already running
-pub fn ensure_sidecar_running() -> Result<()> {
+/// Returns the Child handle if we spawned a new process (caller should kill on exit)
+/// Returns None if sidecar was already running
+pub fn ensure_sidecar_running() -> Result<Option<std::process::Child>> {
     if SidecarClient::is_available() {
         // Try to ping to verify it's actually responding
         if let Ok(client) = SidecarClient::connect() {
             if client.ping().is_ok() {
-                return Ok(());
+                return Ok(None); // Already running, no child to track
             }
         }
     }
@@ -332,7 +334,7 @@ pub fn ensure_sidecar_running() -> Result<()> {
         .ok_or_else(|| anyhow!("Sidecar not found. Looked in exe dir, CARGO_MANIFEST_DIR, and parent directories."))?;
 
     // Spawn node process in background
-    std::process::Command::new("node")
+    let child = std::process::Command::new("node")
         .arg(&sidecar_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -346,7 +348,7 @@ pub fn ensure_sidecar_running() -> Result<()> {
         if SidecarClient::is_available() {
             if let Ok(client) = SidecarClient::connect() {
                 if client.ping().is_ok() {
-                    return Ok(());
+                    return Ok(Some(child)); // Return handle so caller can kill on exit
                 }
             }
         }

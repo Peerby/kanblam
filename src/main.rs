@@ -44,9 +44,13 @@ async fn main() -> anyhow::Result<()> {
     // Load saved state
     let model = load_state().unwrap_or_default();
 
-    // Start sidecar and connect
+    // Start sidecar and connect (keep handle to kill on exit)
+    let mut sidecar_child = None;
     let sidecar_client = match sidecar::ensure_sidecar_running() {
-        Ok(()) => sidecar::SidecarClient::connect().ok(),
+        Ok(child) => {
+            sidecar_child = child; // Store handle if we spawned it
+            sidecar::SidecarClient::connect().ok()
+        }
         Err(_) => None,
     };
 
@@ -98,6 +102,12 @@ async fn main() -> anyhow::Result<()> {
     // Save state on exit
     if let Err(e) = save_state(&app.model) {
         eprintln!("Failed to save state: {}", e);
+    }
+
+    // Kill sidecar if we spawned it
+    if let Some(mut child) = sidecar_child {
+        let _ = child.kill();
+        let _ = child.wait(); // Reap the zombie process
     }
 
     result
