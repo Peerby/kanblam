@@ -312,8 +312,8 @@ pub fn get_pane_size(target: &str) -> Result<(u16, u16)> {
     Ok((width, height))
 }
 
-/// Open Claude in a separate tmux session (non-blocking)
-/// Creates a new session for Claude and switches to it, allowing normal tmux navigation
+/// Open a combined tmux session with two panes: Claude on left, shell on right
+/// Creates a session named "kb-{short-task-id}" with horizontal split
 pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> Result<()> {
     // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
     let dir_name = worktree_path
@@ -321,7 +321,7 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use short task-id suffix (e.g., "task-6cfe1853" -> "cl-6cfe")
+    // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
     // Strip "task-" prefix if present and use first 4 chars of UUID
     let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
         &stripped[..4.min(stripped.len())]
@@ -330,13 +330,7 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
     } else {
         dir_name
     };
-    let session_name = format!("cl-{}", short_name);
-
-    // Build claude command - resume if we have a valid session_id
-    let claude_cmd = match session_id {
-        Some(id) => format!("claude --resume {}", id),
-        None => "claude".to_string(),
-    };
+    let session_name = format!("kb-{}", short_name);
 
     // Check if session already exists
     let check = Command::new("tmux")
@@ -349,7 +343,13 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
             .args(["switch-client", "-t", &session_name])
             .output();
     } else {
-        // Create new detached session with Claude running
+        // Build claude command - resume if we have a valid session_id
+        let claude_cmd = match session_id {
+            Some(id) => format!("claude --resume {}", id),
+            None => "claude".to_string(),
+        };
+
+        // Create new detached session with Claude running in the first pane
         // Use login shell to get user's PATH (so `claude` command is found)
         let shell_cmd = format!(
             "cd '{}' && {}",
@@ -369,8 +369,28 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create Claude session: {}", stderr));
+            return Err(anyhow!("Failed to create session: {}", stderr));
         }
+
+        // Split horizontally to create right pane with shell
+        let output = Command::new("tmux")
+            .args([
+                "split-window",
+                "-t", &session_name,
+                "-h",  // horizontal split (side by side)
+                "-c", &worktree_path.to_string_lossy(),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create shell pane: {}", stderr));
+        }
+
+        // Select the left pane (Claude) as the active pane
+        let _ = Command::new("tmux")
+            .args(["select-pane", "-t", &format!("{}:0.0", session_name)])
+            .output();
 
         // Switch to the new session
         let _ = Command::new("tmux")
@@ -517,99 +537,14 @@ pub fn switch_to_task_window(project_slug: &str, window_name: &str) -> Result<()
     Ok(())
 }
 
-/// Create a test shell session for a task and switch to it
-/// Each task gets its own dedicated tmux session named "tst-{short-task-id}"
-/// If the session already exists, we reconnect to it
-pub fn create_test_shell(
-    _project_slug: &str,
-    task_id: &str,
-    worktree_path: &std::path::Path,
-) -> Result<String> {
-    let session_name = format!("tst-{}", &task_id[..4.min(task_id.len())]);
-
-    // Check if session already exists
-    let check = Command::new("tmux")
-        .args(["has-session", "-t", &session_name])
-        .output()?;
-
-    let session_exists = check.status.success();
-
-    if !session_exists {
-        // Create new detached session starting in the worktree directory
-        let output = Command::new("tmux")
-            .args([
-                "new-session",
-                "-d",
-                "-s",
-                &session_name,
-                "-c",
-                &worktree_path.to_string_lossy(),
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create test session: {}", stderr));
-        }
-    }
-
-    // Switch to the test session
-    let _ = Command::new("tmux")
-        .args(["switch-client", "-t", &session_name])
-        .output();
-
-    Ok(session_name)
-}
-
 /// Result of creating a detached session
 pub struct DetachedSessionResult {
     pub session_name: String,
     pub was_created: bool,
 }
 
-/// Create a test shell session for a task in detached mode (don't switch to it)
-/// Returns the session name and whether it was newly created
-pub fn create_test_shell_detached(
-    _project_slug: &str,
-    task_id: &str,
-    worktree_path: &std::path::Path,
-) -> Result<DetachedSessionResult> {
-    let session_name = format!("tst-{}", &task_id[..4.min(task_id.len())]);
-
-    // Check if session already exists
-    let check = Command::new("tmux")
-        .args(["has-session", "-t", &session_name])
-        .output()?;
-
-    let session_exists = check.status.success();
-
-    if !session_exists {
-        // Create new detached session starting in the worktree directory
-        let output = Command::new("tmux")
-            .args([
-                "new-session",
-                "-d",
-                "-s",
-                &session_name,
-                "-c",
-                &worktree_path.to_string_lossy(),
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create test session: {}", stderr));
-        }
-    }
-
-    // Don't switch - stay in current session
-    Ok(DetachedSessionResult {
-        session_name,
-        was_created: !session_exists,
-    })
-}
-
-/// Open Claude in a separate tmux session in detached mode (don't switch to it)
+/// Open combined tmux session in detached mode (don't switch to it)
+/// Creates a session with two panes: Claude on left, shell on right
 /// Returns the session name and whether it was newly created
 pub fn open_popup_detached(
     worktree_path: &std::path::Path,
@@ -621,7 +556,7 @@ pub fn open_popup_detached(
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use short task-id suffix (e.g., "task-6cfe1853" -> "cl-6cfe")
+    // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
     let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
         &stripped[..4.min(stripped.len())]
     } else if dir_name.len() > 4 {
@@ -629,13 +564,7 @@ pub fn open_popup_detached(
     } else {
         dir_name
     };
-    let session_name = format!("cl-{}", short_name);
-
-    // Build claude command - resume if we have a valid session_id
-    let claude_cmd = match session_id {
-        Some(id) => format!("claude --resume {}", id),
-        None => "claude".to_string(),
-    };
+    let session_name = format!("kb-{}", short_name);
 
     // Check if session already exists
     let check = Command::new("tmux")
@@ -645,7 +574,13 @@ pub fn open_popup_detached(
     let session_exists = check.status.success();
 
     if !session_exists {
-        // Create new detached session with Claude running
+        // Build claude command - resume if we have a valid session_id
+        let claude_cmd = match session_id {
+            Some(id) => format!("claude --resume {}", id),
+            None => "claude".to_string(),
+        };
+
+        // Create new detached session with Claude running in the first pane
         let shell_cmd = format!(
             "cd '{}' && {}",
             worktree_path.to_string_lossy(),
@@ -664,8 +599,28 @@ pub fn open_popup_detached(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create Claude session: {}", stderr));
+            return Err(anyhow!("Failed to create session: {}", stderr));
         }
+
+        // Split horizontally to create right pane with shell
+        let output = Command::new("tmux")
+            .args([
+                "split-window",
+                "-t", &session_name,
+                "-h",  // horizontal split (side by side)
+                "-c", &worktree_path.to_string_lossy(),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create shell pane: {}", stderr));
+        }
+
+        // Select the left pane (Claude) as the active pane
+        let _ = Command::new("tmux")
+            .args(["select-pane", "-t", &format!("{}:0.0", session_name)])
+            .output();
     }
 
     // Don't switch - stay in current session
@@ -691,20 +646,12 @@ pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
 }
 
 /// Kill any detached tmux sessions associated with a task.
-/// This includes:
-/// - Claude popup sessions: `cl-{first-8-chars-of-task-id}`
-/// - Test shell sessions: `tst-{first-4-chars-of-task-id}`
+/// This includes the combined session: `kb-{first-4-chars-of-task-id}`
 pub fn kill_task_sessions(task_id: &str) {
-    // Kill Claude popup session (cl-{first-8-chars})
-    let claude_session = format!("cl-{}", &task_id[..8.min(task_id.len())]);
+    // Kill combined session (kb-{first-4-chars})
+    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
     let _ = Command::new("tmux")
-        .args(["kill-session", "-t", &claude_session])
-        .output();
-
-    // Kill test shell session (tst-{first-4-chars})
-    let test_session = format!("tst-{}", &task_id[..4.min(task_id.len())]);
-    let _ = Command::new("tmux")
-        .args(["kill-session", "-t", &test_session])
+        .args(["kill-session", "-t", &session_name])
         .output();
 }
 

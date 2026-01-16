@@ -709,26 +709,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::FocusChanged(next_focus)]
         }
 
-        // Open interactive modal for Claude session (replaces switching to tmux window)
+        // Open combined tmux session (Claude on left, shell on right)
         KeyCode::Char('o') => {
-            // If a task with an SDK session is selected, open interactive modal
-            if let Some(project) = app.model.active_project() {
-                let column = app.model.ui_state.selected_column;
-                let tasks = project.tasks_by_status(column);
-                if let Some(idx) = app.model.ui_state.selected_task_idx {
-                    if let Some(task) = tasks.get(idx) {
-                        // Check for SDK session ID (tmux window is created on-demand)
-                        if task.claude_session_id.is_some() {
-                            return vec![Message::OpenInteractiveModal(task.id)];
-                        }
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // Open test shell in task's worktree
-        KeyCode::Char('t') => {
             let column = app.model.ui_state.selected_column;
             // Only for tasks with worktrees (InProgress, Review, NeedsInput)
             if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
@@ -737,7 +719,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
                         if let Some(task) = tasks.get(idx) {
                             if task.worktree_path.is_some() {
-                                return vec![Message::OpenTestShell(task.id)];
+                                return vec![Message::OpenInteractiveModal(task.id)];
                             }
                         }
                     }
@@ -746,24 +728,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Open interactive modal in detached mode (Shift-O)
+        // Open combined session in detached mode (Shift-O)
         KeyCode::Char('O') => {
-            if let Some(project) = app.model.active_project() {
-                let column = app.model.ui_state.selected_column;
-                let tasks = project.tasks_by_status(column);
-                if let Some(idx) = app.model.ui_state.selected_task_idx {
-                    if let Some(task) = tasks.get(idx) {
-                        if task.claude_session_id.is_some() {
-                            return vec![Message::OpenInteractiveDetached(task.id)];
-                        }
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // Open test shell in detached mode (Shift-T)
-        KeyCode::Char('T') => {
             let column = app.model.ui_state.selected_column;
             if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
                 if let Some(project) = app.model.active_project() {
@@ -771,7 +737,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
                         if let Some(task) = tasks.get(idx) {
                             if task.worktree_path.is_some() {
-                                return vec![Message::OpenTestShellDetached(task.id)];
+                                return vec![Message::OpenInteractiveDetached(task.id)];
                             }
                         }
                     }
@@ -1148,21 +1114,12 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         }
 
 
-        // Open interactive modal
+        // Open combined tmux session (Claude on left, shell on right)
         KeyCode::Char('o') => {
-            if task.claude_session_id.is_some() {
-                vec![Message::ToggleTaskPreview, Message::OpenInteractiveModal(task.id)]
-            } else {
-                vec![]
-            }
-        }
-
-        // Open test shell
-        KeyCode::Char('t') => {
             if matches!(task.status, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput)
                 && task.worktree_path.is_some()
             {
-                vec![Message::ToggleTaskPreview, Message::OpenTestShell(task.id)]
+                vec![Message::ToggleTaskPreview, Message::OpenInteractiveModal(task.id)]
             } else {
                 vec![]
             }

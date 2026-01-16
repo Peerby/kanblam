@@ -1306,59 +1306,6 @@ impl App {
                 }
             }
 
-            Message::OpenTestShell(task_id) => {
-                let test_info = self.model.active_project().and_then(|p| {
-                    p.tasks.iter()
-                        .find(|t| t.id == task_id)
-                        .and_then(|t| t.worktree_path.as_ref().map(|wt| (p.slug(), wt.clone())))
-                });
-
-                if let Some((project_slug, worktree_path)) = test_info {
-                    match crate::tmux::create_test_shell(
-                        &project_slug,
-                        &task_id.to_string(),
-                        &worktree_path,
-                    ) {
-                        Ok(_window_name) => {
-                            commands.push(Message::SetStatusMessage(Some(
-                                format!("Opened test shell in {}", worktree_path.display())
-                            )));
-                        }
-                        Err(e) => {
-                            commands.push(Message::Error(format!("Failed to open test shell: {}", e)));
-                        }
-                    }
-                }
-            }
-
-            Message::OpenTestShellDetached(task_id) => {
-                let test_info = self.model.active_project().and_then(|p| {
-                    p.tasks.iter()
-                        .find(|t| t.id == task_id)
-                        .and_then(|t| t.worktree_path.as_ref().map(|wt| (p.slug(), wt.clone())))
-                });
-
-                if let Some((project_slug, worktree_path)) = test_info {
-                    match crate::tmux::create_test_shell_detached(
-                        &project_slug,
-                        &task_id.to_string(),
-                        &worktree_path,
-                    ) {
-                        Ok(result) => {
-                            let status = if result.was_created {
-                                format!("Created session '{}'", result.session_name)
-                            } else {
-                                format!("Session '{}' already exists", result.session_name)
-                            };
-                            commands.push(Message::SetStatusMessage(Some(status)));
-                        }
-                        Err(e) => {
-                            commands.push(Message::Error(format!("Failed to create test shell: {}", e)));
-                        }
-                    }
-                }
-            }
-
             Message::OpenInteractiveDetached(task_id) => {
                 // Gather task info
                 let task_info = self.model.active_project().and_then(|project| {
