@@ -40,6 +40,8 @@ pub enum Message {
     DiscardTask(Uuid),
     /// Reset a task - discard all changes and start fresh (moved to top of Planned)
     ResetTask(Uuid),
+    /// Check if task was already merged, and if so cleanup and move to Done
+    CheckAlreadyMerged(Uuid),
     /// Switch to the task's tmux window (focuses the Claude session)
     SwitchToTaskWindow(Uuid),
     /// Open combined session in detached mode (don't switch to it)

@@ -9,10 +9,23 @@ use ratatui::{
 
 /// Render the status bar with project info and summary
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
-    // If there's a pending confirmation, show it prominently
+    // If there's a pending confirmation, show it prominently (unless it's multiline - then it's a modal)
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
+        // Skip multiline messages - they're rendered as modals instead
+        if !confirmation.message.contains('\n') {
+            let msg = Paragraph::new(Span::styled(
+                format!(" {} ", confirmation.message),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            frame.render_widget(msg, area);
+            return;
+        }
+        // For multiline, show a simple hint in the status bar
         let msg = Paragraph::new(Span::styled(
-            format!(" {} ", confirmation.message),
+            " [y] Confirm  [n/Esc] Cancel ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)

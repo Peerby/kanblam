@@ -903,6 +903,23 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // Check if already merged (cleanup if merged externally) - 'c' in Review column
+        KeyCode::Char('c') if app.model.ui_state.selected_column == TaskStatus::Review => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(TaskStatus::Review);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // Don't process tasks that are already being accepted
+                        if task.status == TaskStatus::Accepting {
+                            return vec![];
+                        }
+                        return vec![Message::CheckAlreadyMerged(task.id)];
+                    }
+                }
+            }
+            vec![]
+        }
+
         // 'r' key: Move to Review (from InProgress, NeedsInput, Done)
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;

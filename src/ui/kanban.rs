@@ -652,6 +652,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::Review => vec![
             Span::styled("a", key_style),
             Span::styled("ccept ", desc_style),
+            Span::styled("c", key_style),
+            Span::styled("heck ", desc_style),
             Span::styled("d", key_style),
             Span::styled("ecline ", desc_style),
             Span::styled("f", key_style),

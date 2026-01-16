@@ -1316,6 +1316,174 @@ impl App {
                 }
             }
 
+            Message::CheckAlreadyMerged(task_id) => {
+                // Check if the task's branch was already merged to main
+                // Shows a detailed report and asks user for confirmation before any cleanup
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.working_dir.clone(),
+                            t.worktree_path.clone(),
+                        ))
+                });
+
+                let Some((project_dir, worktree_path)) = task_info else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task not found".to_string()
+                    )));
+                    return commands;
+                };
+
+                {
+                    let branch_name = format!("claude/{}", task_id);
+                    let mut report_lines: Vec<String> = vec![];
+
+                    // Check 1: Does branch exist?
+                    let branch_exists = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["rev-parse", "--verify", &branch_name])
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false);
+
+                    if !branch_exists {
+                        report_lines.push(format!("Branch: {} does NOT exist", branch_name));
+                        report_lines.push("".to_string());
+                        report_lines.push("VERDICT: CANNOT VERIFY - branch missing".to_string());
+                        report_lines.push("".to_string());
+                        report_lines.push("Press any key to close.".to_string());
+                        commands.push(Message::ShowConfirmation {
+                            message: report_lines.join("\n"),
+                            action: PendingAction::ViewMergeReport,
+                        });
+                        return commands;
+                    }
+                    report_lines.push(format!("Branch: {} exists", branch_name));
+
+                    // Check 2: Does branch have commits?
+                    let commits_output = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["log", "--oneline", &format!("HEAD..{}", branch_name)])
+                        .output();
+
+                    let has_commits = match &commits_output {
+                        Ok(o) if o.status.success() => {
+                            let out = String::from_utf8_lossy(&o.stdout);
+                            !out.trim().is_empty()
+                        }
+                        _ => false,
+                    };
+
+                    let commit_count = commits_output
+                        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+                        .unwrap_or(0);
+
+                    if has_commits {
+                        report_lines.push(format!("Commits on branch: {} (work was done)", commit_count));
+                    } else {
+                        report_lines.push("Commits on branch: 0 (no work done)".to_string());
+                    }
+
+                    // Check 3: Is there a diff between branch and main?
+                    let has_diff = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["diff", "--quiet", "HEAD", &branch_name])
+                        .status()
+                        .map(|s| !s.success())
+                        .unwrap_or(true);
+
+                    if has_diff {
+                        // Get diff stats
+                        let diff_stat = std::process::Command::new("git")
+                            .current_dir(&project_dir)
+                            .args(["diff", "--shortstat", "HEAD", &branch_name])
+                            .output()
+                            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                            .unwrap_or_default();
+                        report_lines.push(format!("Diff with main: YES - {}", diff_stat));
+                    } else {
+                        report_lines.push("Diff with main: NONE (content matches main)".to_string());
+                    }
+
+                    // Check 4: Uncommitted changes in worktree?
+                    let has_uncommitted = if let Some(ref wt_path) = worktree_path {
+                        if wt_path.exists() {
+                            crate::worktree::has_uncommitted_changes(wt_path).unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    let worktree_exists = worktree_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+                    if worktree_exists {
+                        if has_uncommitted {
+                            report_lines.push("Worktree: EXISTS with UNCOMMITTED CHANGES".to_string());
+                        } else {
+                            report_lines.push("Worktree: exists, clean".to_string());
+                        }
+                    } else {
+                        report_lines.push("Worktree: not present".to_string());
+                    }
+
+                    // Determine verdict
+                    let is_merged = has_commits && !has_diff;
+                    let is_safe_to_cleanup = is_merged && !has_uncommitted;
+
+                    report_lines.push("---".to_string());
+                    if is_merged {
+                        report_lines.push("VERDICT: MERGED (branch has commits, content is in main)".to_string());
+                        if is_safe_to_cleanup {
+                            report_lines.push("".to_string());
+                            report_lines.push("Press 'y' to clean up, 'n'/Esc to cancel.".to_string());
+                            // Show confirmation dialog with cleanup action
+                            commands.push(Message::ShowConfirmation {
+                                message: report_lines.join("\n"),
+                                action: PendingAction::CleanupMergedTask(task_id),
+                            });
+                        } else {
+                            report_lines.push("NOT safe: worktree has uncommitted changes!".to_string());
+                            report_lines.push("".to_string());
+                            report_lines.push("Press any key to close.".to_string());
+                            // View-only modal
+                            commands.push(Message::ShowConfirmation {
+                                message: report_lines.join("\n"),
+                                action: PendingAction::ViewMergeReport,
+                            });
+                        }
+                    } else if !has_commits {
+                        if has_uncommitted {
+                            report_lines.push("VERDICT: HAS UNCOMMITTED WORK".to_string());
+                            report_lines.push("Worktree has changes that haven't been committed yet.".to_string());
+                        } else {
+                            report_lines.push("VERDICT: NOT MERGED (no commits on branch)".to_string());
+                        }
+                        report_lines.push("".to_string());
+                        report_lines.push("Press any key to close.".to_string());
+                        // View-only modal
+                        commands.push(Message::ShowConfirmation {
+                            message: report_lines.join("\n"),
+                            action: PendingAction::ViewMergeReport,
+                        });
+                    } else {
+                        report_lines.push("VERDICT: NOT MERGED (branch has changes not in main)".to_string());
+                        if has_uncommitted {
+                            report_lines.push("Also has uncommitted changes in worktree.".to_string());
+                        }
+                        report_lines.push("Use 'a' to accept and merge.".to_string());
+                        report_lines.push("".to_string());
+                        report_lines.push("Press any key to close.".to_string());
+                        // View-only modal
+                        commands.push(Message::ShowConfirmation {
+                            message: report_lines.join("\n"),
+                            action: PendingAction::ViewMergeReport,
+                        });
+                    }
+                }
+            }
+
             Message::SwitchToTaskWindow(task_id) => {
                 let switch_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -2064,6 +2232,69 @@ impl App {
                                 )));
                             }
                         }
+                        PendingAction::ViewMergeReport => {
+                            // View-only modal - just dismiss, no action needed
+                        }
+                        PendingAction::CleanupMergedTask(task_id) => {
+                            // User confirmed cleanup of an already-merged task
+                            let task_info = self.model.active_project().and_then(|p| {
+                                p.tasks.iter()
+                                    .find(|t| t.id == task_id)
+                                    .map(|t| (
+                                        p.slug(),
+                                        p.working_dir.clone(),
+                                        t.tmux_window.clone(),
+                                        t.worktree_path.clone(),
+                                    ))
+                            });
+
+                            if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                                // Kill tmux window if exists
+                                if let Some(ref window) = window_name {
+                                    let _ = crate::tmux::kill_task_window(&project_slug, window);
+                                }
+
+                                // Kill any detached Claude/test sessions for this task
+                                crate::tmux::kill_task_sessions(&task_id.to_string());
+
+                                // Remove worktree if still around
+                                if let Some(ref wt_path) = worktree_path {
+                                    if wt_path.exists() {
+                                        if let Err(e) = crate::worktree::remove_worktree(&project_dir, wt_path) {
+                                            commands.push(Message::SetStatusMessage(Some(
+                                                format!("Warning: Could not remove worktree: {}", e)
+                                            )));
+                                        }
+                                        let _ = crate::worktree::remove_worktree_trust(wt_path);
+                                    }
+                                }
+
+                                // Delete branch
+                                let _ = crate::worktree::delete_branch(&project_dir, task_id);
+
+                                // Move task to Done
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                                        let mut task = project.tasks.remove(idx);
+                                        task.status = TaskStatus::Done;
+                                        task.completed_at = Some(Utc::now());
+                                        task.worktree_path = None;
+                                        task.tmux_window = None;
+                                        task.git_branch = None;
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        project.tasks.push(task);
+                                    }
+                                    project.needs_attention = project.review_count() > 0;
+                                    if !project.needs_attention {
+                                        notify::clear_attention_indicator();
+                                    }
+                                }
+
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Merged task cleaned up and moved to Done.".to_string()
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -2099,6 +2330,15 @@ impl App {
                             commands.push(Message::SetStatusMessage(Some(
                                 "Cancelled. Task left in Review.".to_string()
                             )));
+                        }
+                        PendingAction::CleanupMergedTask(_) => {
+                            // User cancelled cleanup, task stays in Review
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cleanup cancelled. Task left in Review.".to_string()
+                            )));
+                        }
+                        PendingAction::ViewMergeReport => {
+                            // View-only modal dismissed - no message needed
                         }
                     }
                 }

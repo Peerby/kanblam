@@ -770,6 +770,10 @@ pub enum PendingAction {
     AcceptTask(Uuid),
     /// Decline task: discard changes and mark as done
     DeclineTask(Uuid),
+    /// Clean up a task that was already merged (user confirmed after seeing report)
+    CleanupMergedTask(Uuid),
+    /// View-only merge report (no action on confirm, just dismiss)
+    ViewMergeReport,
 }
 
 /// Which UI element has focus

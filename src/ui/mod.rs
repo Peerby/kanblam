@@ -89,6 +89,13 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     if app.model.ui_state.is_open_project_dialog_open() {
         render_open_project_dialog(frame, app);
     }
+
+    // Render confirmation modal if pending confirmation has multiline message
+    if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
+        if confirmation.message.contains('\n') {
+            render_confirmation_modal(frame, &confirmation.message);
+        }
+    }
 }
 
 /// Calculate the required height for the input area based on content
@@ -1291,4 +1298,68 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// Render a confirmation modal for multiline messages (like merge check reports)
+fn render_confirmation_modal(frame: &mut Frame, message: &str) {
+    // Calculate size based on content
+    let line_count = message.lines().count();
+    let max_line_width = message.lines().map(|l| l.len()).max().unwrap_or(40);
+
+    // Size the modal to fit content with some padding
+    let height_percent = ((line_count + 4) * 100 / frame.area().height as usize).min(80).max(30) as u16;
+    let width_percent = ((max_line_width + 6) * 100 / frame.area().width as usize).min(90).max(50) as u16;
+
+    let area = centered_rect(width_percent, height_percent, frame.area());
+
+    // Build lines with styling
+    let mut lines: Vec<Line> = Vec::new();
+    let label_style = Style::default().fg(Color::DarkGray);
+    let value_style = Style::default().fg(Color::White);
+    let verdict_merged = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+    let verdict_not_merged = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let warning_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+
+    for line in message.lines() {
+        let styled_line = if line.starts_with("===") {
+            Line::from(Span::styled(line, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        } else if line.starts_with("VERDICT: MERGED") {
+            Line::from(Span::styled(line, verdict_merged))
+        } else if line.starts_with("VERDICT: NOT MERGED") || line.starts_with("VERDICT: CANNOT") {
+            Line::from(Span::styled(line, verdict_not_merged))
+        } else if line.starts_with("VERDICT: HAS UNCOMMITTED") || line.contains("UNCOMMITTED CHANGES") || line.starts_with("NOT safe") || line.contains("uncommitted") {
+            Line::from(Span::styled(line, warning_style))
+        } else if line.starts_with("Branch:") || line.starts_with("Commits") || line.starts_with("Diff") || line.starts_with("Worktree:") {
+            // Split label and value
+            if let Some(colon_pos) = line.find(':') {
+                let (label, value) = line.split_at(colon_pos + 1);
+                Line::from(vec![
+                    Span::styled(label, label_style),
+                    Span::styled(value, value_style),
+                ])
+            } else {
+                Line::from(Span::styled(line, value_style))
+            }
+        } else if line.starts_with("---") {
+            Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
+        } else if line.contains("'y'") || line.contains("'n'") {
+            Line::from(Span::styled(line, Style::default().fg(Color::Yellow)))
+        } else {
+            Line::from(Span::styled(line, value_style))
+        };
+        lines.push(styled_line);
+    }
+
+    let modal = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(" Merge Check ")
+                .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        )
+        .wrap(ratatui::widgets::Wrap { trim: false });
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(modal, area);
 }

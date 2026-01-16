@@ -122,6 +122,18 @@ pub fn remove_worktree(project_dir: &PathBuf, worktree_path: &PathBuf) -> Result
     Ok(())
 }
 
+/// Check if a worktree has any uncommitted changes (staged or unstaged)
+/// Returns true if there are changes, false if clean
+pub fn has_uncommitted_changes(worktree_path: &PathBuf) -> Result<bool> {
+    let status_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    let status = String::from_utf8_lossy(&status_output.stdout);
+    Ok(!status.trim().is_empty())
+}
+
 /// Commit any uncommitted changes in a worktree
 /// Returns true if changes were committed, false if nothing to commit
 pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result<bool> {
@@ -548,6 +560,75 @@ fn find_base_branch(project_dir: &PathBuf) -> Result<String> {
 
     // Fall back to HEAD
     Ok("HEAD".to_string())
+}
+
+/// Check if a task branch has already been squash-merged to main.
+///
+/// SAFETY: This function is EXTREMELY conservative. It only returns true when
+/// we can PROVE the branch was squash-merged:
+/// 1. The branch EXISTS (we can verify its state)
+/// 2. The branch HAS commits beyond the merge-base (work was done)
+/// 3. There is ZERO diff between branch and main (content is in main)
+///
+/// This combination means: work was done on the branch, and that work's content
+/// is now in main (via squash merge). Without commits, we can't prove anything
+/// was merged - it might just be a fresh branch.
+///
+/// If ANY check fails or errors, returns false to be safe.
+pub fn is_branch_merged(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // SAFETY CHECK 1: Branch MUST exist - if not, we can't verify anything
+    let branch_exists = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--verify", &branch_name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !branch_exists {
+        // Branch doesn't exist - return false (safe default)
+        return Ok(false);
+    }
+
+    // SAFETY CHECK 2: Branch MUST have commits (work was done)
+    // If there are no commits on the branch, we can't prove anything was merged
+    // git log HEAD..branch shows commits in branch but not in HEAD (main)
+    let branch_commits = Command::new("git")
+        .current_dir(project_dir)
+        .args(["log", "--oneline", &format!("HEAD..{}", branch_name)])
+        .output()
+        .context("Failed to check for branch commits")?;
+
+    if !branch_commits.status.success() {
+        return Ok(false);
+    }
+
+    let commits_output = String::from_utf8_lossy(&branch_commits.stdout);
+    if commits_output.trim().is_empty() {
+        // No commits on branch - can't prove anything was merged
+        // This could be a fresh branch that never had work done
+        return Ok(false);
+    }
+
+    // SAFETY CHECK 3: Content must match main (squash merge completed)
+    // If the branch has commits BUT the diff is empty, the content was squash-merged
+    let diff_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--quiet", "HEAD", &branch_name])
+        .status()
+        .context("Failed to check diff")?;
+
+    if !diff_check.success() {
+        // There's a diff - content not yet in main, NOT merged
+        return Ok(false);
+    }
+
+    // All checks passed:
+    // - Branch exists
+    // - Branch has commits (work was done)
+    // - No diff with main (content is in main via squash merge)
+    Ok(true)
 }
 
 /// Check if task branch is behind main (needs rebase before merge)
