@@ -751,7 +751,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Accept task (merge changes and mark done) - 'a' in Review column
+        // Apply task changes to main worktree for testing - 'a' in Review column
         KeyCode::Char('a') => {
             let column = app.model.ui_state.selected_column;
             if column == TaskStatus::Review {
@@ -759,7 +759,27 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     let tasks = project.tasks_by_status(column);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
                         if let Some(task) = tasks.get(idx) {
-                            // Don't accept tasks that are already being accepted
+                            // Don't apply if task is already being merged
+                            if task.status == TaskStatus::Accepting {
+                                return vec![];
+                            }
+                            return vec![Message::SmartApplyTask(task.id)];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Merge task (finalize changes and mark done) - 'm' in Review column
+        KeyCode::Char('m') => {
+            let column = app.model.ui_state.selected_column;
+            if column == TaskStatus::Review {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            // Don't merge tasks that are already being merged
                             if task.status == TaskStatus::Accepting {
                                 return vec![];
                             }
@@ -774,30 +794,14 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Unapply task changes OR Update worktree to latest main
+        // Unapply task changes (remove applied changes from main worktree)
         KeyCode::Char('u') => {
-            // If there's an applied task, unapply it first
+            // If there's an applied task, unapply it
             let has_applied = app.model.active_project()
                 .map(|p| p.applied_task_id.is_some())
                 .unwrap_or(false);
             if has_applied {
                 return vec![Message::UnapplyTaskChanges];
-            }
-
-            // Otherwise, update worktree to latest main (for tasks with worktrees)
-            let column = app.model.ui_state.selected_column;
-            if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
-                if let Some(project) = app.model.active_project() {
-                    let tasks = project.tasks_by_status(column);
-                    if let Some(idx) = app.model.ui_state.selected_task_idx {
-                        if let Some(task) = tasks.get(idx) {
-                            // Only allow update for tasks with worktrees that are behind
-                            if task.worktree_path.is_some() && task.git_commits_behind > 0 {
-                                return vec![Message::UpdateWorktreeToMain(task.id)];
-                            }
-                        }
-                    }
-                }
             }
             vec![]
         }
@@ -858,6 +862,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                             }
                             TaskStatus::Updating => {
                                 // Task is being rebased for update - can't interact via s
+                            }
+                            TaskStatus::Applying => {
+                                // Task changes are being applied - can't interact via s
                             }
                             TaskStatus::Done => {
                                 // Can't do anything with done tasks via s
@@ -1165,10 +1172,23 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Accept task (merge and mark done) - Review only
+        // Apply task changes to main worktree for testing - Review only
         KeyCode::Char('a') => {
             if task.status == TaskStatus::Review {
-                // Don't accept tasks that are already being accepted
+                // Don't apply if already being merged
+                if task.status == TaskStatus::Accepting {
+                    return vec![];
+                }
+                vec![Message::ToggleTaskPreview, Message::SmartApplyTask(task.id)]
+            } else {
+                vec![]
+            }
+        }
+
+        // Merge task (finalize changes and mark done) - Review only
+        KeyCode::Char('m') => {
+            if task.status == TaskStatus::Review {
+                // Don't merge tasks that are already being merged
                 if task.status == TaskStatus::Accepting {
                     return vec![];
                 }
@@ -1276,21 +1296,13 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::ToggleTaskPreview]
         }
 
-        // Unapply task changes OR Update worktree to latest main
+        // Unapply task changes (remove applied changes from main worktree)
         KeyCode::Char('u') => {
-            // If there's an applied task, unapply it first
             let has_applied = app.model.active_project()
                 .map(|p| p.applied_task_id.is_some())
                 .unwrap_or(false);
             if has_applied {
                 return vec![Message::ToggleTaskPreview, Message::UnapplyTaskChanges];
-            }
-
-            // Otherwise, update worktree to latest main (for tasks with worktrees)
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
-                if task.worktree_path.is_some() && task.git_commits_behind > 0 {
-                    return vec![Message::ToggleTaskPreview, Message::UpdateWorktreeToMain(task.id)];
-                }
             }
             vec![]
         }

@@ -535,6 +535,7 @@ pub enum TaskStatus {
     Review,
     Accepting, // Rebasing onto main before accepting
     Updating,  // Rebasing onto main without merging back (just updating worktree)
+    Applying,  // Applying task changes to main worktree for testing
     Done,
 }
 
@@ -548,6 +549,7 @@ impl TaskStatus {
             TaskStatus::Review => "Review",
             TaskStatus::Accepting => "Accepting",
             TaskStatus::Updating => "Updating",
+            TaskStatus::Applying => "Applying",
             TaskStatus::Done => "Done",
         }
     }
@@ -565,14 +567,14 @@ impl TaskStatus {
     }
 
     /// Get array index for this status (for column_scroll_offsets)
-    /// Accepting and Updating tasks appear in the Review column
+    /// Accepting, Updating, and Applying tasks appear in the Review column
     pub fn index(&self) -> usize {
         match self {
             TaskStatus::Planned => 0,
             TaskStatus::Queued => 1,
             TaskStatus::InProgress => 2,
             TaskStatus::NeedsInput => 3,
-            TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating => 4,
+            TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => 4,
             TaskStatus::Done => 5,
         }
     }

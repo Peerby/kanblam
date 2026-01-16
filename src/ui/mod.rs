@@ -428,6 +428,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskStatus::Review => (Color::Magenta, "Review"),
         crate::model::TaskStatus::Accepting => (Color::Magenta, "Accepting"),
         crate::model::TaskStatus::Updating => (Color::Magenta, "Updating"),
+        crate::model::TaskStatus::Applying => (Color::Magenta, "Applying"),
         crate::model::TaskStatus::Done => (Color::Green, "Done"),
     };
 
@@ -545,7 +546,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             ]));
         }
 
-        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting | crate::model::TaskStatus::Updating => {
+        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting | crate::model::TaskStatus::Updating | crate::model::TaskStatus::Applying => {
             // Show timing and branch info
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
@@ -847,10 +848,19 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
 
         crate::model::TaskStatus::Review => {
             lines.push(Line::from(vec![
-                Span::styled(" a ", key_style), Span::styled(" Accept: merge changes and mark done", label_style),
+                Span::styled(" a ", key_style), Span::styled(" Apply: test changes in main worktree", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" d ", key_style), Span::styled(" Decline: discard changes and mark done", label_style),
+                Span::styled(" u ", key_style), Span::styled(" Unapply: remove applied changes", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" m ", key_style), Span::styled(" Merge: finalize changes and mark done", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" d ", key_style), Span::styled(" Discard: reject changes and mark done", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" c ", key_style), Span::styled(" Check: view git diff/status report", label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" f ", key_style), Span::styled(" Feedback: send follow-up instructions", label_style),
@@ -861,12 +871,6 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
             ]));
-            if task.git_commits_behind > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
-                ]));
-            }
             lines.push(Line::from(vec![
                 Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
             ]));
@@ -883,6 +887,13 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(Span::styled(
                 "  Worktree is being updated to latest main...",
                 Style::default().fg(Color::Cyan),
+            )));
+        }
+
+        crate::model::TaskStatus::Applying => {
+            lines.push(Line::from(Span::styled(
+                "  Changes are being applied to main worktree...",
+                Style::default().fg(Color::Magenta),
             )));
         }
 

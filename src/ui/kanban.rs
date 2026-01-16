@@ -81,7 +81,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         TaskStatus::Queued => ("2", "Queued", Color::Cyan, Color::Black),
         TaskStatus::InProgress => ("3", "In Progress", Color::Yellow, Color::Black),
         TaskStatus::NeedsInput => ("4", "Needs Input", Color::Red, Color::White),
-        TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating => ("5", "Review", Color::Magenta, Color::White),
+        TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => ("5", "Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
     };
 
@@ -651,17 +651,17 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         ],
         TaskStatus::Review => vec![
             Span::styled("a", key_style),
-            Span::styled("ccept ", desc_style),
+            Span::styled("pply ", desc_style),
+            Span::styled("u", key_style),
+            Span::styled("napply ", desc_style),
+            Span::styled("m", key_style),
+            Span::styled("erge ", desc_style),
+            Span::styled("d", key_style),
+            Span::styled("iscard ", desc_style),
             Span::styled("c", key_style),
             Span::styled("heck ", desc_style),
-            Span::styled("d", key_style),
-            Span::styled("ecline ", desc_style),
             Span::styled("f", key_style),
-            Span::styled("eedback ", desc_style),
-            Span::styled("u", key_style),
-            Span::styled("pdate ", desc_style),
-            Span::styled("x", key_style),
-            Span::styled("-reset", desc_style),
+            Span::styled("eedback", desc_style),
         ],
         TaskStatus::Accepting => vec![
             // This case is handled by get_accepting_hints when a task is selected
@@ -671,6 +671,10 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::Updating => vec![
             // Shows when task is updating (rebasing worktree)
             Span::styled("updating...", desc_style),
+        ],
+        TaskStatus::Applying => vec![
+            // Shows when task is being applied to main worktree
+            Span::styled("applying...", desc_style),
         ],
         TaskStatus::Done => vec![
             Span::styled("e", key_style),
