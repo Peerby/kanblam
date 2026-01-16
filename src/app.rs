@@ -283,6 +283,17 @@ impl App {
             Message::MoveTask { task_id, to_status } => {
                 let mut follow_to_planned = false;
 
+                // Get task info for session cleanup before mutating (needed for Done)
+                let cleanup_info = if to_status == TaskStatus::Done {
+                    self.model.active_project().and_then(|p| {
+                        p.tasks.iter()
+                            .find(|t| t.id == task_id)
+                            .map(|t| (p.slug(), t.tmux_window.clone()))
+                    })
+                } else {
+                    None
+                };
+
                 if let Some(project) = self.model.active_project_mut() {
                     // Special handling for moving to Planned: move to top of list
                     if to_status == TaskStatus::Planned {
@@ -300,6 +311,9 @@ impl App {
                             let mut task = project.tasks.remove(idx);
                             task.status = TaskStatus::Done;
                             task.completed_at = Some(Utc::now());
+                            // Clear session-related fields
+                            task.tmux_window = None;
+                            task.session_state = crate::model::ClaudeSessionState::Ended;
                             // Push to end (will be last in Done column)
                             project.tasks.push(task);
                         }
@@ -319,6 +333,16 @@ impl App {
                             notify::clear_attention_indicator();
                         }
                     }
+                }
+
+                // Kill any running sessions when moving to Done
+                if let Some((project_slug, window_name)) = cleanup_info {
+                    // Kill tmux window if exists
+                    if let Some(ref window) = window_name {
+                        let _ = crate::tmux::kill_task_window(&project_slug, window);
+                    }
+                    // Kill any detached Claude/test sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
                 }
 
                 // Move cursor to follow the task to Planned
