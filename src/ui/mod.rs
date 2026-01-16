@@ -1,5 +1,6 @@
 mod interactive_modal;
 mod kanban;
+mod logo;
 mod output;
 mod status_bar;
 
@@ -24,6 +25,14 @@ pub use status_bar::render_status_bar;
 /// In tmux-split mode, we only render the kanban board (left pane)
 /// The Claude session runs in an actual tmux pane on the right
 pub fn view(frame: &mut Frame, app: &mut App) {
+    // Guard against extremely small terminals to prevent panics
+    if frame.area().width < 20 || frame.area().height < 10 {
+        let msg = Paragraph::new("Terminal too small")
+            .style(Style::default().fg(Color::Red));
+        frame.render_widget(msg, frame.area());
+        return;
+    }
+
     // Check if interactive modal is active - it takes over the entire screen
     if let Some(ref modal) = app.model.ui_state.interactive_modal {
         render_interactive_modal(frame, modal);
@@ -34,18 +43,23 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     let frame_width = frame.area().width.saturating_sub(4) as usize; // Account for borders
     let input_height = calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width);
 
+    // Determine header height based on available space
+    // Show full 4-line logo header when terminal is wide enough and tall enough
+    let show_full_header = logo::should_show_full_logo(frame.area().width, frame.area().height);
+    let header_height = if show_full_header { 4 } else { 1 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),            // Project bar (top)
-            Constraint::Min(10),              // Main content (Kanban board)
-            Constraint::Length(input_height), // Input area (dynamic)
-            Constraint::Length(1),            // Status bar
+            Constraint::Length(header_height),  // Header (project bar + optional logo)
+            Constraint::Min(10),                // Main content (Kanban board)
+            Constraint::Length(input_height),   // Input area (dynamic)
+            Constraint::Length(1),              // Status bar
         ])
         .split(frame.area());
 
-    // Render project bar at top
-    render_project_bar(frame, chunks[0], app);
+    // Render header area (project bar + logo)
+    render_header(frame, chunks[0], app, show_full_header);
 
     // Render kanban board (full width - tmux handles the split)
     render_kanban(frame, chunks[1], app);
@@ -110,6 +124,26 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
     needed_height.clamp(MIN_HEIGHT, MAX_HEIGHT)
 }
 
+/// Render the header area (project bar + optional logo)
+fn render_header(frame: &mut Frame, area: Rect, app: &App, show_full_logo: bool) {
+    if show_full_logo {
+        // Render project bar on top-left (just first line)
+        let project_bar_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width.saturating_sub(logo::FULL_LOGO_WIDTH + 2),
+            height: 1,
+        };
+        render_project_bar(frame, project_bar_area, app);
+
+        // Render logo using full area - it will right-align itself
+        logo::render_logo(frame, area);
+    } else {
+        // Compact mode: project bar with inline branding
+        render_project_bar_with_branding(frame, area, app);
+    }
+}
+
 /// Render the project bar at the top of the screen
 fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
@@ -159,6 +193,82 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
             format!(" [{}] + ", next_slot),
             Style::default().fg(Color::DarkGray),
         ));
+    }
+
+    let bar = Paragraph::new(Line::from(spans));
+    frame.render_widget(bar, area);
+}
+
+/// Render the project bar with inline branding on the right
+fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
+    let green = Color::Rgb(80, 200, 120);
+    let dark_green = Color::Rgb(60, 150, 90);
+
+    let mut spans = Vec::new();
+    spans.push(Span::raw(" "));
+
+    // Show existing projects
+    for (idx, project) in app.model.projects.iter().enumerate() {
+        let is_active = idx == app.model.active_project_idx;
+
+        // Build project name with attention indicator
+        let name = if project.needs_attention {
+            format!("{}*", project.name)
+        } else {
+            project.name.clone()
+        };
+
+        let style = if is_active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if project.needs_attention {
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        // Add keyboard shortcut hint (Shift+1-0 for first 10 projects)
+        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+        let tab_text = if idx < 10 {
+            format!(" [{}] {} ", shift_chars[idx], name)
+        } else {
+            format!(" {} ", name)
+        };
+
+        spans.push(Span::styled(tab_text, style));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+    }
+
+    // Show hint for next available slot (if under 9 projects)
+    let num_projects = app.model.projects.len();
+    if num_projects < 9 {
+        let next_slot = num_projects + 1;
+        spans.push(Span::styled(
+            format!(" [{}] + ", next_slot),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    // Calculate remaining space for branding
+    let project_bar_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let remaining = (area.width as usize).saturating_sub(project_bar_len);
+
+    // Add branding on the right if there's space
+    if remaining >= logo::COMPACT_LOGO_WIDTH as usize {
+        let branding = "KANBLAM - parallel claude agents go BLAM!";
+        let padding = remaining.saturating_sub(branding.len() + 1);
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(Span::styled("KANBLAM", Style::default().fg(green)));
+        spans.push(Span::styled(" - parallel claude agents go BLAM!", Style::default().fg(dark_green)));
+    } else if remaining >= logo::MIN_BRANDING_WIDTH as usize {
+        let branding = "KANBLAM";
+        let padding = remaining.saturating_sub(branding.len() + 1);
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(Span::styled("KANBLAM", Style::default().fg(green)));
     }
 
     let bar = Paragraph::new(Line::from(spans));
