@@ -1,10 +1,14 @@
 use crate::message::Message;
-use crate::model::{AppModel, FocusArea, PendingAction, PendingConfirmation, Project, Task, TaskStatus, SessionMode};
+use crate::model::{AppModel, FocusArea, PendingAction, PendingConfirmation, Project, Task, TaskStatus};
 use crate::notify;
 use crate::sidecar::SidecarClient;
 use anyhow::Result;
 use chrono::Utc;
 use std::path::PathBuf;
+use tokio::sync::mpsc;
+
+/// Channel sender for async task results
+pub type AsyncTaskSender = mpsc::UnboundedSender<Message>;
 
 /// Application state and update logic (TEA pattern)
 pub struct App {
@@ -12,6 +16,8 @@ pub struct App {
     pub should_quit: bool,
     /// Sidecar client for SDK session management (if available)
     pub sidecar_client: Option<SidecarClient>,
+    /// Channel to send results from async background tasks back to the main loop
+    pub async_sender: Option<AsyncTaskSender>,
 }
 
 impl App {
@@ -20,6 +26,7 @@ impl App {
             model: AppModel::default(),
             should_quit: false,
             sidecar_client: None,
+            async_sender: None,
         }
     }
 
@@ -28,11 +35,17 @@ impl App {
             model,
             should_quit: false,
             sidecar_client: None,
+            async_sender: None,
         }
     }
 
     pub fn with_sidecar(mut self, client: Option<SidecarClient>) -> Self {
         self.sidecar_client = client;
+        self
+    }
+
+    pub fn with_async_sender(mut self, sender: AsyncTaskSender) -> Self {
+        self.async_sender = Some(sender);
         self
     }
 
@@ -760,13 +773,38 @@ impl App {
             }
 
             Message::CreateWorktree { task_id, project_dir } => {
-                // Create worktree (this is the slow operation, now deferred)
-                match crate::worktree::create_worktree(&project_dir, task_id) {
-                    Ok(worktree_path) => {
-                        commands.push(Message::WorktreeCreated { task_id, worktree_path, project_dir });
-                    }
-                    Err(e) => {
-                        commands.push(Message::WorktreeCreationFailed { task_id, error: e.to_string() });
+                // Spawn worktree creation in background to keep UI responsive
+                if let Some(sender) = self.async_sender.clone() {
+                    let project_dir_clone = project_dir.clone();
+                    tokio::spawn(async move {
+                        // Run blocking git operations in a separate thread
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::worktree::create_worktree(&project_dir_clone, task_id)
+                        }).await;
+
+                        let msg = match result {
+                            Ok(Ok(worktree_path)) => {
+                                Message::WorktreeCreated { task_id, worktree_path, project_dir }
+                            }
+                            Ok(Err(e)) => {
+                                Message::WorktreeCreationFailed { task_id, error: e.to_string() }
+                            }
+                            Err(e) => {
+                                Message::WorktreeCreationFailed { task_id, error: format!("Task panicked: {}", e) }
+                            }
+                        };
+
+                        let _ = sender.send(msg);
+                    });
+                } else {
+                    // Fallback to sync if no async sender (shouldn't happen in normal operation)
+                    match crate::worktree::create_worktree(&project_dir, task_id) {
+                        Ok(worktree_path) => {
+                            commands.push(Message::WorktreeCreated { task_id, worktree_path, project_dir });
+                        }
+                        Err(e) => {
+                            commands.push(Message::WorktreeCreationFailed { task_id, error: e.to_string() });
+                        }
                     }
                 }
             }
@@ -2407,6 +2445,83 @@ impl App {
                                 )));
                             }
                         }
+                        PendingAction::CommitAppliedChanges(task_id) => {
+                            // Commit applied changes to main and complete the task
+                            let task_info = self.model.active_project().and_then(|p| {
+                                p.tasks.iter()
+                                    .find(|t| t.id == task_id)
+                                    .map(|t| (
+                                        p.slug(),
+                                        p.working_dir.clone(),
+                                        t.tmux_window.clone(),
+                                        t.worktree_path.clone(),
+                                        t.title.clone(),
+                                    ))
+                            });
+
+                            if let Some((project_slug, project_dir, window_name, worktree_path, task_title)) = task_info {
+                                // Commit the applied changes to main
+                                match crate::worktree::commit_applied_changes(&project_dir, &task_title, task_id) {
+                                    Ok(_) => {
+                                        // Clear applied state
+                                        if let Some(project) = self.model.active_project_mut() {
+                                            project.applied_task_id = None;
+                                            project.applied_stash_ref = None;
+                                        }
+
+                                        // Kill tmux window if exists
+                                        if let Some(ref window) = window_name {
+                                            let _ = crate::tmux::kill_task_window(&project_slug, window);
+                                        }
+
+                                        // Stop SDK session
+                                        if let Some(ref client) = self.sidecar_client {
+                                            let _ = client.stop_session(task_id);
+                                        }
+
+                                        // Kill any detached sessions
+                                        crate::tmux::kill_task_sessions(&task_id.to_string());
+
+                                        // Remove worktree
+                                        if let Some(ref wt_path) = worktree_path {
+                                            let _ = crate::worktree::remove_worktree(&project_dir, wt_path);
+                                            let _ = crate::worktree::remove_worktree_trust(wt_path);
+                                        }
+
+                                        // Delete branch
+                                        let _ = crate::worktree::delete_branch(&project_dir, task_id);
+
+                                        // Move task to Done
+                                        if let Some(project) = self.model.active_project_mut() {
+                                            if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                                                let mut task = project.tasks.remove(idx);
+                                                task.status = TaskStatus::Done;
+                                                task.completed_at = Some(Utc::now());
+                                                task.worktree_path = None;
+                                                task.tmux_window = None;
+                                                task.git_branch = None;
+                                                task.session_state = crate::model::ClaudeSessionState::Ended;
+                                                project.tasks.push(task);
+                                            }
+                                            project.needs_attention = project.review_count() > 0;
+                                            if !project.needs_attention {
+                                                notify::clear_attention_indicator();
+                                            }
+                                        }
+
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "✓ Changes committed to main. Task complete!".to_string()
+                                        )));
+                                        commands.push(Message::TriggerLogoShimmer);
+                                    }
+                                    Err(e) => {
+                                        commands.push(Message::Error(format!(
+                                            "Failed to commit changes: {}", e
+                                        )));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2437,7 +2552,7 @@ impl App {
                         PendingAction::CloseProject(_) => {
                             // User cancelled closing project, no message needed
                         }
-                        PendingAction::AcceptTask(_) | PendingAction::DeclineTask(_) => {
+                        PendingAction::AcceptTask(_) | PendingAction::DeclineTask(_) | PendingAction::CommitAppliedChanges(_) => {
                             // User cancelled, task stays in Review
                             commands.push(Message::SetStatusMessage(Some(
                                 "Cancelled. Task left in Review.".to_string()
@@ -2646,25 +2761,7 @@ impl App {
             // === Async Background Task Results ===
 
             Message::WorktreeCreated { task_id, worktree_path, project_dir } => {
-                // Worktree created successfully, now set up Claude settings
-                if let Err(e) = crate::worktree::merge_with_project_settings(
-                    &worktree_path,
-                    &project_dir,
-                    task_id,
-                ) {
-                    commands.push(Message::SetStatusMessage(Some(
-                        format!("Warning: Could not set up Claude settings: {}", e)
-                    )));
-                }
-
-                // Pre-trust the worktree
-                if let Err(e) = crate::worktree::pre_trust_worktree(&worktree_path) {
-                    commands.push(Message::SetStatusMessage(Some(
-                        format!("Warning: Could not pre-trust worktree: {}", e)
-                    )));
-                }
-
-                // Update task with worktree info
+                // Update task with worktree info immediately for UI feedback
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.worktree_path = Some(worktree_path.clone());
@@ -2673,8 +2770,63 @@ impl App {
                     }
                 }
 
-                // Start SDK session
-                commands.push(Message::StartSdkSession { task_id });
+                // Spawn settings setup in background, then start SDK session
+                if let Some(sender) = self.async_sender.clone() {
+                    let wt_path = worktree_path.clone();
+                    let proj_dir = project_dir.clone();
+                    tokio::spawn(async move {
+                        // Run settings setup in background thread
+                        let setup_result = tokio::task::spawn_blocking(move || {
+                            // Set up Claude settings (non-fatal if fails)
+                            let settings_err = crate::worktree::merge_with_project_settings(
+                                &wt_path,
+                                &proj_dir,
+                                task_id,
+                            ).err();
+
+                            // Pre-trust the worktree (non-fatal if fails)
+                            let trust_err = crate::worktree::pre_trust_worktree(&wt_path).err();
+
+                            (settings_err, trust_err)
+                        }).await;
+
+                        // Report warnings but continue to start SDK session
+                        if let Ok((settings_err, trust_err)) = setup_result {
+                            if let Some(e) = settings_err {
+                                let _ = sender.send(Message::SetStatusMessage(Some(
+                                    format!("Warning: Could not set up Claude settings: {}", e)
+                                )));
+                            }
+                            if let Some(e) = trust_err {
+                                let _ = sender.send(Message::SetStatusMessage(Some(
+                                    format!("Warning: Could not pre-trust worktree: {}", e)
+                                )));
+                            }
+                        }
+
+                        // Start SDK session
+                        let _ = sender.send(Message::StartSdkSession { task_id });
+                    });
+                } else {
+                    // Fallback to sync if no async sender
+                    if let Err(e) = crate::worktree::merge_with_project_settings(
+                        &worktree_path,
+                        &project_dir,
+                        task_id,
+                    ) {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Warning: Could not set up Claude settings: {}", e)
+                        )));
+                    }
+
+                    if let Err(e) = crate::worktree::pre_trust_worktree(&worktree_path) {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Warning: Could not pre-trust worktree: {}", e)
+                        )));
+                    }
+
+                    commands.push(Message::StartSdkSession { task_id });
+                }
             }
 
             Message::WorktreeCreationFailed { task_id, error } => {
@@ -2721,44 +2873,8 @@ impl App {
                 });
 
                 if let Some((title, images, Some(worktree_path), project_dir)) = task_info {
-                    // Start SDK session via sidecar (headless - no tmux)
-                    if let Some(ref client) = self.sidecar_client {
-                        let images_str: Option<Vec<String>> = if !images.is_empty() {
-                            Some(images.iter().map(|p| p.to_string_lossy().to_string()).collect())
-                        } else {
-                            None
-                        };
-
-                        match client.start_session(task_id, &worktree_path, &title, images_str) {
-                            Ok(session_id) => {
-                                // Update task with session ID and state
-                                if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.claude_session_id = Some(session_id);
-                                        task.session_state = crate::model::ClaudeSessionState::Working;
-                                        task.session_mode = SessionMode::SdkManaged;
-                                    }
-                                }
-                                commands.push(Message::SetStatusMessage(Some(
-                                    format!("Task started via SDK in worktree: {}", worktree_path.display())
-                                )));
-                            }
-                            Err(e) => {
-                                commands.push(Message::Error(format!("Failed to start SDK session: {}", e)));
-                                // Clean up worktree since SDK failed
-                                let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
-                                // Reset task state
-                                if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.session_state = crate::model::ClaudeSessionState::NotStarted;
-                                        task.status = TaskStatus::Planned;
-                                        task.worktree_path = None;
-                                        task.git_branch = None;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
+                    // Check if sidecar is available before spawning background task
+                    if self.sidecar_client.is_none() {
                         // No sidecar available - cannot start task
                         commands.push(Message::Error(
                             "Cannot start task: Sidecar not connected. Ensure sidecar is running.".to_string()
@@ -2774,6 +2890,61 @@ impl App {
                         }
                         // Clean up worktree since we can't start
                         let _ = crate::worktree::remove_worktree(&project_dir, &worktree_path);
+                    } else if let Some(sender) = self.async_sender.clone() {
+                        // Spawn SDK session start in background to keep UI responsive
+                        let images_str: Option<Vec<String>> = if !images.is_empty() {
+                            Some(images.iter().map(|p| p.to_string_lossy().to_string()).collect())
+                        } else {
+                            None
+                        };
+
+                        // Clone paths for use in closures
+                        let worktree_path_for_call = worktree_path.clone();
+                        let worktree_path_for_error = worktree_path.clone();
+
+                        tokio::spawn(async move {
+                            // Run blocking sidecar call in a separate thread
+                            let result = tokio::task::spawn_blocking(move || {
+                                crate::sidecar::SidecarClient::start_session_standalone(
+                                    task_id,
+                                    worktree_path_for_call,
+                                    title,
+                                    images_str,
+                                )
+                            }).await;
+
+                            let msg = match result {
+                                Ok(Ok(session_id)) => {
+                                    Message::SdkSessionStarted { task_id, session_id }
+                                }
+                                Ok(Err(e)) => {
+                                    Message::SdkSessionFailed { task_id, error: e.to_string(), project_dir, worktree_path: worktree_path_for_error }
+                                }
+                                Err(e) => {
+                                    Message::SdkSessionFailed { task_id, error: format!("Task panicked: {}", e), project_dir, worktree_path: worktree_path_for_error }
+                                }
+                            };
+
+                            let _ = sender.send(msg);
+                        });
+                    } else {
+                        // Fallback to sync if no async sender (shouldn't happen in normal operation)
+                        if let Some(ref client) = self.sidecar_client {
+                            let images_str: Option<Vec<String>> = if !images.is_empty() {
+                                Some(images.iter().map(|p| p.to_string_lossy().to_string()).collect())
+                            } else {
+                                None
+                            };
+
+                            match client.start_session(task_id, &worktree_path, &title, images_str) {
+                                Ok(session_id) => {
+                                    commands.push(Message::SdkSessionStarted { task_id, session_id });
+                                }
+                                Err(e) => {
+                                    commands.push(Message::SdkSessionFailed { task_id, error: e.to_string(), project_dir, worktree_path });
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2914,12 +3085,21 @@ impl App {
 
             Message::SdkSessionStarted { task_id, session_id } => {
                 // Update task with session ID from SDK
+                let mut worktree_display = String::new();
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.claude_session_id = Some(session_id);
                         task.session_state = crate::model::ClaudeSessionState::Working;
                         task.session_mode = crate::model::SessionMode::SdkManaged;
+                        if let Some(ref wt) = task.worktree_path {
+                            worktree_display = wt.display().to_string();
+                        }
                     }
+                }
+                if !worktree_display.is_empty() {
+                    commands.push(Message::SetStatusMessage(Some(
+                        format!("Task started via SDK in worktree: {}", worktree_display)
+                    )));
                 }
             }
 

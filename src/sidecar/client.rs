@@ -81,6 +81,19 @@ impl SidecarClient {
         Ok(result.session_id)
     }
 
+    /// Start a new Claude session using a fresh connection (for use from background threads)
+    /// This avoids contention on the main client's connection
+    pub fn start_session_standalone(
+        task_id: uuid::Uuid,
+        worktree_path: PathBuf,
+        prompt: String,
+        images: Option<Vec<String>>,
+    ) -> Result<String> {
+        // Create a dedicated connection for this request
+        let client = Self::connect()?;
+        client.start_session(task_id, &worktree_path, &prompt, images)
+    }
+
     /// Resume an existing session
     pub fn resume_session(
         &self,

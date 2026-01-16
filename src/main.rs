@@ -9,7 +9,7 @@ mod tmux;
 mod ui;
 mod worktree;
 
-use app::{load_state, save_state, App};
+use app::{load_state, save_state, App, AsyncTaskSender};
 use chrono::Utc;
 use hooks::{HookWatcher, WatcherEvent};
 use message::Message;
@@ -37,6 +37,9 @@ fn process_commands_recursively(app: &mut App, commands: Vec<Message>) {
         pending.extend(more);
     }
 }
+
+/// Channel for receiving results from async background tasks
+type AsyncResultReceiver = mpsc::UnboundedReceiver<Message>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -66,7 +69,12 @@ async fn main() -> anyhow::Result<()> {
     // Create event receiver for sidecar notifications
     let sidecar_receiver = sidecar::SidecarEventReceiver::connect().ok();
 
-    let mut app = App::with_model(model).with_sidecar(sidecar_client);
+    // Create async task channel for background operations
+    let (async_sender, async_receiver) = mpsc::unbounded_channel::<Message>();
+
+    let mut app = App::with_model(model)
+        .with_sidecar(sidecar_client)
+        .with_async_sender(async_sender);
 
     // Create hook watcher for completion detection
     let hook_watcher = HookWatcher::new().ok();
@@ -98,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Run the main loop
-    let result = run_app(&mut terminal, &mut app, hook_watcher, sidecar_receiver);
+    let result = run_app(&mut terminal, &mut app, hook_watcher, sidecar_receiver, async_receiver);
 
     // Restore terminal
     disable_raw_mode()?;
@@ -122,6 +130,7 @@ fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
     hook_watcher: Option<HookWatcher>,
     mut sidecar_receiver: Option<sidecar::SidecarEventReceiver>,
+    mut async_receiver: AsyncResultReceiver,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -140,6 +149,15 @@ where
             // Add new commands back to the queue for subsequent iterations
             for c in more_commands {
                 deferred_commands.push_back(c);
+            }
+        }
+
+        // Poll async task results (non-blocking)
+        // These come from background operations like worktree creation and sidecar calls
+        while let Ok(msg) = async_receiver.try_recv() {
+            let commands = app.update(msg);
+            for cmd in commands {
+                deferred_commands.push_back(cmd);
             }
         }
 
@@ -778,9 +796,14 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         }
 
         // Merge task (finalize changes and mark done) - 'm' in Review column
+        // If changes are applied, commit them; otherwise do full merge
         KeyCode::Char('m') => {
             let column = app.model.ui_state.selected_column;
             if column == TaskStatus::Review {
+                // Check if there are applied changes for the selected task
+                let applied_task_id = app.model.active_project()
+                    .and_then(|p| p.applied_task_id);
+
                 if let Some(project) = app.model.active_project() {
                     let tasks = project.tasks_by_status(column);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -789,6 +812,16 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                             if task.status == TaskStatus::Accepting {
                                 return vec![];
                             }
+
+                            // If this task's changes are currently applied, commit them
+                            if applied_task_id == Some(task.id) {
+                                return vec![Message::ShowConfirmation {
+                                    message: "Commit applied changes and mark done?".to_string(),
+                                    action: model::PendingAction::CommitAppliedChanges(task.id),
+                                }];
+                            }
+
+                            // Otherwise do full merge
                             return vec![Message::ShowConfirmation {
                                 message: "Merge all changes and mark done?".to_string(),
                                 action: model::PendingAction::AcceptTask(task.id),

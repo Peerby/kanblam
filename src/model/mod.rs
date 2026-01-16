@@ -820,6 +820,8 @@ pub enum PendingAction {
     CleanupMergedTask(Uuid),
     /// View-only merge report (no action on confirm, just dismiss)
     ViewMergeReport,
+    /// Commit applied changes to main and complete the task
+    CommitAppliedChanges(Uuid),
 }
 
 /// Which UI element has focus
