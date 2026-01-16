@@ -173,6 +173,16 @@ class SidecarServer {
           });
         }
 
+        case 'list_sessions': {
+          const sessions = this.sessionManager.listSessions();
+          return createResponse(id, { sessions });
+        }
+
+        case 'stop_all_sessions': {
+          this.sessionManager.stopAllSessions();
+          return createResponse(id, { success: true });
+        }
+
         case 'ping': {
           return createResponse(id, { pong: true });
         }

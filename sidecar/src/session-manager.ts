@@ -203,6 +203,22 @@ export class SessionManager {
     return this.sessions.get(taskId);
   }
 
+  listSessions(): { taskId: string; sessionId: string; isActive: boolean }[] {
+    return Array.from(this.sessions.values()).map(s => ({
+      taskId: s.taskId,
+      sessionId: s.sessionId,
+      isActive: s.isActive,
+    }));
+  }
+
+  stopAllSessions(): void {
+    for (const [taskId, session] of this.sessions) {
+      session.abortController.abort();
+      session.isActive = false;
+    }
+    this.sessions.clear();
+  }
+
   private async processQuery(
     taskId: string,
     prompt: string,
