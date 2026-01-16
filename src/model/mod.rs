@@ -546,6 +546,8 @@ pub enum PendingAction {
     InstallHooks,
     ReloadClaude,
     DeleteTask(Uuid),
+    /// Mark task as done and clean up worktree (when nothing to merge)
+    MarkDoneNoMerge(Uuid),
 }
 
 /// Which UI element has focus
