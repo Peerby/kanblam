@@ -313,10 +313,18 @@ export class SessionManager {
       }
       throw err;
     } finally {
-      // Mark session as inactive but keep it for potential resume
+      // Mark session as inactive and notify TUI
       const session = this.sessions.get(taskId);
       if (session) {
         session.isActive = false;
+        // Always emit 'ended' when session loop completes
+        // This ensures TUI knows the session is done, regardless of how it ended
+        console.log(`[SessionManager] Session ended for task ${taskId}`);
+        this.onEvent({
+          task_id: taskId,
+          event: 'ended',
+          session_id: session.sessionId,
+        });
       }
     }
   }
