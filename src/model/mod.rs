@@ -507,11 +507,17 @@ impl UiState {
         self.editor_state.lines.to_string()
     }
 
-    /// Set the editor text content
+    /// Set the editor text content (starts in Insert mode)
     pub fn set_input_text(&mut self, text: &str) {
         self.editor_state = EditorState::new(Lines::from(text));
         // Ensure we're in insert mode
         self.editor_state.mode = EditorMode::Insert;
+    }
+
+    /// Set the editor text content for editing (starts in Normal mode)
+    pub fn set_input_text_normal_mode(&mut self, text: &str) {
+        self.editor_state = EditorState::new(Lines::from(text));
+        self.editor_state.mode = EditorMode::Normal;
     }
 
     /// Clear the editor text

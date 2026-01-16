@@ -204,8 +204,8 @@ impl App {
                     .map(|t| t.title.clone());
 
                 if let Some(title) = task_title {
-                    // Set editor content
-                    self.model.ui_state.set_input_text(&title);
+                    // Set editor content (starts in Normal mode for editing)
+                    self.model.ui_state.set_input_text_normal_mode(&title);
                     // Set editing mode
                     self.model.ui_state.editing_task_id = Some(task_id);
                     self.model.ui_state.focus = FocusArea::TaskInput;
