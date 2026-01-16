@@ -317,16 +317,10 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
 
     // Add branding on the right if there's space
     if remaining >= logo::COMPACT_LOGO_WIDTH as usize {
-        let branding = "KANBLAM - parallel claude agents go BLAM!";
-        let padding = remaining.saturating_sub(branding.len() + 1);
-        spans.push(Span::raw(" ".repeat(padding)));
-        spans.push(Span::styled("KANBLAM", Style::default().fg(green)));
-        spans.push(Span::styled(" - parallel claude agents go BLAM!", Style::default().fg(dark_green)));
-    } else if remaining >= logo::MIN_BRANDING_WIDTH as usize {
         let branding = "KANBLAM";
         let padding = remaining.saturating_sub(branding.len() + 1);
         spans.push(Span::raw(" ".repeat(padding)));
-        spans.push(Span::styled("KANBLAM", Style::default().fg(green)));
+        spans.push(Span::styled(branding, Style::default().fg(green)));
     }
 
     let bar = Paragraph::new(Line::from(spans));

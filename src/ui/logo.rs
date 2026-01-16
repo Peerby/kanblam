@@ -178,15 +178,29 @@ pub fn logo_width_needed(available_width: u16, available_height: u16) -> u16 {
     }
 }
 
-/// Minimum terminal height to show the full 4-line logo
-/// Below this, we use single-line branding to preserve space for the kanban board
-pub const MIN_HEIGHT_FOR_FULL_LOGO: u16 = 40;
+/// Mascot visual width in characters
+const MASCOT_WIDTH: u16 = 10;
 
-/// Minimum terminal width to show the full logo (needs extra space beyond logo itself)
-pub const MIN_WIDTH_FOR_FULL_LOGO: u16 = 120;
+/// Maximum percentage of screen width the mascot should occupy
+/// When exceeded, fall back to text-only "KANBLAM"
+const MAX_MASCOT_WIDTH_PERCENT: f32 = 0.70;
 
-/// Check if we should show the full 4-line logo
-/// Only shows when terminal is generously sized (120+ cols, 40+ rows)
+/// Minimum terminal height (in lines) to show the full mascot logo
+/// Below this threshold, show text-only "KANBLAM" to preserve vertical space
+pub const MIN_HEIGHT_FOR_FULL_LOGO: u16 = 30;
+
+/// Check if we should show the full 4-line logo with mascot
+/// Shows mascot only when:
+/// - Terminal height is at least 30 lines
+/// - Mascot would take up at most 70% of terminal width
+/// Otherwise falls back to text-only "KANBLAM"
 pub fn should_show_full_logo(terminal_width: u16, terminal_height: u16) -> bool {
-    terminal_width >= MIN_WIDTH_FOR_FULL_LOGO && terminal_height >= MIN_HEIGHT_FOR_FULL_LOGO
+    // Height check: need at least 30 lines
+    if terminal_height < MIN_HEIGHT_FOR_FULL_LOGO {
+        return false;
+    }
+
+    // Width check: mascot should not exceed 70% of terminal width
+    let mascot_percent = MASCOT_WIDTH as f32 / terminal_width as f32;
+    mascot_percent <= MAX_MASCOT_WIDTH_PERCENT
 }
