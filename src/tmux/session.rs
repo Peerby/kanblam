@@ -321,12 +321,12 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use full task-id suffix for uniqueness (e.g., "task-6cfe1853" -> "cl-6cfe1853")
-    // Strip "task-" prefix if present and use first 8 chars of UUID
+    // Use short task-id suffix (e.g., "task-6cfe1853" -> "cl-6cfe")
+    // Strip "task-" prefix if present and use first 4 chars of UUID
     let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        &stripped[..8.min(stripped.len())]
-    } else if dir_name.len() > 8 {
-        &dir_name[..8]
+        &stripped[..4.min(stripped.len())]
+    } else if dir_name.len() > 4 {
+        &dir_name[..4]
     } else {
         dir_name
     };
@@ -621,11 +621,11 @@ pub fn open_popup_detached(
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use full task-id suffix for uniqueness (e.g., "task-6cfe1853" -> "cl-6cfe1853")
+    // Use short task-id suffix (e.g., "task-6cfe1853" -> "cl-6cfe")
     let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        &stripped[..8.min(stripped.len())]
-    } else if dir_name.len() > 8 {
-        &dir_name[..8]
+        &stripped[..4.min(stripped.len())]
+    } else if dir_name.len() > 4 {
+        &dir_name[..4]
     } else {
         dir_name
     };
