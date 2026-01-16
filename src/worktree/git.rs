@@ -137,6 +137,18 @@ pub fn has_uncommitted_changes(worktree_path: &PathBuf) -> Result<bool> {
 /// Commit any uncommitted changes in a worktree
 /// Returns true if changes were committed, false if nothing to commit
 pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result<bool> {
+    // Debug logging to file
+    let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");
+    let log = |msg: &str| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            let _ = writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg);
+        }
+    };
+
+    log(&format!("=== commit_worktree_changes START: task={} ===", task_id));
+    log(&format!("worktree_path={:?}", worktree_path));
+
     // Check if there are any changes (staged or unstaged)
     let status_output = Command::new("git")
         .current_dir(worktree_path)
@@ -144,10 +156,14 @@ pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result
         .output()?;
 
     let status = String::from_utf8_lossy(&status_output.stdout);
+    log(&format!("git status output: '{}'", status.trim()));
     if status.trim().is_empty() {
         // Nothing to commit
+        log("No changes to commit");
         return Ok(false);
     }
+
+    log(&format!("Found changes, committing..."));
 
     // Stage all changes
     let add_output = Command::new("git")
@@ -172,11 +188,14 @@ pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result
         // Check if it's just "nothing to commit"
         if stderr.contains("nothing to commit") ||
            String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit") {
+            log("Nothing to commit (after staging)");
             return Ok(false);
         }
+        log(&format!("Commit FAILED: {}", stderr));
         return Err(anyhow!("Failed to commit changes: {}", stderr));
     }
 
+    log("Commit SUCCESS");
     Ok(true)
 }
 
