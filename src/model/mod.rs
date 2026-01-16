@@ -199,6 +199,107 @@ pub struct Project {
     /// NOT persisted - lock is transient and resets on app restart
     #[serde(skip)]
     pub main_worktree_lock: Option<MainWorktreeLock>,
+
+    /// Custom commands for this project (optional overrides for auto-detected defaults)
+    #[serde(default)]
+    pub commands: ProjectCommands,
+}
+
+/// Custom commands for a project. All fields are optional - when None,
+/// the system will auto-detect based on project files (Cargo.toml, package.json, etc.)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectCommands {
+    /// Command to verify the project compiles/type-checks (e.g., "cargo check", "npm run build", "tsc --noEmit")
+    /// Used after applying changes to verify they don't break the build
+    pub check: Option<String>,
+
+    /// Command to run the project (e.g., "cargo run", "npm start", "python main.py")
+    pub run: Option<String>,
+
+    /// Command to run tests (e.g., "cargo test", "npm test", "pytest")
+    pub test: Option<String>,
+
+    /// Command to format code (e.g., "cargo fmt", "npm run format", "black .")
+    pub format: Option<String>,
+
+    /// Command to lint code (e.g., "cargo clippy", "npm run lint", "ruff check .")
+    pub lint: Option<String>,
+}
+
+impl ProjectCommands {
+    /// Auto-detect commands based on files in the project directory
+    pub fn detect(project_dir: &PathBuf) -> Self {
+        let mut commands = ProjectCommands::default();
+
+        // Check for Rust (Cargo.toml)
+        if project_dir.join("Cargo.toml").exists() {
+            commands.check = Some("cargo check".to_string());
+            commands.run = Some("cargo run".to_string());
+            commands.test = Some("cargo test".to_string());
+            commands.format = Some("cargo fmt".to_string());
+            commands.lint = Some("cargo clippy".to_string());
+            return commands;
+        }
+
+        // Check for Node.js (package.json)
+        if project_dir.join("package.json").exists() {
+            // Check if it's a TypeScript project
+            if project_dir.join("tsconfig.json").exists() {
+                commands.check = Some("npx tsc --noEmit".to_string());
+            } else {
+                // For JS, try npm run build if it exists, otherwise skip
+                commands.check = Some("npm run build --if-present".to_string());
+            }
+            commands.run = Some("npm start".to_string());
+            commands.test = Some("npm test".to_string());
+            commands.format = Some("npm run format --if-present".to_string());
+            commands.lint = Some("npm run lint --if-present".to_string());
+            return commands;
+        }
+
+        // Check for Python (pyproject.toml or setup.py)
+        if project_dir.join("pyproject.toml").exists() || project_dir.join("setup.py").exists() {
+            commands.check = Some("python -m py_compile *.py".to_string());
+            commands.test = Some("pytest".to_string());
+            commands.format = Some("black .".to_string());
+            commands.lint = Some("ruff check .".to_string());
+            return commands;
+        }
+
+        // Check for Go (go.mod)
+        if project_dir.join("go.mod").exists() {
+            commands.check = Some("go build ./...".to_string());
+            commands.run = Some("go run .".to_string());
+            commands.test = Some("go test ./...".to_string());
+            commands.format = Some("go fmt ./...".to_string());
+            commands.lint = Some("golangci-lint run".to_string());
+            return commands;
+        }
+
+        // Check for Makefile
+        if project_dir.join("Makefile").exists() {
+            commands.check = Some("make".to_string());
+            commands.test = Some("make test".to_string());
+            return commands;
+        }
+
+        commands
+    }
+
+    /// Get the effective check command (configured or auto-detected)
+    pub fn effective_check(&self, project_dir: &PathBuf) -> Option<String> {
+        self.check.clone().or_else(|| Self::detect(project_dir).check)
+    }
+
+    /// Get the effective run command (configured or auto-detected)
+    pub fn effective_run(&self, project_dir: &PathBuf) -> Option<String> {
+        self.run.clone().or_else(|| Self::detect(project_dir).run)
+    }
+
+    /// Get the effective test command (configured or auto-detected)
+    pub fn effective_test(&self, project_dir: &PathBuf) -> Option<String> {
+        self.test.clone().or_else(|| Self::detect(project_dir).test)
+    }
 }
 
 /// Represents an exclusive lock on the main worktree for git operations
@@ -224,7 +325,7 @@ impl Project {
         Self {
             id: Uuid::new_v4(),
             name,
-            working_dir,
+            working_dir: working_dir.clone(),
             tasks: Vec::new(),
             needs_attention: false,
             created_at: Utc::now(),
@@ -233,6 +334,7 @@ impl Project {
             applied_task_id: None,
             applied_stash_ref: None,
             main_worktree_lock: None,
+            commands: ProjectCommands::default(), // Will auto-detect when needed
         }
     }
 

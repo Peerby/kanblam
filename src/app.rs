@@ -1410,16 +1410,43 @@ impl App {
                     // STEP 1: Try fast apply first
                     match crate::worktree::apply_task_changes(&project_dir, task_id) {
                         Ok(stash_ref) => {
-                            // Fast apply succeeded
+                            // Fast apply succeeded - now verify build
+                            let stash_ref_clone = stash_ref.clone();
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = Some(task_id);
                                 project.applied_stash_ref = stash_ref;
-                                // Release lock - apply completed successfully
-                                project.release_main_worktree_lock(task_id);
                             }
-                            commands.push(Message::SetStatusMessage(Some(
-                                "✓ Changes applied to main worktree. Press 'u' to unapply.".to_string()
-                            )));
+
+                            // Run build check
+                            let check_result = self.model.active_project()
+                                .map(|p| crate::app::run_project_check(p))
+                                .unwrap_or(Ok(()));
+
+                            match check_result {
+                                Ok(()) => {
+                                    // Build check passed
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        project.release_main_worktree_lock(task_id);
+                                    }
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "✓ Changes applied and verified. Press 'u' to unapply.".to_string()
+                                    )));
+                                }
+                                Err(e) => {
+                                    // Build check failed - unapply automatically
+                                    let _ = crate::worktree::unapply_task_changes(&project_dir, stash_ref_clone.as_deref());
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        project.applied_task_id = None;
+                                        project.applied_stash_ref = None;
+                                        project.release_main_worktree_lock(task_id);
+                                    }
+                                    commands.push(Message::Error(format!(
+                                        "Applied changes don't compile - auto-reverted. {}",
+                                        e
+                                    )));
+                                    return commands;
+                                }
+                            }
                         }
                         Err(_) => {
                             // Fast apply failed - check if we need to rebase first
@@ -3093,7 +3120,8 @@ impl App {
                             // Rebase successful, now do the apply
                             match crate::worktree::apply_task_changes(&project_dir, task_id) {
                                 Ok(stash_ref) => {
-                                    // Apply succeeded! Update project state
+                                    // Apply succeeded - now verify build
+                                    let stash_ref_clone = stash_ref.clone();
                                     if let Some(project) = self.model.active_project_mut() {
                                         project.applied_task_id = Some(task_id);
                                         project.applied_stash_ref = stash_ref;
@@ -3104,15 +3132,39 @@ impl App {
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                             task.accepting_started_at = None;
                                         }
-
-                                        // Release lock - apply completed successfully
-                                        project.release_main_worktree_lock(task_id);
                                     }
 
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "✓ Changes applied to main worktree. Press 'u' to unapply.".to_string()
-                                    )));
-                                    commands.push(Message::RefreshGitStatus);
+                                    // Run build check
+                                    let check_result = self.model.active_project()
+                                        .map(|p| crate::app::run_project_check(p))
+                                        .unwrap_or(Ok(()));
+
+                                    match check_result {
+                                        Ok(()) => {
+                                            // Build check passed
+                                            if let Some(project) = self.model.active_project_mut() {
+                                                project.release_main_worktree_lock(task_id);
+                                            }
+                                            commands.push(Message::SetStatusMessage(Some(
+                                                "✓ Changes applied and verified. Press 'u' to unapply.".to_string()
+                                            )));
+                                            commands.push(Message::RefreshGitStatus);
+                                        }
+                                        Err(e) => {
+                                            // Build check failed - unapply automatically
+                                            let _ = crate::worktree::unapply_task_changes(&project_dir, stash_ref_clone.as_deref());
+                                            if let Some(project) = self.model.active_project_mut() {
+                                                project.applied_task_id = None;
+                                                project.applied_stash_ref = None;
+                                                project.release_main_worktree_lock(task_id);
+                                            }
+                                            commands.push(Message::Error(format!(
+                                                "Applied changes don't compile - auto-reverted. {}",
+                                                e
+                                            )));
+                                            return commands;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     // Apply still failed after rebase - shouldn't happen
@@ -3810,4 +3862,53 @@ pub fn save_state(model: &AppModel) -> Result<()> {
     std::fs::write(state_file, content)?;
 
     Ok(())
+}
+
+/// Run a project's check command to verify applied changes compile
+/// Returns Ok(()) if check passes or no check command is configured,
+/// Err with error message if check fails
+pub fn run_project_check(project: &Project) -> Result<(), String> {
+    use std::process::Command;
+
+    let check_cmd = project.commands.effective_check(&project.working_dir);
+
+    match check_cmd {
+        None => Ok(()), // No check command configured or detected
+        Some(cmd) => {
+            // Parse the command (split on whitespace, first is program, rest are args)
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if parts.is_empty() {
+                return Ok(());
+            }
+
+            let program = parts[0];
+            let args = &parts[1..];
+
+            // Run the check command
+            let output = Command::new(program)
+                .args(args)
+                .current_dir(&project.working_dir)
+                .output();
+
+            match output {
+                Ok(result) => {
+                    if result.status.success() {
+                        Ok(())
+                    } else {
+                        let stderr = String::from_utf8_lossy(&result.stderr);
+                        let stdout = String::from_utf8_lossy(&result.stdout);
+                        // Return a concise error - first line of stderr or stdout
+                        let error_line = stderr.lines().next()
+                            .or_else(|| stdout.lines().next())
+                            .unwrap_or("Check failed");
+                        Err(format!("Build check failed: {}", error_line))
+                    }
+                }
+                Err(e) => {
+                    // Command failed to run (e.g., not found)
+                    Err(format!("Failed to run '{}': {}", cmd, e))
+                }
+            }
+        }
+    }
 }
