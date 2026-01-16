@@ -1262,6 +1262,22 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::ToggleTaskPreview]
         }
 
+        // Unapply task changes OR Update worktree to latest main
+        KeyCode::Char('u') => {
+            // If there's an applied task, unapply it first
+            if app.model.ui_state.applied_task_id.is_some() {
+                return vec![Message::ToggleTaskPreview, Message::UnapplyTaskChanges];
+            }
+
+            // Otherwise, update worktree to latest main (for tasks with worktrees)
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
+                if task.worktree_path.is_some() && task.git_commits_behind > 0 {
+                    return vec![Message::ToggleTaskPreview, Message::UpdateWorktreeToMain(task.id)];
+                }
+            }
+            vec![]
+        }
+
         // Ignore other keys (don't close modal)
         _ => vec![],
     }
