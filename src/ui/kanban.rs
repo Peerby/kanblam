@@ -149,28 +149,42 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // Check if this task is the one being feedbacked
                     let is_feedback_task = app.model.ui_state.feedback_task_id == Some(task.id);
 
-                    let style = if is_task_selected {
-                        Style::default()
-                            .fg(contrast_fg)
-                            .bg(color)
-                            .add_modifier(Modifier::BOLD)
+                    // Styles for different parts of the task line
+                    // Title gets the main style, brackets are very dim, code is dim
+                    let (title_style, bracket_style, code_style) = if is_task_selected {
+                        let base = Style::default().bg(color);
+                        (
+                            base.fg(contrast_fg).add_modifier(Modifier::BOLD),
+                            base.fg(contrast_fg).add_modifier(Modifier::DIM),
+                            base.fg(contrast_fg),
+                        )
                     } else if is_feedback_task {
-                        // Dim highlight for the task receiving feedback
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::DIM)
+                        (
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::DarkGray),
+                        )
                     } else {
-                        Style::default().fg(Color::White)
+                        (
+                            Style::default().fg(Color::White),
+                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::Gray),
+                        )
                     };
 
+                    // Get 4-character task identifier (matches tmux session naming)
+                    let task_id_short = &task.id.to_string()[..4];
+                    let id_prefix_len = 7; // "[xxxx] " = 7 chars
+
                     // Handle long titles - marquee scroll for selected, truncate for others
-                    let max_len = (inner.width as usize).saturating_sub(4);
+                    // Reserve space for id prefix + some margin
+                    let max_title_len = (inner.width as usize).saturating_sub(4 + id_prefix_len);
                     let title_chars: Vec<char> = task.title.chars().collect();
                     let title_len = title_chars.len();
 
-                    let title = if title_len > max_len {
+                    let display_title = if title_len > max_title_len {
                         if is_task_selected {
-                            // Marquee scroll for selected task
+                            // Marquee scroll for selected task - only scroll the title part
                             let scroll_offset = app.model.ui_state.title_scroll_offset;
                             // Add padding at end for smooth wrap-around
                             let padded: String = title_chars.iter().collect::<String>() + "   •   ";
@@ -179,15 +193,14 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
 
                             // Get a window starting at scroll offset
                             let start = scroll_offset % padded_len;
-                            let visible: String = padded_chars.iter()
+                            padded_chars.iter()
                                 .cycle()
                                 .skip(start)
-                                .take(max_len)
-                                .collect();
-                            visible
+                                .take(max_title_len)
+                                .collect()
                         } else {
                             // Simple truncation for non-selected tasks
-                            let truncated: String = title_chars.iter().take(max_len.saturating_sub(3)).collect();
+                            let truncated: String = title_chars.iter().take(max_title_len.saturating_sub(3)).collect();
                             format!("{}...", truncated)
                         }
                     } else {
@@ -215,13 +228,20 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         _ => String::new(),
                     };
 
-                    let text = if !task.images.is_empty() {
-                        format!("{}{} [img]", prefix, title)
-                    } else {
-                        format!("{}{}", prefix, title)
-                    };
+                    // Build spans with different styles: brackets very dim, code dim, title prominent
+                    let mut spans = Vec::new();
+                    if !prefix.is_empty() {
+                        spans.push(Span::styled(prefix, title_style));
+                    }
+                    spans.push(Span::styled("[", bracket_style));
+                    spans.push(Span::styled(task_id_short.to_string(), code_style));
+                    spans.push(Span::styled("] ", bracket_style));
+                    spans.push(Span::styled(display_title, title_style));
+                    if !task.images.is_empty() {
+                        spans.push(Span::styled(" [img]", bracket_style));
+                    }
 
-                    let task_item = ListItem::new(Line::from(Span::styled(text, style)));
+                    let task_item = ListItem::new(Line::from(spans));
 
                     let mut items = Vec::new();
 
