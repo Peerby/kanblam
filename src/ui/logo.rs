@@ -10,7 +10,7 @@ use ratatui::{
 pub const FULL_LOGO_WIDTH: u16 = 58;
 
 /// The compact text-only width
-pub const COMPACT_LOGO_WIDTH: u16 = 42;
+pub const COMPACT_LOGO_WIDTH: u16 = 7;
 
 /// Minimum width to show any branding
 pub const MIN_BRANDING_WIDTH: u16 = 20;
@@ -46,10 +46,8 @@ pub fn render_logo(frame: &mut Frame, area: Rect) {
 /// Render the full ASCII art logo with mascot
 fn render_full_logo(frame: &mut Frame, area: Rect) {
     let green = Color::Rgb(80, 200, 120);
-    let dark_green = Color::Rgb(60, 150, 90);
     let mascot_style = Style::default().fg(green);
     let text_style = Style::default().fg(green);
-    let dim_style = Style::default().fg(dark_green);
 
     let lines = vec![
         Line::from(vec![
@@ -69,8 +67,7 @@ fn render_full_logo(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled(LOGO_MASCOT[3], mascot_style),
-            Span::styled("    ", Style::default()),
-            Span::styled("parallel claude agents go BLAM!", dim_style),
+            Span::styled("                                   ", Style::default()), // 4 spaces + 31 chars to match text width
         ]),
     ];
 
@@ -81,11 +78,9 @@ fn render_full_logo(frame: &mut Frame, area: Rect) {
 /// Render compact text-only version (single line)
 fn render_compact_logo(frame: &mut Frame, area: Rect) {
     let green = Color::Rgb(80, 200, 120);
-    let dark_green = Color::Rgb(60, 150, 90);
 
     let line = Line::from(vec![
         Span::styled("KANBLAM", Style::default().fg(green)),
-        Span::styled(" - parallel claude agents go BLAM!", Style::default().fg(dark_green)),
     ]);
 
     let paragraph = Paragraph::new(line).alignment(Alignment::Right);
