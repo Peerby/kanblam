@@ -65,12 +65,28 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         .filter(|t| t.session_state.is_active())
         .count();
 
+    // Get current git branch
+    let branch_name = get_current_branch(&project.working_dir);
+
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
         &project.name,
         Style::default().fg(Color::Cyan),
     ));
+
+    // Show git branch if available
+    if let Some(branch) = branch_name {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            "\u{e0a0}", // Nerd Font git branch icon
+            Style::default().fg(Color::Magenta),
+        ));
+        spans.push(Span::styled(
+            format!(" {}", branch),
+            Style::default().fg(Color::Magenta),
+        ));
+    }
 
     if active_count > 0 {
         spans.push(Span::styled(
@@ -81,6 +97,18 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
 
     let info = Paragraph::new(ratatui::text::Line::from(spans));
     frame.render_widget(info, area);
+}
+
+/// Get the current git branch name for a directory
+fn get_current_branch(working_dir: &std::path::Path) -> Option<String> {
+    std::process::Command::new("git")
+        .current_dir(working_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Render summary statistics

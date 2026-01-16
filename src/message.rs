@@ -99,6 +99,8 @@ pub enum Message {
     CliSessionEnded { task_id: Uuid },
     /// Resume SDK session after CLI handoff
     ResumeSdkSession { task_id: Uuid },
+    /// Start SDK rebase session for smart merge (internal)
+    StartRebaseSession { task_id: Uuid },
 
     // Image handling
     PasteImage,

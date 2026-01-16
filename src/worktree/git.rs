@@ -606,26 +606,23 @@ pub fn verify_rebase_success(project_dir: &PathBuf, task_id: Uuid) -> Result<boo
     Ok(is_ancestor.success())
 }
 
-/// Generate a prompt for Claude to commit and rebase the current branch
+/// Generate a prompt for Claude to rebase the current branch
 pub fn generate_rebase_prompt(main_branch: &str) -> String {
     format!(r#"IMPORTANT: The main branch has advanced. You must rebase your changes before they can be merged.
 
 Execute these steps IN ORDER:
 
-1. COMMIT any uncommitted changes:
-   git add -A && git commit -m "WIP: task changes" --allow-empty
-
-2. REBASE onto main:
+1. REBASE onto main:
    git rebase {}
 
-3. IF CONFLICTS occur during rebase:
+2. IF CONFLICTS occur during rebase:
    - Open each conflicted file and resolve the conflict (keep both changes merged intelligently)
    - Remove the conflict markers (<<<<<<<, =======, >>>>>>>)
    - Stage the resolved file: git add <filename>
    - Continue rebase: git rebase --continue
    - Repeat for each conflict
 
-4. VERIFY the rebase succeeded by checking the log shows main's commits:
+3. VERIFY the rebase succeeded by checking the log shows main's commits:
    git log --oneline -5
 
 When rebase is complete, just say "Rebase complete" and stop.
