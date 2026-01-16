@@ -493,19 +493,6 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
-    /// Visual divider below this task
-    #[serde(default)]
-    pub divider_below: bool,
-    /// Visual divider above this task (for top-of-column dividers)
-    #[serde(default)]
-    pub divider_above: bool,
-    /// Optional title for the divider below
-    #[serde(default)]
-    pub divider_title: Option<String>,
-    /// Optional title for the divider above
-    #[serde(default)]
-    pub divider_above_title: Option<String>,
-
     // === Worktree isolation fields ===
 
     /// Path to the git worktree for this task
@@ -583,10 +570,6 @@ impl Task {
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
-            divider_below: false,
-            divider_above: false,
-            divider_title: None,
-            divider_above_title: None,
             // Worktree fields
             worktree_path: None,
             git_branch: None,
@@ -724,20 +707,12 @@ pub struct UiState {
     pub status_message: Option<String>,
     /// If set, we're editing an existing task instead of creating a new one
     pub editing_task_id: Option<Uuid>,
-    /// If set, we're editing a divider's title (task_id that has the divider)
-    pub editing_divider_id: Option<Uuid>,
-    /// If true, we're editing a divider_above (vs divider_below)
-    pub editing_divider_is_above: bool,
     /// Scroll offset for long task titles (marquee effect)
     pub title_scroll_offset: usize,
     /// Delay counter before scrolling starts (ticks to wait)
     pub title_scroll_delay: usize,
     /// Pending images to attach to next created task
     pub pending_images: Vec<PathBuf>,
-    /// If true, a divider below is selected (below the task at selected_task_idx)
-    pub selected_is_divider: bool,
-    /// If true, a divider above is selected (above the first task, only valid when selected_task_idx == 0)
-    pub selected_is_divider_above: bool,
     /// Animation frame counter for spinners
     pub animation_frame: usize,
     /// Last scroll position (visual index) for each column, preserved when leaving
@@ -835,13 +810,9 @@ impl Default for UiState {
             pending_confirmation: None,
             status_message: None,
             editing_task_id: None,
-            editing_divider_id: None,
-            editing_divider_is_above: false,
             title_scroll_offset: 0,
             title_scroll_delay: 0,
             pending_images: Vec::new(),
-            selected_is_divider: false,
-            selected_is_divider_above: false,
             animation_frame: 0,
             column_scroll_offsets: [0; 6],
             queue_dialog_task_id: None,

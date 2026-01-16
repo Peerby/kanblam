@@ -122,7 +122,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
 
     let inner = block.inner(area);
 
-    // Get tasks for this column (with dividers)
+    // Get tasks for this column
     let tasks: Vec<ListItem> = app
         .model
         .active_project()
@@ -131,20 +131,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                 .tasks_by_status(status)
                 .iter()
                 .enumerate()
-                .flat_map(|(idx, task)| {
-                    let is_at_this_idx = is_selected
+                .map(|(idx, task)| {
+                    let is_task_selected = is_selected
                         && app.model.ui_state.selected_task_idx == Some(idx);
-                    // Task is selected only if at this idx AND not selecting any divider
-                    let is_task_selected = is_at_this_idx
-                        && !app.model.ui_state.selected_is_divider
-                        && !app.model.ui_state.selected_is_divider_above;
-                    // Divider below is selected if at this idx AND selecting divider
-                    let is_divider_selected = is_at_this_idx
-                        && app.model.ui_state.selected_is_divider;
-                    // Divider above is selected if idx == 0 AND selecting divider above
-                    let is_divider_above_selected = idx == 0
-                        && is_selected
-                        && app.model.ui_state.selected_is_divider_above;
 
                     // Check if this task is the one being feedbacked
                     let is_feedback_task = app.model.ui_state.feedback_task_id == Some(task.id);
@@ -274,94 +263,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         spans.push(Span::styled(format!(" ↓{}", task.git_commits_behind), behind_style));
                     }
 
-                    let task_item = ListItem::new(Line::from(spans));
-
-                    let mut items = Vec::new();
-
-                    // Add divider above first task if enabled
-                    if idx == 0 && task.divider_above {
-                        let divider_width = inner.width.saturating_sub(2) as usize;
-
-                        // Build divider line with optional centered title
-                        let divider_line = if let Some(title) = &task.divider_above_title {
-                            let title_with_padding = format!(" {} ", title);
-                            let title_len = title_with_padding.chars().count();
-                            if title_len >= divider_width {
-                                title_with_padding.chars().take(divider_width).collect()
-                            } else {
-                                let remaining = divider_width - title_len;
-                                let left_dashes = remaining / 2;
-                                let right_dashes = remaining - left_dashes;
-                                format!(
-                                    "{}{}{}",
-                                    "─".repeat(left_dashes),
-                                    title_with_padding,
-                                    "─".repeat(right_dashes)
-                                )
-                            }
-                        } else {
-                            "─".repeat(divider_width)
-                        };
-
-                        let divider_style = if is_divider_above_selected {
-                            Style::default()
-                                .fg(contrast_fg)
-                                .bg(color)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-                        items.push(ListItem::new(Line::from(Span::styled(
-                            divider_line,
-                            divider_style,
-                        ))));
-                    }
-
-                    items.push(task_item);
-
-                    // Add divider after task if enabled
-                    if task.divider_below {
-                        let divider_width = inner.width.saturating_sub(2) as usize;
-
-                        // Build divider line with optional centered title
-                        let divider_line = if let Some(title) = &task.divider_title {
-                            // Center the title in the divider line
-                            let title_with_padding = format!(" {} ", title);
-                            let title_len = title_with_padding.chars().count();
-                            if title_len >= divider_width {
-                                // Title too long, just show it
-                                title_with_padding.chars().take(divider_width).collect()
-                            } else {
-                                let remaining = divider_width - title_len;
-                                let left_dashes = remaining / 2;
-                                let right_dashes = remaining - left_dashes;
-                                format!(
-                                    "{}{}{}",
-                                    "─".repeat(left_dashes),
-                                    title_with_padding,
-                                    "─".repeat(right_dashes)
-                                )
-                            }
-                        } else {
-                            "─".repeat(divider_width)
-                        };
-
-                        // Highlight divider if selected
-                        let divider_style = if is_divider_selected {
-                            Style::default()
-                                .fg(contrast_fg)
-                                .bg(color)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-                        items.push(ListItem::new(Line::from(Span::styled(
-                            divider_line,
-                            divider_style,
-                        ))));
-                    }
-
-                    items
+                    ListItem::new(Line::from(spans))
                 })
                 .collect()
         })
@@ -382,44 +284,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         let list = List::new(tasks);
         let mut list_state = ListState::default();
 
-        // Calculate visual index accounting for dividers
+        // Calculate visual index
         let visual_idx = if is_selected {
-            if let Some(task_idx) = app.model.ui_state.selected_task_idx {
-                if let Some(project) = app.model.active_project() {
-                    let filtered_tasks = project.tasks_by_status(status);
-
-                    // Check if first task has divider_above
-                    let has_divider_above = filtered_tasks.first()
-                        .map(|t| t.divider_above)
-                        .unwrap_or(false);
-
-                    // If selecting divider_above, visual index is 0
-                    if app.model.ui_state.selected_is_divider_above && task_idx == 0 {
-                        Some(0)
-                    } else {
-                        // Count dividers before selected task
-                        let dividers_before: usize = filtered_tasks.iter()
-                            .take(task_idx)
-                            .filter(|t| t.divider_below)
-                            .count();
-                        // Start with task_idx + dividers before
-                        let mut idx = task_idx + dividers_before;
-                        // Add 1 if there's a divider_above (shifts everything down)
-                        if has_divider_above {
-                            idx += 1;
-                        }
-                        // If divider below is selected, add 1 to select the divider itself
-                        if app.model.ui_state.selected_is_divider {
-                            idx += 1;
-                        }
-                        Some(idx)
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            app.model.ui_state.selected_task_idx
         } else {
             // Use saved scroll offset for unselected columns to preserve scroll position
             let saved_offset = app.model.ui_state.column_scroll_offsets[status.index()];
@@ -528,39 +395,16 @@ fn render_scrollbar(
         return;
     }
 
-    // Calculate total visual items (tasks + dividers)
+    // Calculate total items
     let (total_items, scroll_offset) = if let Some(project) = app.model.active_project() {
         let tasks = project.tasks_by_status(status);
-        let mut total = tasks.len();
-
-        // Add dividers to count
-        for task in &tasks {
-            if task.divider_below {
-                total += 1;
-            }
-            if task.divider_above {
-                total += 1;
-            }
-        }
+        let total = tasks.len();
 
         // Calculate scroll offset based on selected item
         let offset = if is_selected && app.model.ui_state.selected_column == status {
             if let Some(task_idx) = app.model.ui_state.selected_task_idx {
-                // Calculate visual index (same logic as list rendering)
-                let has_divider_above = tasks.first().map(|t| t.divider_above).unwrap_or(false);
-                let dividers_before: usize = tasks.iter()
-                    .take(task_idx)
-                    .filter(|t| t.divider_below)
-                    .count();
-                let mut visual_idx = task_idx + dividers_before;
-                if has_divider_above {
-                    visual_idx += 1;
-                }
-                if app.model.ui_state.selected_is_divider {
-                    visual_idx += 1;
-                }
                 // Estimate scroll position - the list widget centers selected item
-                visual_idx.saturating_sub(visible_height / 2)
+                task_idx.saturating_sub(visible_height / 2)
             } else {
                 0
             }

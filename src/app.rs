@@ -73,8 +73,6 @@ impl App {
                 // Task no longer in this column - clear selection
                 self.model.ui_state.selected_task_idx = if !is_empty { Some(0) } else { None };
                 self.model.ui_state.selected_task_id = fallback_id;
-                self.model.ui_state.selected_is_divider = false;
-                self.model.ui_state.selected_is_divider_above = false;
             }
         }
     }
@@ -100,41 +98,7 @@ impl App {
         let column = self.model.ui_state.selected_column;
         let task_idx = self.model.ui_state.selected_task_idx;
 
-        let visual_idx = if let Some(project) = self.model.active_project() {
-            let tasks = project.tasks_by_status(column);
-
-            if let Some(idx) = task_idx {
-                // Check if first task has divider_above
-                let has_divider_above = tasks.first().map(|t| t.divider_above).unwrap_or(false);
-
-                // If selecting divider_above, visual index is 0
-                if self.model.ui_state.selected_is_divider_above && idx == 0 {
-                    0
-                } else {
-                    // Count dividers before selected task
-                    let dividers_before: usize = tasks.iter()
-                        .take(idx)
-                        .filter(|t| t.divider_below)
-                        .count();
-                    // Start with task_idx + dividers before
-                    let mut visual = idx + dividers_before;
-                    // Add 1 if there's a divider_above (shifts everything down)
-                    if has_divider_above {
-                        visual += 1;
-                    }
-                    // If divider below is selected, add 1 to select the divider itself
-                    if self.model.ui_state.selected_is_divider {
-                        visual += 1;
-                    }
-                    visual
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
+        let visual_idx = task_idx.unwrap_or(0);
         self.model.ui_state.column_scroll_offsets[column.index()] = visual_idx;
     }
 
@@ -142,41 +106,14 @@ impl App {
     /// Returns the task index to select based on saved offset
     fn get_restored_task_idx(&self, column: TaskStatus) -> Option<usize> {
         let saved_offset = self.model.ui_state.column_scroll_offsets[column.index()];
-        if saved_offset == 0 {
-            // No saved offset, select first task
-            return if let Some(project) = self.model.active_project() {
-                let tasks = project.tasks_by_status(column);
-                if tasks.is_empty() { None } else { Some(0) }
-            } else {
-                None
-            };
-        }
 
-        // Try to find the task at this visual position
         if let Some(project) = self.model.active_project() {
             let tasks = project.tasks_by_status(column);
             if tasks.is_empty() {
                 return None;
             }
-
-            let has_divider_above = tasks.first().map(|t| t.divider_above).unwrap_or(false);
-            let mut visual_pos = if has_divider_above { 1 } else { 0 };
-
-            for (idx, task) in tasks.iter().enumerate() {
-                if visual_pos >= saved_offset {
-                    return Some(idx);
-                }
-                visual_pos += 1; // The task itself
-                if task.divider_below {
-                    if visual_pos >= saved_offset {
-                        return Some(idx);
-                    }
-                    visual_pos += 1;
-                }
-            }
-
-            // If saved offset is beyond end, select last task
-            Some(tasks.len().saturating_sub(1))
+            // Clamp to valid range
+            Some(saved_offset.min(tasks.len().saturating_sub(1)))
         } else {
             None
         }
@@ -204,8 +141,6 @@ impl App {
                 self.model.ui_state.focus = FocusArea::KanbanBoard;
                 self.model.ui_state.selected_column = TaskStatus::Planned;
                 self.model.ui_state.selected_task_idx = Some(0);
-                self.model.ui_state.selected_is_divider = false;
-                self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
                 self.model.ui_state.title_scroll_delay = 0;
             }
@@ -240,8 +175,6 @@ impl App {
             Message::CancelEdit => {
                 // Clear editing state and editor
                 self.model.ui_state.editing_task_id = None;
-                self.model.ui_state.editing_divider_id = None;
-                self.model.ui_state.editing_divider_is_above = false;
                 self.model.ui_state.clear_input();
                 self.model.ui_state.focus = FocusArea::KanbanBoard;
             }
@@ -374,79 +307,14 @@ impl App {
                 if follow_to_planned {
                     self.model.ui_state.selected_column = TaskStatus::Planned;
                     self.model.ui_state.selected_task_idx = Some(0);
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                 }
             }
 
             Message::MoveTaskUp => {
-                // Move selected task or divider up within its column
+                // Move selected task up within its column
                 if let Some(selected_idx) = self.model.ui_state.selected_task_idx {
-                    let status = self.model.ui_state.selected_column;
-                    let is_divider = self.model.ui_state.selected_is_divider;
-                    let is_divider_above = self.model.ui_state.selected_is_divider_above;
-
-                    if is_divider_above {
-                        // Can't move divider_above any higher, it's already at the top
-                    } else if is_divider {
-                        if selected_idx == 0 {
-                            // Moving divider at index 0 up: convert to divider_above
-                            let task_id = self.model.active_project()
-                                .and_then(|p| p.tasks_by_status(status).first().map(|t| t.id));
-
-                            if let Some(task_id) = task_id {
-                                if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        // Move divider from below to above
-                                        let title = task.divider_title.take();
-                                        task.divider_below = false;
-                                        task.divider_above = true;
-                                        task.divider_above_title = title;
-                                    }
-                                }
-                                // Now selecting the divider above
-                                self.model.ui_state.selected_is_divider = false;
-                                self.model.ui_state.selected_is_divider_above = true;
-                            }
-                        } else {
-                            // Moving a divider up: remove from current task, add to task above
-                            let (current_task_id, above_task_id) = {
-                                if let Some(project) = self.model.active_project() {
-                                    let tasks = project.tasks_by_status(status);
-                                    if selected_idx < tasks.len() {
-                                        (Some(tasks[selected_idx].id), Some(tasks[selected_idx - 1].id))
-                                    } else {
-                                        (None, None)
-                                    }
-                                } else {
-                                    (None, None)
-                                }
-                            };
-
-                            if let (Some(current_id), Some(above_id)) = (current_task_id, above_task_id) {
-                                if let Some(project) = self.model.active_project_mut() {
-                                    // Get divider title before removing
-                                    let divider_title = project.tasks.iter()
-                                        .find(|t| t.id == current_id)
-                                        .and_then(|t| t.divider_title.clone());
-
-                                    // Remove divider from current task
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == current_id) {
-                                        task.divider_below = false;
-                                        task.divider_title = None;
-                                    }
-                                    // Add divider to task above
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == above_id) {
-                                        task.divider_below = true;
-                                        task.divider_title = divider_title;
-                                    }
-                                    // Move selection up to follow the divider
-                                    self.model.ui_state.selected_task_idx = Some(selected_idx - 1);
-                                }
-                            }
-                        }
-                    } else if selected_idx > 0 {
-                        // Moving a task up
+                    if selected_idx > 0 {
+                        let status = self.model.ui_state.selected_column;
                         // Get task IDs from the display view
                         let (task_id, above_task_id) = {
                             if let Some(project) = self.model.active_project() {
@@ -467,16 +335,6 @@ impl App {
                                 let idx_a = project.tasks.iter().position(|t| t.id == task_id);
                                 let idx_b = project.tasks.iter().position(|t| t.id == above_id);
                                 if let (Some(a), Some(b)) = (idx_a, idx_b) {
-                                    // Swap dividers (and their titles) first so they stay in position
-                                    let div_a = project.tasks[a].divider_below;
-                                    let div_b = project.tasks[b].divider_below;
-                                    let title_a = project.tasks[a].divider_title.take();
-                                    let title_b = project.tasks[b].divider_title.take();
-                                    project.tasks[a].divider_below = div_b;
-                                    project.tasks[b].divider_below = div_a;
-                                    project.tasks[a].divider_title = title_b;
-                                    project.tasks[b].divider_title = title_a;
-                                    // Then swap the tasks
                                     project.tasks.swap(a, b);
                                     // Selection follows the task
                                     self.model.ui_state.selected_task_idx = Some(selected_idx - 1);
@@ -488,216 +346,36 @@ impl App {
             }
 
             Message::MoveTaskDown => {
-                // Move selected task or divider down within its column
+                // Move selected task down within its column
                 if let Some(selected_idx) = self.model.ui_state.selected_task_idx {
                     let status = self.model.ui_state.selected_column;
-                    let is_divider = self.model.ui_state.selected_is_divider;
-                    let is_divider_above = self.model.ui_state.selected_is_divider_above;
-
-                    if is_divider_above {
-                        // Moving divider_above down: convert to divider_below of first task
-                        // Only if the first task doesn't already have a divider_below
-                        let can_move = self.model.active_project()
-                            .and_then(|p| p.tasks_by_status(status).first().map(|t| !t.divider_below))
-                            .unwrap_or(false);
-
-                        if can_move {
-                            let task_id = self.model.active_project()
-                                .and_then(|p| p.tasks_by_status(status).first().map(|t| t.id));
-
-                            if let Some(task_id) = task_id {
-                                if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        // Move divider from above to below
-                                        let title = task.divider_above_title.take();
-                                        task.divider_above = false;
-                                        task.divider_below = true;
-                                        task.divider_title = title;
-                                    }
-                                }
-                                // Now selecting the divider below
-                                self.model.ui_state.selected_is_divider_above = false;
-                                self.model.ui_state.selected_is_divider = true;
-                            }
-                        }
-                    } else if is_divider {
-                        // Moving a divider down: remove from current task, add to task below
-                        let (current_task_id, below_task_id) = {
-                            if let Some(project) = self.model.active_project() {
-                                let tasks = project.tasks_by_status(status);
-                                if selected_idx + 1 < tasks.len() {
-                                    (Some(tasks[selected_idx].id), Some(tasks[selected_idx + 1].id))
-                                } else {
-                                    (None, None)
-                                }
+                    // Get task IDs from the display view
+                    let (task_id, below_task_id) = {
+                        if let Some(project) = self.model.active_project() {
+                            let tasks = project.tasks_by_status(status);
+                            if selected_idx + 1 < tasks.len() {
+                                (Some(tasks[selected_idx].id), Some(tasks[selected_idx + 1].id))
                             } else {
                                 (None, None)
                             }
-                        };
+                        } else {
+                            (None, None)
+                        }
+                    };
 
-                        if let (Some(current_id), Some(below_id)) = (current_task_id, below_task_id) {
-                            if let Some(project) = self.model.active_project_mut() {
-                                // Get divider title before removing
-                                let divider_title = project.tasks.iter()
-                                    .find(|t| t.id == current_id)
-                                    .and_then(|t| t.divider_title.clone());
-
-                                // Remove divider from current task
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == current_id) {
-                                    task.divider_below = false;
-                                    task.divider_title = None;
-                                }
-                                // Add divider to task below
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == below_id) {
-                                    task.divider_below = true;
-                                    task.divider_title = divider_title;
-                                }
-                                // Move selection down to follow the divider
+                    if let (Some(task_id), Some(below_id)) = (task_id, below_task_id) {
+                        if let Some(project) = self.model.active_project_mut() {
+                            // Find actual indices in the tasks Vec and swap
+                            let idx_a = project.tasks.iter().position(|t| t.id == task_id);
+                            let idx_b = project.tasks.iter().position(|t| t.id == below_id);
+                            if let (Some(a), Some(b)) = (idx_a, idx_b) {
+                                project.tasks.swap(a, b);
+                                // Selection follows the task
                                 self.model.ui_state.selected_task_idx = Some(selected_idx + 1);
                             }
                         }
-                    } else {
-                        // Moving a task down
-                        // Get task IDs from the display view
-                        let (task_id, below_task_id) = {
-                            if let Some(project) = self.model.active_project() {
-                                let tasks = project.tasks_by_status(status);
-                                if selected_idx + 1 < tasks.len() {
-                                    (Some(tasks[selected_idx].id), Some(tasks[selected_idx + 1].id))
-                                } else {
-                                    (None, None)
-                                }
-                            } else {
-                                (None, None)
-                            }
-                        };
-
-                        if let (Some(task_id), Some(below_id)) = (task_id, below_task_id) {
-                            if let Some(project) = self.model.active_project_mut() {
-                                // Find actual indices in the tasks Vec and swap
-                                let idx_a = project.tasks.iter().position(|t| t.id == task_id);
-                                let idx_b = project.tasks.iter().position(|t| t.id == below_id);
-                                if let (Some(a), Some(b)) = (idx_a, idx_b) {
-                                    // Swap dividers (and their titles) first so they stay in position
-                                    let div_a = project.tasks[a].divider_below;
-                                    let div_b = project.tasks[b].divider_below;
-                                    let title_a = project.tasks[a].divider_title.take();
-                                    let title_b = project.tasks[b].divider_title.take();
-                                    project.tasks[a].divider_below = div_b;
-                                    project.tasks[b].divider_below = div_a;
-                                    project.tasks[a].divider_title = title_b;
-                                    project.tasks[b].divider_title = title_a;
-                                    // Then swap the tasks
-                                    project.tasks.swap(a, b);
-                                    // Selection follows the task
-                                    self.model.ui_state.selected_task_idx = Some(selected_idx + 1);
-                                }
-                            }
-                        }
                     }
                 }
-            }
-
-            Message::ToggleDivider => {
-                // Toggle divider below selected task
-                if let Some(selected_idx) = self.model.ui_state.selected_task_idx {
-                    // Don't toggle if we're on a divider
-                    if self.model.ui_state.selected_is_divider {
-                        return commands;
-                    }
-                    let status = self.model.ui_state.selected_column;
-                    // Get task ID from the correctly sorted/filtered view
-                    let task_id = self.model.active_project()
-                        .and_then(|p| p.tasks_by_status(status).get(selected_idx).map(|t| t.id));
-
-                    if let Some(task_id) = task_id {
-                        if let Some(project) = self.model.active_project_mut() {
-                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.divider_below = !task.divider_below;
-                            }
-                        }
-                    }
-                }
-            }
-
-            Message::DeleteDivider => {
-                // Delete divider when one is selected
-                let is_divider_above = self.model.ui_state.selected_is_divider_above;
-                let is_divider_below = self.model.ui_state.selected_is_divider;
-
-                if is_divider_above || is_divider_below {
-                    if let Some(selected_idx) = self.model.ui_state.selected_task_idx {
-                        let status = self.model.ui_state.selected_column;
-                        // Get task ID from the correctly sorted/filtered view
-                        let task_id = self.model.active_project()
-                            .and_then(|p| p.tasks_by_status(status).get(selected_idx).map(|t| t.id));
-
-                        if let Some(task_id) = task_id {
-                            if let Some(project) = self.model.active_project_mut() {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    if is_divider_above {
-                                        task.divider_above = false;
-                                        task.divider_above_title = None;
-                                    } else {
-                                        task.divider_below = false;
-                                        task.divider_title = None;
-                                    }
-                                }
-                            }
-                        }
-                        // Move selection back to the task
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
-                    }
-                }
-            }
-
-            Message::EditDivider => {
-                // Edit divider title when a divider is selected
-                let is_divider_above = self.model.ui_state.selected_is_divider_above;
-                let is_divider_below = self.model.ui_state.selected_is_divider;
-
-                if is_divider_above || is_divider_below {
-                    if let Some(selected_idx) = self.model.ui_state.selected_task_idx {
-                        let status = self.model.ui_state.selected_column;
-                        // Get task info first (before mutating ui_state)
-                        let task_info = self.model.active_project()
-                            .and_then(|p| p.tasks_by_status(status).get(selected_idx)
-                                .map(|t| {
-                                    let title = if is_divider_above {
-                                        t.divider_above_title.clone()
-                                    } else {
-                                        t.divider_title.clone()
-                                    };
-                                    (t.id, title, is_divider_above)
-                                }));
-
-                        if let Some((task_id, current_title, is_above)) = task_info {
-                            // Now we can safely mutate ui_state
-                            self.model.ui_state.set_input_text(&current_title.unwrap_or_default());
-                            self.model.ui_state.editing_divider_id = Some(task_id);
-                            self.model.ui_state.editing_divider_is_above = is_above;
-                            self.model.ui_state.focus = FocusArea::TaskInput;
-                        }
-                    }
-                }
-            }
-
-            Message::UpdateDividerTitle { task_id, title } => {
-                let is_above = self.model.ui_state.editing_divider_is_above;
-                if let Some(project) = self.model.active_project_mut() {
-                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        if is_above {
-                            task.divider_above_title = title;
-                        } else {
-                            task.divider_title = title;
-                        }
-                    }
-                }
-                self.model.ui_state.editing_divider_id = None;
-                self.model.ui_state.editing_divider_is_above = false;
-                self.model.ui_state.clear_input();
-                self.model.ui_state.focus = FocusArea::KanbanBoard;
             }
 
             Message::StartTask(task_id) => {
@@ -1395,8 +1073,6 @@ impl App {
                     self.model.ui_state.selected_column = TaskStatus::Planned;
                     self.model.ui_state.selected_task_idx = Some(0);
                     self.model.ui_state.selected_task_id = Some(task_id);
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
 
                     commands.push(Message::SetStatusMessage(Some(
                         "Task reset to Planned (top). Press Enter to start fresh.".to_string()
@@ -2085,8 +1761,6 @@ impl App {
                     .map(|p| !p.tasks_by_status(status).is_empty())
                     .unwrap_or(false);
                 self.model.ui_state.selected_task_idx = if has_tasks { Some(0) } else { None };
-                self.model.ui_state.selected_is_divider = false;
-                self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
                 self.model.ui_state.title_scroll_delay = 0;
             }
@@ -2095,8 +1769,6 @@ impl App {
                 self.model.ui_state.selected_column = status;
                 self.model.ui_state.selected_task_idx = Some(task_idx);
                 self.model.ui_state.focus = FocusArea::KanbanBoard;
-                self.model.ui_state.selected_is_divider = false;
-                self.model.ui_state.selected_is_divider_above = false;
                 self.model.ui_state.title_scroll_offset = 0;
                 self.model.ui_state.title_scroll_delay = 0;
             }
@@ -2105,8 +1777,6 @@ impl App {
                 if idx < self.model.projects.len() {
                     self.model.active_project_idx = idx;
                     self.model.ui_state.selected_task_idx = None;
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.focus = FocusArea::KanbanBoard;
 
                     // Refresh git status for the new project
@@ -2171,8 +1841,6 @@ impl App {
                                 self.model.projects.push(project);
                                 self.model.active_project_idx = slot;
                                 self.model.ui_state.selected_task_idx = None;
-                                self.model.ui_state.selected_is_divider = false;
-                                self.model.ui_state.selected_is_divider_above = false;
                                 self.model.ui_state.focus = FocusArea::KanbanBoard;
 
                                 // Close the dialog
@@ -2222,8 +1890,6 @@ impl App {
                         }
                         // Reset selection
                         self.model.ui_state.selected_task_idx = None;
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
                     }
                 }
             }
@@ -2356,8 +2022,6 @@ impl App {
                                 }
                                 // Reset selection
                                 self.model.ui_state.selected_task_idx = None;
-                                self.model.ui_state.selected_is_divider = false;
-                                self.model.ui_state.selected_is_divider_above = false;
                             }
                         }
                         PendingAction::AcceptTask(task_id) => {
@@ -3788,12 +3452,7 @@ impl App {
                         commands.push(Message::CancelFeedbackMode);
                     }
                 }
-                // Check if we're editing a divider title
-                else if let Some(task_id) = self.model.ui_state.editing_divider_id {
-                    // Empty input clears the title, non-empty sets it
-                    let title = if input.is_empty() { None } else { Some(input) };
-                    commands.push(Message::UpdateDividerTitle { task_id, title });
-                } else if !input.is_empty() {
+                else if !input.is_empty() {
                     // Check if we're editing an existing task or creating a new one
                     if let Some(task_id) = self.model.ui_state.editing_task_id {
                         commands.push(Message::UpdateTask { task_id, title: input });
@@ -3841,20 +3500,11 @@ impl App {
                     self.model.ui_state.selected_task_idx = idx;
                 }
 
-                // Check if first task has divider_above
-                let first_has_divider_above = self.model.active_project()
-                    .and_then(|p| {
-                        let tasks = p.tasks_by_status(self.model.ui_state.selected_column);
-                        tasks.first().map(|t| t.divider_above)
-                    })
-                    .unwrap_or(false);
-
                 // Check if we're at the top of Planned or Queued and should move to ProjectTabs
                 let is_top_row = matches!(current_column, TaskStatus::Planned | TaskStatus::Queued);
                 let at_top_of_column = match idx {
                     None => true, // Empty column
-                    Some(0) if self.model.ui_state.selected_is_divider_above => true,
-                    Some(0) if !first_has_divider_above && !self.model.ui_state.selected_is_divider => true,
+                    Some(0) => true, // At first task
                     _ => false,
                 };
 
@@ -3868,48 +3518,11 @@ impl App {
                     return vec![];
                 }
 
-                if let Some(idx) = idx {
-                    // If we're on divider_above, move to column above
-                    if self.model.ui_state.selected_is_divider_above {
-                        if let Some(status) = above_status {
-                            self.save_scroll_offset();
-                            self.model.ui_state.selected_column = status;
-                            self.model.ui_state.selected_task_idx = if above_tasks_len > 0 {
-                                Some(above_tasks_len - 1)
-                            } else {
-                                None
-                            };
-                            self.model.ui_state.selected_is_divider = false;
-                            self.model.ui_state.selected_is_divider_above = false;
-                            self.model.ui_state.title_scroll_offset = 0;
-                            self.model.ui_state.title_scroll_delay = 0;
-                        }
-                    } else if self.model.ui_state.selected_is_divider {
-                        // If we're on a divider below, move back to the task
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.title_scroll_offset = 0;
-                        self.model.ui_state.title_scroll_delay = 0;
-                    } else if idx == 0 && first_has_divider_above {
-                        // At first task and there's a divider above - select it
-                        self.model.ui_state.selected_is_divider_above = true;
-                        self.model.ui_state.title_scroll_offset = 0;
-                        self.model.ui_state.title_scroll_delay = 0;
-                    } else if idx > 0 {
-                        // Check if previous task has a divider - if so, select it
-                        let prev_has_divider = self.model.active_project()
-                            .and_then(|p| {
-                                let tasks = p.tasks_by_status(self.model.ui_state.selected_column);
-                                tasks.get(idx - 1).map(|t| t.divider_below)
-                            })
-                            .unwrap_or(false);
 
-                        if prev_has_divider {
-                            self.model.ui_state.selected_task_idx = Some(idx - 1);
-                            self.model.ui_state.selected_is_divider = true;
-                        } else {
-                            self.model.ui_state.selected_task_idx = Some(idx - 1);
-                            self.model.ui_state.selected_is_divider = false;
-                        }
+                if let Some(idx) = idx {
+                    if idx > 0 {
+                        // Move up within column
+                        self.model.ui_state.selected_task_idx = Some(idx - 1);
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     } else if let Some(status) = above_status {
@@ -3921,8 +3534,6 @@ impl App {
                         } else {
                             None
                         };
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     }
@@ -3935,8 +3546,6 @@ impl App {
                     } else {
                         None
                     };
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
                     self.model.ui_state.title_scroll_delay = 0;
                 }
@@ -3955,13 +3564,11 @@ impl App {
                         .map(|p| p.tasks_by_status(self.model.ui_state.selected_column).len())
                         .unwrap_or(0);
                     self.model.ui_state.selected_task_idx = if tasks_len > 0 { Some(0) } else { None };
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                     return vec![];
                 }
 
                 // Gather info first to avoid borrow issues
-                let (tasks_len, current_idx, current_has_divider, below_status, below_tasks_len, needs_sync) = {
+                let (tasks_len, current_idx, below_status, below_tasks_len, needs_sync) = {
                     if let Some(project) = self.model.active_project() {
                         let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
                         let tasks_len = tasks.len();
@@ -3971,7 +3578,6 @@ impl App {
                             Some(i) => (i, false),
                             None => (0, false),
                         };
-                        let has_divider = tasks.get(idx).map(|t| t.divider_below).unwrap_or(false);
                         // 2x3 grid navigation - move down in same column
                         let below = match self.model.ui_state.selected_column {
                             TaskStatus::Planned => Some(TaskStatus::InProgress),
@@ -3983,9 +3589,9 @@ impl App {
                         let below_len = below
                             .map(|s| project.tasks_by_status(s).len())
                             .unwrap_or(0);
-                        (tasks_len, idx, has_divider, below, below_len, needs_sync)
+                        (tasks_len, idx, below, below_len, needs_sync)
                     } else {
-                        (0, 0, false, None, 0, false)
+                        (0, 0, None, 0, false)
                     }
                 };
 
@@ -3994,39 +3600,9 @@ impl App {
                     self.model.ui_state.selected_task_idx = Some(current_idx);
                 }
 
-                // If on a divider_above, move to first task
-                if self.model.ui_state.selected_is_divider_above {
-                    self.model.ui_state.selected_is_divider_above = false;
-                    self.model.ui_state.selected_task_idx = if tasks_len > 0 { Some(0) } else { None };
-                    self.model.ui_state.title_scroll_offset = 0;
-                    self.model.ui_state.title_scroll_delay = 0;
-                // If on a divider_below, move to next task
-                } else if self.model.ui_state.selected_is_divider {
-                    if current_idx + 1 < tasks_len {
-                        self.model.ui_state.selected_task_idx = Some(current_idx + 1);
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.title_scroll_offset = 0;
-                        self.model.ui_state.title_scroll_delay = 0;
-                    } else if let Some(status) = below_status {
-                        // Move to column below
-                        self.save_scroll_offset();
-                        self.model.ui_state.selected_column = status;
-                        self.model.ui_state.selected_task_idx = if below_tasks_len > 0 { Some(0) } else { None };
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
-                        self.model.ui_state.title_scroll_offset = 0;
-                        self.model.ui_state.title_scroll_delay = 0;
-                    } else {
-                        // At bottom of Review/Done - focus task input
-                        self.save_scroll_offset();
-                        self.model.ui_state.focus = FocusArea::TaskInput;
-                        self.model.ui_state.selected_is_divider = false;
-                    }
-                } else if self.model.ui_state.selected_task_idx.is_none() && tasks_len > 0 {
+                if self.model.ui_state.selected_task_idx.is_none() && tasks_len > 0 {
                     // No selection but column has tasks - select first
                     self.model.ui_state.selected_task_idx = Some(0);
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
                     self.model.ui_state.title_scroll_delay = 0;
                 } else if self.model.ui_state.selected_task_idx.is_none() && tasks_len == 0 {
@@ -4035,8 +3611,6 @@ impl App {
                         self.save_scroll_offset();
                         self.model.ui_state.selected_column = status;
                         self.model.ui_state.selected_task_idx = if below_tasks_len > 0 { Some(0) } else { None };
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     } else {
@@ -4044,14 +3618,8 @@ impl App {
                         self.save_scroll_offset();
                         self.model.ui_state.focus = FocusArea::TaskInput;
                     }
-                } else if current_has_divider {
-                    // Current task has a divider - select it
-                    self.model.ui_state.selected_is_divider = true;
-                    self.model.ui_state.title_scroll_offset = 0;
-                    self.model.ui_state.title_scroll_delay = 0;
                 } else if current_idx + 1 < tasks_len {
                     self.model.ui_state.selected_task_idx = Some(current_idx + 1);
-                    self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.title_scroll_offset = 0;
                     self.model.ui_state.title_scroll_delay = 0;
                 } else if let Some(status) = below_status {
@@ -4059,8 +3627,6 @@ impl App {
                     self.save_scroll_offset();
                     self.model.ui_state.selected_column = status;
                     self.model.ui_state.selected_task_idx = if below_tasks_len > 0 { Some(0) } else { None };
-                    self.model.ui_state.selected_is_divider = false;
-                    self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.title_scroll_offset = 0;
                     self.model.ui_state.title_scroll_delay = 0;
                 } else {
@@ -4089,8 +3655,6 @@ impl App {
                         self.model.ui_state.selected_column = new_status;
                         // Restore saved scroll position or select first task
                         self.model.ui_state.selected_task_idx = self.get_restored_task_idx(new_status);
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     }
@@ -4118,8 +3682,6 @@ impl App {
                         self.model.ui_state.selected_column = new_status;
                         // Restore saved scroll position or select first task
                         self.model.ui_state.selected_task_idx = self.get_restored_task_idx(new_status);
-                        self.model.ui_state.selected_is_divider = false;
-                        self.model.ui_state.selected_is_divider_above = false;
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     }

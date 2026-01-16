@@ -331,15 +331,13 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
 fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_focused = app.model.ui_state.focus == FocusArea::TaskInput;
     let is_editing_task = app.model.ui_state.editing_task_id.is_some();
-    let is_editing_divider = app.model.ui_state.editing_divider_id.is_some();
     let is_feedback_mode = app.model.ui_state.feedback_task_id.is_some();
-    let is_editing = is_editing_task || is_editing_divider;
 
     // Choose colors based on focus and mode
     let (border_color, text_color) = if is_focused {
         let color = if is_feedback_mode {
             Color::Cyan
-        } else if is_editing {
+        } else if is_editing_task {
             Color::Magenta
         } else {
             Color::Yellow
@@ -359,8 +357,6 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let title = if is_feedback_mode {
         Line::from(Span::styled(" Feedback ", title_style))
-    } else if is_editing_divider {
-        Line::from(Span::styled(" Divider Title ", title_style))
     } else if is_editing_task {
         Line::from(Span::styled(" Edit Task ", title_style))
     } else if pending_count > 0 {
@@ -1107,13 +1103,12 @@ fn render_help(frame: &mut Frame) {
         ]),
         Line::from("  v/Space    View task details"),
         Line::from("  i          New task (focus input)"),
-        Line::from("  e          Edit task/divider"),
+        Line::from("  e          Edit task"),
         Line::from("  s          Start (Planned/Queued) / Continue (Review/NeedsInput)"),
-        Line::from("  d          Delete task/divider"),
+        Line::from("  d          Delete task"),
         Line::from("  r          Move to Review (InProgress/NeedsInput/Done)"),
         Line::from("  x          Reset: cleanup & move to Planned"),
         Line::from("  +/-        Reorder task up/down"),
-        Line::from("  |          Toggle divider below task"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Review Column", Style::default().add_modifier(Modifier::UNDERLINED)),

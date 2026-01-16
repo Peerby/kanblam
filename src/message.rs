@@ -14,10 +14,6 @@ pub enum Message {
     MoveTask { task_id: Uuid, to_status: TaskStatus },
     MoveTaskUp,      // Move selected task up in list (+)
     MoveTaskDown,    // Move selected task down in list (-)
-    ToggleDivider,   // Toggle divider below selected task (|)
-    DeleteDivider,   // Delete the currently selected divider
-    EditDivider,     // Edit the currently selected divider's title
-    UpdateDividerTitle { task_id: Uuid, title: Option<String> },
     StartTask(Uuid),
     SelectTask(Option<usize>),
     SelectColumn(TaskStatus),

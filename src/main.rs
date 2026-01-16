@@ -875,11 +875,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 }
             }
 
-            // Only show preview if a task is selected (not a divider)
-            if app.model.ui_state.selected_task_idx.is_some()
-                && !app.model.ui_state.selected_is_divider
-                && !app.model.ui_state.selected_is_divider_above
-            {
+            // Only show preview if a task is selected
+            if app.model.ui_state.selected_task_idx.is_some() {
                 vec![Message::ToggleTaskPreview]
             } else {
                 vec![]
@@ -1014,13 +1011,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Delete task or divider
+        // Delete task
         KeyCode::Char('d') => {
-            // If a divider is selected, delete it (no confirmation needed)
-            if app.model.ui_state.selected_is_divider {
-                return vec![Message::DeleteDivider];
-            }
-            // Otherwise ask for confirmation before deleting the task
+            // Ask for confirmation before deleting the task
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -1040,13 +1033,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Edit task or divider
+        // Edit task
         KeyCode::Char('e') => {
-            // If a divider is selected (either above or below), edit the divider title
-            if app.model.ui_state.selected_is_divider || app.model.ui_state.selected_is_divider_above {
-                return vec![Message::EditDivider];
-            }
-            // Otherwise edit the task
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -1080,9 +1068,6 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // Move task down in list
         KeyCode::Char('-') | KeyCode::Char('_') => vec![Message::MoveTaskDown],
-
-        // Toggle divider below task
-        KeyCode::Char('|') => vec![Message::ToggleDivider],
 
         // Column switching with 1-6
         // 2x3 grid: Row 1: Planned|Queued, Row 2: InProgress|NeedsInput, Row 3: Review|Done
@@ -1123,22 +1108,16 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // View task details (v without modifiers, or Space)
         KeyCode::Char('v') => {
-            // Only show preview if a task is selected (not a divider)
-            if app.model.ui_state.selected_task_idx.is_some()
-                && !app.model.ui_state.selected_is_divider
-                && !app.model.ui_state.selected_is_divider_above
-            {
+            // Only show preview if a task is selected
+            if app.model.ui_state.selected_task_idx.is_some() {
                 vec![Message::ToggleTaskPreview]
             } else {
                 vec![]
             }
         }
         KeyCode::Char(' ') => {
-            // Only show preview if a task is selected (not a divider)
-            if app.model.ui_state.selected_task_idx.is_some()
-                && !app.model.ui_state.selected_is_divider
-                && !app.model.ui_state.selected_is_divider_above
-            {
+            // Only show preview if a task is selected
+            if app.model.ui_state.selected_task_idx.is_some() {
                 vec![Message::ToggleTaskPreview]
             } else {
                 vec![]
