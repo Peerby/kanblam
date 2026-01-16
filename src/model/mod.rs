@@ -8,6 +8,135 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Simple directory browser for project selection
+#[derive(Debug, Clone)]
+pub struct DirectoryBrowser {
+    /// Current directory being browsed
+    pub current_dir: PathBuf,
+    /// List of entries in the current directory (directories only)
+    pub entries: Vec<DirEntry>,
+    /// Currently selected index
+    pub selected_idx: usize,
+    /// Scroll offset for display
+    pub scroll_offset: usize,
+}
+
+/// A directory entry
+#[derive(Debug, Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+}
+
+impl DirectoryBrowser {
+    /// Create a new directory browser starting at the given path
+    pub fn new(start_dir: PathBuf) -> std::io::Result<Self> {
+        let mut browser = Self {
+            current_dir: start_dir,
+            entries: Vec::new(),
+            selected_idx: 0,
+            scroll_offset: 0,
+        };
+        browser.refresh()?;
+        Ok(browser)
+    }
+
+    /// Refresh the directory listing
+    pub fn refresh(&mut self) -> std::io::Result<()> {
+        self.entries.clear();
+
+        // Add parent directory entry if not at root
+        if let Some(parent) = self.current_dir.parent() {
+            self.entries.push(DirEntry {
+                name: "..".to_string(),
+                path: parent.to_path_buf(),
+                is_dir: true,
+            });
+        }
+
+        // Read directory entries
+        let read_dir = std::fs::read_dir(&self.current_dir)?;
+        let mut dirs: Vec<DirEntry> = Vec::new();
+
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden files/directories
+            if name.starts_with('.') {
+                continue;
+            }
+
+            if path.is_dir() {
+                dirs.push(DirEntry {
+                    name,
+                    path,
+                    is_dir: true,
+                });
+            }
+        }
+
+        // Sort directories alphabetically
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        self.entries.extend(dirs);
+
+        // Reset selection if out of bounds
+        if self.selected_idx >= self.entries.len() {
+            self.selected_idx = 0;
+        }
+        self.scroll_offset = 0;
+
+        Ok(())
+    }
+
+    /// Move selection up
+    pub fn move_up(&mut self) {
+        if self.selected_idx > 0 {
+            self.selected_idx -= 1;
+        }
+    }
+
+    /// Move selection down
+    pub fn move_down(&mut self) {
+        if !self.entries.is_empty() && self.selected_idx < self.entries.len() - 1 {
+            self.selected_idx += 1;
+        }
+    }
+
+    /// Enter the selected directory
+    pub fn enter_selected(&mut self) -> std::io::Result<bool> {
+        if let Some(entry) = self.entries.get(self.selected_idx) {
+            if entry.is_dir {
+                self.current_dir = entry.path.clone();
+                self.refresh()?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Go to parent directory
+    pub fn go_parent(&mut self) -> std::io::Result<bool> {
+        if let Some(parent) = self.current_dir.parent() {
+            self.current_dir = parent.to_path_buf();
+            self.refresh()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Get the currently selected entry
+    pub fn selected(&self) -> Option<&DirEntry> {
+        self.entries.get(self.selected_idx)
+    }
+
+    /// Get the current directory
+    pub fn cwd(&self) -> &PathBuf {
+        &self.current_dir
+    }
+}
+
 /// Application state following The Elm Architecture
 #[derive(Serialize, Deserialize)]
 pub struct AppModel {
@@ -423,6 +552,12 @@ pub struct UiState {
     // Interactive terminal modal
     /// If set, the interactive modal is open for this task
     pub interactive_modal: Option<InteractiveModal>,
+
+    // Open project dialog
+    /// If set, the open project dialog is active for this slot (0-8 = keys 1-9)
+    pub open_project_dialog_slot: Option<usize>,
+    /// Directory browser for the open project dialog
+    pub directory_browser: Option<DirectoryBrowser>,
 }
 
 /// State for the interactive Claude terminal modal
@@ -490,6 +625,8 @@ impl Default for UiState {
             applied_stash_ref: None,
             show_task_preview: false,
             interactive_modal: None,
+            open_project_dialog_slot: None,
+            directory_browser: None,
         }
     }
 }
@@ -531,6 +668,11 @@ impl UiState {
     pub fn is_queue_dialog_open(&self) -> bool {
         self.queue_dialog_task_id.is_some()
     }
+
+    /// Check if the open project dialog is open
+    pub fn is_open_project_dialog_open(&self) -> bool {
+        self.open_project_dialog_slot.is_some()
+    }
 }
 
 /// A pending confirmation dialog
@@ -548,6 +690,7 @@ pub enum PendingAction {
     DeleteTask(Uuid),
     /// Mark task as done and clean up worktree (when nothing to merge)
     MarkDoneNoMerge(Uuid),
+    CloseProject(usize),
 }
 
 /// Which UI element has focus

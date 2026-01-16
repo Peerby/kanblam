@@ -70,6 +70,14 @@ pub enum Message {
     // Project operations
     SwitchProject(usize),
     AddProject { name: String, working_dir: PathBuf },
+    /// Show the open project dialog (triggered by pressing an unused project number)
+    ShowOpenProjectDialog { slot: usize },
+    /// Close the open project dialog without opening
+    CloseOpenProjectDialog,
+    /// Confirm the open project dialog and open the directory
+    ConfirmOpenProject,
+    /// Close a project (with confirmation if it has active tasks)
+    CloseProject(usize),
     ReloadClaudeHooks,
 
     // Claude/Hook events

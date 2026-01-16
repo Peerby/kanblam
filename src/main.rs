@@ -188,6 +188,15 @@ where
                                 app.update(cmd);
                             }
                         }
+                    } else if app.model.ui_state.is_open_project_dialog_open() {
+                        // Handle open project dialog input directly
+                        let messages = handle_open_project_dialog_input(key, app);
+                        for msg in messages {
+                            let commands = app.update(msg);
+                            for cmd in commands {
+                                app.update(cmd);
+                            }
+                        }
                     } else if app.model.ui_state.focus == FocusArea::TaskInput {
                         // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
@@ -657,6 +666,15 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::Quit],
 
+        // Close current project (Ctrl+D)
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if !app.model.projects.is_empty() {
+                vec![Message::CloseProject(app.model.active_project_idx)]
+            } else {
+                vec![]
+            }
+        }
+
         // Help
         KeyCode::Char('?') => vec![Message::ToggleHelp],
 
@@ -1035,17 +1053,20 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
         KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],
 
-        // Project switching with Shift+1-0 (!, @, #, $, %, ^, &, *, (, ))
-        KeyCode::Char('!') => vec![Message::SwitchProject(0)],
-        KeyCode::Char('@') => vec![Message::SwitchProject(1)],
-        KeyCode::Char('#') => vec![Message::SwitchProject(2)],
-        KeyCode::Char('$') => vec![Message::SwitchProject(3)],
-        KeyCode::Char('%') => vec![Message::SwitchProject(4)],
-        KeyCode::Char('^') => vec![Message::SwitchProject(5)],
-        KeyCode::Char('&') => vec![Message::SwitchProject(6)],
-        KeyCode::Char('*') => vec![Message::SwitchProject(7)],
-        KeyCode::Char('(') => vec![Message::SwitchProject(8)],
-        KeyCode::Char(')') => vec![Message::SwitchProject(9)],
+        // Project switching (1-9) or open new project dialog
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            let idx = c.to_digit(10).unwrap() as usize - 1;
+            if idx < app.model.projects.len() {
+                // Switch to existing project
+                vec![Message::SwitchProject(idx)]
+            } else if idx == app.model.projects.len() && idx < 9 {
+                // Open new project dialog for the next available slot
+                vec![Message::ShowOpenProjectDialog { slot: idx }]
+            } else {
+                // Slot not available (either gap in numbering or max reached)
+                vec![]
+            }
+        }
 
         // Paste image (Ctrl+V)
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1324,6 +1345,55 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
         // Ignore other keys (don't close modal)
         _ => vec![],
+    }
+}
+
+/// Handle key events when the open project dialog is open
+fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
+    match key.code {
+        // Close dialog
+        KeyCode::Esc => {
+            vec![Message::CloseOpenProjectDialog]
+        }
+
+        // Navigate up
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.move_up();
+            }
+            vec![]
+        }
+
+        // Navigate down
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.move_down();
+            }
+            vec![]
+        }
+
+        // Enter selected directory (space, enter, or l)
+        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                let _ = browser.enter_selected();
+            }
+            vec![]
+        }
+
+        // Go to parent directory
+        KeyCode::Backspace | KeyCode::Char('h') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                let _ = browser.go_parent();
+            }
+            vec![]
+        }
+
+        // Select current directory as project ('o' to open as project)
+        KeyCode::Char('o') => {
+            vec![Message::ConfirmOpenProject]
+        }
+
+        _ => vec![]
     }
 }
 

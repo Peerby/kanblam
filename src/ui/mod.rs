@@ -11,7 +11,7 @@ use ratatui::{
     prelude::Widget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -70,6 +70,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     if app.model.ui_state.show_task_preview {
         render_task_preview_modal(frame, app);
     }
+
+    // Render open project dialog if active
+    if app.model.ui_state.is_open_project_dialog_open() {
+        render_open_project_dialog(frame, app);
+    }
 }
 
 /// Calculate the required height for the input area based on content
@@ -107,18 +112,10 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
 
 /// Render the project bar at the top of the screen
 fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
-    if app.model.projects.is_empty() {
-        let no_projects = Paragraph::new(Span::styled(
-            " No projects - create one or add tasks ",
-            Style::default().fg(Color::DarkGray),
-        ));
-        frame.render_widget(no_projects, area);
-        return;
-    }
-
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
 
+    // Show existing projects
     for (idx, project) in app.model.projects.iter().enumerate() {
         let is_active = idx == app.model.active_project_idx;
 
@@ -151,10 +148,17 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
         };
 
         spans.push(Span::styled(tab_text, style));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+    }
 
-        if idx < app.model.projects.len() - 1 {
-            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-        }
+    // Show hint for next available slot (if under 9 projects)
+    let num_projects = app.model.projects.len();
+    if num_projects < 9 {
+        let next_slot = num_projects + 1;
+        spans.push(Span::styled(
+            format!(" [{}] + ", next_slot),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
     let bar = Paragraph::new(Line::from(spans));
@@ -668,7 +672,6 @@ fn render_help(frame: &mut Frame) {
         Line::from("  j/k        Move down/up within column"),
         Line::from("  !@#$%^     Jump to column (Planned/Queued/InProgress/Needs/Review/Done)"),
         Line::from("  Tab        Cycle focus: Board → Input → Tabs"),
-        Line::from("  1-9        Switch to project N"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Task Actions", Style::default().add_modifier(Modifier::UNDERLINED)),
@@ -701,6 +704,12 @@ fn render_help(frame: &mut Frame) {
         Line::from("  Ctrl-V     Paste image"),
         Line::from("  Ctrl-X/U   Remove last / clear all images"),
         Line::from("  Ctrl-C     Cancel"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Projects", Style::default().add_modifier(Modifier::UNDERLINED)),
+        ]),
+        Line::from("  1-9        Switch to project N / open new project"),
+        Line::from("  Ctrl-D     Close current project"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
@@ -810,6 +819,94 @@ fn render_queue_dialog(frame: &mut Frame, app: &App) {
     // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(dialog, area);
+}
+
+/// Render the open project dialog
+fn render_open_project_dialog(frame: &mut Frame, app: &App) {
+    let area = centered_rect(70, 70, frame.area());
+
+    let slot = app.model.ui_state.open_project_dialog_slot.unwrap_or(0);
+
+    // Clear area first
+    frame.render_widget(ratatui::widgets::Clear, area);
+
+    // Split the area: title at top, current path, directory list in middle, hints at bottom
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),  // Title
+            Constraint::Length(2),  // Current path
+            Constraint::Min(10),    // Directory list
+            Constraint::Length(3),  // Hints
+        ])
+        .split(area);
+
+    // Render title
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!(" Open project in slot [{}] ", slot + 1),
+            Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+        ),
+    ]));
+    frame.render_widget(title, chunks[0]);
+
+    // Render directory browser
+    if let Some(ref browser) = app.model.ui_state.directory_browser {
+        // Current path display
+        let path_display = Paragraph::new(Line::from(vec![
+            Span::styled(" 📁 ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                browser.cwd().display().to_string(),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        frame.render_widget(path_display, chunks[1]);
+
+        // Build list items from directory entries
+        let items: Vec<ListItem> = browser
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let icon = if entry.name == ".." {
+                    "↩ "
+                } else {
+                    "📂 "
+                };
+                let style = if idx == browser.selected_idx {
+                    Style::default().bg(Color::Blue).fg(Color::White)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(icon, style),
+                    Span::styled(&entry.name, style),
+                ]))
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green))
+                    .title(" Select Directory "),
+            );
+        frame.render_widget(list, chunks[2]);
+    }
+
+    // Render hints
+    let hints = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "↑↓/jk: Navigate  Space/Enter/l: Open dir  Backspace/h: Parent  Esc: Cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "o: Open selected directory as project",
+            Style::default().fg(Color::Yellow),
+        )),
+    ]);
+    frame.render_widget(hints, chunks[3]);
 }
 
 /// Helper function to create a centered rect

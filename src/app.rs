@@ -1670,6 +1670,101 @@ impl App {
                 self.model.projects.push(project);
             }
 
+            Message::ShowOpenProjectDialog { slot } => {
+                self.model.ui_state.open_project_dialog_slot = Some(slot);
+                // Create a directory browser starting at home directory
+                let start_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+                if let Ok(browser) = crate::model::DirectoryBrowser::new(start_dir) {
+                    self.model.ui_state.directory_browser = Some(browser);
+                }
+            }
+
+            Message::CloseOpenProjectDialog => {
+                self.model.ui_state.open_project_dialog_slot = None;
+                self.model.ui_state.directory_browser = None;
+            }
+
+            Message::ConfirmOpenProject => {
+                if let Some(slot) = self.model.ui_state.open_project_dialog_slot {
+                    if let Some(ref browser) = self.model.ui_state.directory_browser {
+                        // Use the selected (cursor) directory as the project path
+                        if let Some(selected) = browser.selected() {
+                            // Don't allow selecting ".." as project
+                            if selected.name == ".." {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Cannot select parent directory (..) - navigate into a directory first".to_string()
+                                )));
+                            } else {
+                                let path = selected.path.clone();
+
+                                // Use the directory name as the project name
+                                let name = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("project")
+                                    .to_string();
+
+                                let project = Project::new(name, path);
+                                self.model.projects.push(project);
+                                self.model.active_project_idx = slot;
+                                self.model.ui_state.selected_task_idx = None;
+                                self.model.ui_state.selected_is_divider = false;
+                                self.model.ui_state.selected_is_divider_above = false;
+                                self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                                // Close the dialog
+                                self.model.ui_state.open_project_dialog_slot = None;
+                                self.model.ui_state.directory_browser = None;
+
+                                // Check if hooks need to be installed
+                                if let Some(project) = self.model.projects.get(slot) {
+                                    if !project.hooks_installed {
+                                        let name = project.name.clone();
+                                        commands.push(Message::ShowConfirmation {
+                                            message: format!(
+                                                "Hooks not installed for '{}'. Install? (y/n)",
+                                                name
+                                            ),
+                                            action: PendingAction::InstallHooks,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Message::CloseProject(idx) => {
+                if idx < self.model.projects.len() {
+                    let project = &self.model.projects[idx];
+                    // Check if project has active tasks
+                    if project.has_active_task() {
+                        let name = project.name.clone();
+                        commands.push(Message::ShowConfirmation {
+                            message: format!(
+                                "Project '{}' has active tasks. Close anyway? (y/n)",
+                                name
+                            ),
+                            action: PendingAction::CloseProject(idx),
+                        });
+                    } else {
+                        // No active tasks, close directly
+                        self.model.projects.remove(idx);
+                        // Adjust active project index
+                        if self.model.projects.is_empty() {
+                            self.model.active_project_idx = 0;
+                        } else if self.model.active_project_idx >= self.model.projects.len() {
+                            self.model.active_project_idx = self.model.projects.len() - 1;
+                        }
+                        // Reset selection
+                        self.model.ui_state.selected_task_idx = None;
+                        self.model.ui_state.selected_is_divider = false;
+                        self.model.ui_state.selected_is_divider_above = false;
+                    }
+                }
+            }
+
             Message::ReloadClaudeHooks => {
                 if let Some(project) = self.model.active_project() {
                     let name = project.name.clone();
@@ -1797,6 +1892,22 @@ impl App {
                                 )));
                             }
                         }
+                        PendingAction::CloseProject(idx) => {
+                            // Close the project (user confirmed)
+                            if idx < self.model.projects.len() {
+                                self.model.projects.remove(idx);
+                                // Adjust active project index
+                                if self.model.projects.is_empty() {
+                                    self.model.active_project_idx = 0;
+                                } else if self.model.active_project_idx >= self.model.projects.len() {
+                                    self.model.active_project_idx = self.model.projects.len() - 1;
+                                }
+                                // Reset selection
+                                self.model.ui_state.selected_task_idx = None;
+                                self.model.ui_state.selected_is_divider = false;
+                                self.model.ui_state.selected_is_divider_above = false;
+                            }
+                        }
                     }
                 }
             }
@@ -1823,6 +1934,9 @@ impl App {
                             commands.push(Message::SetStatusMessage(Some(
                                 "Task left in Review.".to_string()
                             )));
+                        }
+                        PendingAction::CloseProject(_) => {
+                            // User cancelled closing project, no message needed
                         }
                     }
                 }
