@@ -984,8 +984,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // Edit task or divider
         KeyCode::Char('e') => {
-            // If a divider is selected, edit the divider title
-            if app.model.ui_state.selected_is_divider {
+            // If a divider is selected (either above or below), edit the divider title
+            if app.model.ui_state.selected_is_divider || app.model.ui_state.selected_is_divider_above {
                 return vec![Message::EditDivider];
             }
             // Otherwise edit the task

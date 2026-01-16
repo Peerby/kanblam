@@ -442,11 +442,15 @@ impl App {
                                 let idx_a = project.tasks.iter().position(|t| t.id == task_id);
                                 let idx_b = project.tasks.iter().position(|t| t.id == above_id);
                                 if let (Some(a), Some(b)) = (idx_a, idx_b) {
-                                    // Swap dividers first so they stay in position
+                                    // Swap dividers (and their titles) first so they stay in position
                                     let div_a = project.tasks[a].divider_below;
                                     let div_b = project.tasks[b].divider_below;
+                                    let title_a = project.tasks[a].divider_title.take();
+                                    let title_b = project.tasks[b].divider_title.take();
                                     project.tasks[a].divider_below = div_b;
                                     project.tasks[b].divider_below = div_a;
+                                    project.tasks[a].divider_title = title_b;
+                                    project.tasks[b].divider_title = title_a;
                                     // Then swap the tasks
                                     project.tasks.swap(a, b);
                                     // Selection follows the task
@@ -467,22 +471,30 @@ impl App {
 
                     if is_divider_above {
                         // Moving divider_above down: convert to divider_below of first task
-                        let task_id = self.model.active_project()
-                            .and_then(|p| p.tasks_by_status(status).first().map(|t| t.id));
+                        // Only if the first task doesn't already have a divider_below
+                        let can_move = self.model.active_project()
+                            .and_then(|p| p.tasks_by_status(status).first())
+                            .map(|t| !t.divider_below)
+                            .unwrap_or(false);
 
-                        if let Some(task_id) = task_id {
-                            if let Some(project) = self.model.active_project_mut() {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    // Move divider from above to below
-                                    let title = task.divider_above_title.take();
-                                    task.divider_above = false;
-                                    task.divider_below = true;
-                                    task.divider_title = title;
+                        if can_move {
+                            let task_id = self.model.active_project()
+                                .and_then(|p| p.tasks_by_status(status).first().map(|t| t.id));
+
+                            if let Some(task_id) = task_id {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        // Move divider from above to below
+                                        let title = task.divider_above_title.take();
+                                        task.divider_above = false;
+                                        task.divider_below = true;
+                                        task.divider_title = title;
+                                    }
                                 }
+                                // Now selecting the divider below
+                                self.model.ui_state.selected_is_divider_above = false;
+                                self.model.ui_state.selected_is_divider = true;
                             }
-                            // Now selecting the divider below
-                            self.model.ui_state.selected_is_divider_above = false;
-                            self.model.ui_state.selected_is_divider = true;
                         }
                     } else if is_divider {
                         // Moving a divider down: remove from current task, add to task below
@@ -542,11 +554,15 @@ impl App {
                                 let idx_a = project.tasks.iter().position(|t| t.id == task_id);
                                 let idx_b = project.tasks.iter().position(|t| t.id == below_id);
                                 if let (Some(a), Some(b)) = (idx_a, idx_b) {
-                                    // Swap dividers first so they stay in position
+                                    // Swap dividers (and their titles) first so they stay in position
                                     let div_a = project.tasks[a].divider_below;
                                     let div_b = project.tasks[b].divider_below;
+                                    let title_a = project.tasks[a].divider_title.take();
+                                    let title_b = project.tasks[b].divider_title.take();
                                     project.tasks[a].divider_below = div_b;
                                     project.tasks[b].divider_below = div_a;
+                                    project.tasks[a].divider_title = title_b;
+                                    project.tasks[b].divider_title = title_a;
                                     // Then swap the tasks
                                     project.tasks.swap(a, b);
                                     // Selection follows the task
