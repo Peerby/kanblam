@@ -487,7 +487,13 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     }
 
     if !apply_output.status.success() {
-        log("FAILED to apply changes");
+        log("FAILED to apply changes - resetting working tree");
+        // Reset working tree to clean state (removes conflict markers)
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["reset", "--hard", "HEAD"])
+            .output();
+
         // Restore stash if we made one
         if stash_ref.is_some() {
             let _ = Command::new("git")
