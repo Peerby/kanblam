@@ -270,6 +270,34 @@ impl Project {
         self.tasks.iter().filter(|t| t.status == TaskStatus::Review).count()
     }
 
+    /// Move a task to the end of tasks with a given status.
+    /// This ensures newly transitioned tasks appear at the bottom of their column.
+    /// Returns true if the task was found and moved.
+    pub fn move_task_to_end_of_status(&mut self, task_id: Uuid, new_status: TaskStatus) -> bool {
+        if let Some(idx) = self.tasks.iter().position(|t| t.id == task_id) {
+            let mut task = self.tasks.remove(idx);
+            task.status = new_status;
+
+            // Find the position after the last task with this status
+            let insert_pos = self.tasks.iter()
+                .rposition(|t| t.status == new_status)
+                .map(|pos| pos + 1)
+                .unwrap_or_else(|| {
+                    // No tasks with this status yet - find appropriate position
+                    // Status order: Planned, Queued, InProgress, NeedsInput, Review, Done
+                    // Insert before any tasks with a "later" status
+                    self.tasks.iter()
+                        .position(|t| t.status > new_status)
+                        .unwrap_or(self.tasks.len())
+                });
+
+            self.tasks.insert(insert_pos, task);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn needs_input_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsInput).count()
     }
@@ -525,7 +553,8 @@ impl Task {
 }
 
 /// Task status in the Kanban workflow
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Ordered by typical progression: Planned -> Queued -> InProgress -> ... -> Done
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaskStatus {
     #[default]
     Planned,

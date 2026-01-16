@@ -234,6 +234,11 @@ impl App {
             }
 
             Message::DeleteTask(task_id) => {
+                // Stop SDK session first (if running)
+                if let Some(ref client) = self.sidecar_client {
+                    let _ = client.stop_session(task_id);
+                }
+
                 // Get all necessary info before mutating (for worktree cleanup)
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -252,6 +257,9 @@ impl App {
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
+
+                    // Kill any detached tmux sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
 
                     // Remove worktree
                     if let Some(ref wt_path) = worktree_path {
@@ -317,6 +325,10 @@ impl App {
                             // Push to end (will be last in Done column)
                             project.tasks.push(task);
                         }
+                    } else if to_status == TaskStatus::Review {
+                        // Special handling for moving to Review: move to end of Review tasks
+                        // This ensures the first task to finish appears at the top
+                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                     } else if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.status = to_status;
                         if to_status == TaskStatus::InProgress {
@@ -473,8 +485,7 @@ impl App {
                         // Moving divider_above down: convert to divider_below of first task
                         // Only if the first task doesn't already have a divider_below
                         let can_move = self.model.active_project()
-                            .and_then(|p| p.tasks_by_status(status).first())
-                            .map(|t| !t.divider_below)
+                            .and_then(|p| p.tasks_by_status(status).first().map(|t| !t.divider_below))
                             .unwrap_or(false);
 
                         if can_move {
@@ -1200,6 +1211,11 @@ impl App {
             }
 
             Message::DiscardTask(task_id) => {
+                // Stop SDK session first (if running)
+                if let Some(ref client) = self.sidecar_client {
+                    let _ = client.stop_session(task_id);
+                }
+
                 // Get all necessary info before mutating
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -2514,14 +2530,16 @@ impl App {
                                     commands.push(Message::CompleteApplyTask(task_id));
                                 } else if has_queued {
                                     // Don't move to review - send the queued task instead
-                                    task.status = TaskStatus::Review;
+                                    // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                     // Don't play attention sound - we're continuing automatically
                                     commands.push(Message::SendQueuedTask { finished_task_id: task_id });
                                 } else {
                                     // Normal stop - move to review and notify
-                                    task.status = TaskStatus::Review;
+                                    // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project_name);
@@ -2546,8 +2564,9 @@ impl App {
                                         "Apply cancelled: Claude session ended during rebase.".to_string()
                                     )));
                                 }
-                                task.status = TaskStatus::Review;
+                                // Move to end of Review tasks so first-finished appears at top
                                 task.session_state = crate::model::ClaudeSessionState::Ended;
+                                project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                 project.needs_attention = true;
                                 notify::play_attention_sound();
                                 notify::set_attention_indicator(&project.name);
@@ -2798,8 +2817,10 @@ impl App {
                                 // Note: Both stopped and ended events may arrive - if stopped triggered
                                 // CompleteAcceptTask/CompleteUpdateTask/CompleteApplyTask which moved task, we must not reset it to Review
                                 if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
-                                    task.status = TaskStatus::Review;
+                                    // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    let task_id = task.id;
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
@@ -2808,8 +2829,10 @@ impl App {
                             SessionEventType::Ended => {
                                 task.log_activity("Session ended");
                                 if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
-                                    task.status = TaskStatus::Review;
+                                    // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Ended;
+                                    let task_id = task.id;
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
