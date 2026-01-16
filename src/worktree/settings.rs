@@ -211,12 +211,6 @@ pub fn merge_with_project_settings(
                     }]
                 }
             ],
-            "PreToolUse": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
-                }]
-            }],
             "UserPromptSubmit": [{
                 "hooks": [{
                     "type": "command",

@@ -2467,14 +2467,13 @@ impl App {
                                 notify::clear_attention_indicator();
                             }
                             "working" => {
+                                // PreToolUse signal - Claude is using a tool
+                                // Don't change status here - it's too noisy (fires on every tool use)
+                                // Status changes should come from UserPromptSubmit (input-provided)
+                                // which indicates the user actually gave new instructions
                                 task.log_activity("Working...");
-                                // Don't change status if task is Accepting/Updating (mid-rebase)
-                                if !was_accepting && !was_updating {
-                                    task.status = TaskStatus::InProgress;
-                                }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
-                                project.needs_attention = false;
-                                notify::clear_attention_indicator();
+                                // Don't clear attention or change status - user may just be viewing
                             }
                             _ => {}
                         }
