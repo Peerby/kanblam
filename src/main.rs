@@ -954,8 +954,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // Reset works on InProgress, NeedsInput, Review
-                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
+                        // Reset works on InProgress, NeedsInput, Review, Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
                             return vec![Message::ResetTask(task.id)];
                         }
                     }
@@ -1212,7 +1212,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
         // Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
                     Message::ResetTask(task.id),

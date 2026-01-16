@@ -593,6 +593,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" r ", key_style), Span::styled(" Move back to Review", label_style),
             ]));
+            lines.push(Line::from(vec![
+                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+            ]));
         }
     }
 

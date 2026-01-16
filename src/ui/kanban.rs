@@ -656,7 +656,9 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("d", key_style),
             Span::styled("el ", desc_style),
             Span::styled("r", key_style),
-            Span::styled("eview", desc_style),
+            Span::styled("eview ", desc_style),
+            Span::styled("x", key_style),
+            Span::styled("-reset", desc_style),
         ],
     }
 }
