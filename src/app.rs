@@ -1960,8 +1960,10 @@ impl App {
                                 task.session_mode = crate::model::SessionMode::SdkManaged;
                             }
                             SessionEventType::Stopped | SessionEventType::Ended => {
-                                // If task was accepting (rebase), don't change status - let CompleteAcceptTask handle it
-                                if !was_accepting {
+                                // If task was accepting (rebase) OR is already done, don't change status
+                                // Note: Both stopped and ended events may arrive - if stopped triggered
+                                // CompleteAcceptTask which moved task to Done, we must not reset it to Review
+                                if !was_accepting && task.status != TaskStatus::Done {
                                     task.status = TaskStatus::Review;
                                     task.session_state = if event.event_type == SessionEventType::Ended {
                                         crate::model::ClaudeSessionState::Ended
