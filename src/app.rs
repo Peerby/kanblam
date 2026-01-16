@@ -1458,7 +1458,8 @@ impl App {
                             report_lines.push("VERDICT: HAS UNCOMMITTED WORK".to_string());
                             report_lines.push("Worktree has changes that haven't been committed yet.".to_string());
                         } else {
-                            report_lines.push("VERDICT: NOT MERGED (no commits on branch)".to_string());
+                            report_lines.push("VERDICT: NO WORK DONE".to_string());
+                            report_lines.push("No commits on branch and no uncommitted changes.".to_string());
                         }
                         report_lines.push("".to_string());
                         report_lines.push("Press any key to close.".to_string());
