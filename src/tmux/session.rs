@@ -312,33 +312,71 @@ pub fn get_pane_size(target: &str) -> Result<(u16, u16)> {
     Ok((width, height))
 }
 
-/// Open a tmux popup with Claude running inside
-/// This uses tmux's native display-popup which handles terminal rendering natively
+/// Open Claude in a separate tmux session (non-blocking)
+/// Creates a new session for Claude and switches to it, allowing normal tmux navigation
 pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> Result<()> {
+    // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
+    let dir_name = worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("claude");
+
+    // Use full task-id suffix for uniqueness (e.g., "task-6cfe1853" -> "cl-6cfe1853")
+    // Strip "task-" prefix if present and use first 8 chars of UUID
+    let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
+        &stripped[..8.min(stripped.len())]
+    } else if dir_name.len() > 8 {
+        &dir_name[..8]
+    } else {
+        dir_name
+    };
+    let session_name = format!("cl-{}", short_name);
+
     // Build claude command - resume if we have a valid session_id
     let claude_cmd = match session_id {
         Some(id) => format!("claude --resume {}", id),
         None => "claude".to_string(),
     };
 
-    // Use login shell to get user's PATH (so `claude` command is found)
-    // Add pause after claude exits so user can see any error messages
-    let shell_cmd = format!(
-        "cd '{}' && {}; echo ''; echo 'Press any key to close...'; read -n 1",
-        worktree_path.to_string_lossy(),
-        claude_cmd
-    );
+    // Check if session already exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", &session_name])
+        .output()?;
 
-    Command::new("tmux")
-        .args([
-            "display-popup",
-            "-E",           // Close popup when command exits
-            "-w", "95%",    // 95% width
-            "-h", "95%",    // 95% height
-            "-T", " Claude Interactive | /exit to close ",
-            "bash", "-l", "-c", &shell_cmd,
-        ])
-        .spawn()?;
+    if check.status.success() {
+        // Session exists, just switch to it
+        let _ = Command::new("tmux")
+            .args(["switch-client", "-t", &session_name])
+            .output();
+    } else {
+        // Create new detached session with Claude running
+        // Use login shell to get user's PATH (so `claude` command is found)
+        let shell_cmd = format!(
+            "cd '{}' && {}",
+            worktree_path.to_string_lossy(),
+            claude_cmd
+        );
+
+        let output = Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",  // detached
+                "-s", &session_name,
+                "-c", &worktree_path.to_string_lossy(),
+                "bash", "-l", "-c", &shell_cmd,
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create Claude session: {}", stderr));
+        }
+
+        // Switch to the new session
+        let _ = Command::new("tmux")
+            .args(["switch-client", "-t", &session_name])
+            .output();
+    }
 
     Ok(())
 }
