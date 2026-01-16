@@ -1,5 +1,5 @@
 use crate::message::Message;
-use crate::model::{AppModel, FocusArea, PendingAction, PendingConfirmation, Project, Task, TaskStatus};
+use crate::model::{AppModel, FocusArea, MainWorktreeOperation, PendingAction, PendingConfirmation, Project, Task, TaskStatus, SessionMode};
 use crate::notify;
 use crate::sidecar::SidecarClient;
 use anyhow::Result;
@@ -996,6 +996,14 @@ impl App {
                         return commands;
                     }
 
+                    // Try to acquire exclusive lock on main worktree
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Err(reason) = project.try_lock_main_worktree(task_id, MainWorktreeOperation::Accepting) {
+                            commands.push(Message::Error(reason));
+                            return commands;
+                        }
+                    }
+
                     // CRITICAL: Commit any uncommitted changes in the worktree FIRST
                     // This ensures we don't lose work that Claude did but didn't commit
                     if let Some(ref wt_path) = worktree_path {
@@ -1113,6 +1121,7 @@ impl App {
                                         task.status = TaskStatus::Review;
                                         task.session_state = crate::model::ClaudeSessionState::Paused;
                                     }
+                                    project.release_main_worktree_lock(task_id);
                                 }
                                 commands.push(Message::Error(
                                     "Rebase failed. Check the Claude session for errors.".to_string()
@@ -1125,6 +1134,7 @@ impl App {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                         task.status = TaskStatus::Review;
                                     }
+                                    project.release_main_worktree_lock(task_id);
                                 }
                                 commands.push(Message::Error(format!("Error verifying rebase: {}", e)));
                                 return commands;
@@ -1143,6 +1153,7 @@ impl App {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                         task.status = TaskStatus::Review;
                                     }
+                                    project.release_main_worktree_lock(task_id);
                                 }
                                 commands.push(Message::Error(format!(
                                     "Failed to commit worktree changes: {}. Changes preserved.",
@@ -1163,6 +1174,7 @@ impl App {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     task.status = TaskStatus::Review;
                                 }
+                                project.release_main_worktree_lock(task_id);
                             }
                             // Nothing to merge - ask if user wants to mark done and clean up anyway
                             commands.push(Message::ShowConfirmation {
@@ -1176,6 +1188,7 @@ impl App {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     task.status = TaskStatus::Review;
                                 }
+                                project.release_main_worktree_lock(task_id);
                             }
                             commands.push(Message::Error(format!("Failed to check for changes: {}", e)));
                             return commands;
@@ -1197,6 +1210,7 @@ impl App {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                 task.status = TaskStatus::Review;
                             }
+                            project.release_main_worktree_lock(task_id);
                         }
                         commands.push(Message::Error(format!(
                             "Merge failed: {}. Try accepting again or resolve manually.",
@@ -1238,6 +1252,8 @@ impl App {
                         if !project.needs_attention {
                             notify::clear_attention_indicator();
                         }
+                        // Release the lock - merge completed successfully
+                        project.release_main_worktree_lock(task_id);
                     }
 
                     commands.push(Message::SetStatusMessage(Some(
@@ -1636,6 +1652,14 @@ impl App {
                     return commands;
                 }
 
+                // Try to acquire exclusive lock on main worktree
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Err(reason) = project.try_lock_main_worktree(task_id, MainWorktreeOperation::Applying) {
+                        commands.push(Message::Error(reason));
+                        return commands;
+                    }
+                }
+
                 // Get task info and project dir
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -1658,6 +1682,9 @@ impl App {
                     let branch_name = match git_branch {
                         Some(ref b) => b.clone(),
                         None => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
                             commands.push(Message::Error(
                                 "Task has no git branch. Was it started before worktree support?".to_string()
                             ));
@@ -1674,6 +1701,9 @@ impl App {
                         .unwrap_or(false);
 
                     if !branch_exists {
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.release_main_worktree_lock(task_id);
+                        }
                         commands.push(Message::Error(format!(
                             "Branch '{}' no longer exists. Task data is stale.",
                             branch_name
@@ -1689,6 +1719,9 @@ impl App {
                                 // Changes committed (or nothing to commit)
                             }
                             Err(e) => {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
                                 commands.push(Message::Error(format!(
                                     "Failed to commit worktree changes: {}. Changes preserved in worktree.",
                                     e
@@ -1705,6 +1738,8 @@ impl App {
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = Some(task_id);
                                 project.applied_stash_ref = stash_ref;
+                                // Release lock - apply completed successfully
+                                project.release_main_worktree_lock(task_id);
                             }
                             commands.push(Message::SetStatusMessage(Some(
                                 "✓ Changes applied to main worktree. Press 'u' to unapply.".to_string()
@@ -1721,6 +1756,7 @@ impl App {
                                     match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
                                         Ok(true) => {
                                             // Fast rebase succeeded, now try apply again
+                                            // Keep lock - CompleteApplyTask will release it
                                             commands.push(Message::SetStatusMessage(Some(
                                                 "✓ Fast rebase succeeded, applying...".to_string()
                                             )));
@@ -1728,6 +1764,7 @@ impl App {
                                         }
                                         Ok(false) => {
                                             // Conflicts - need Claude to resolve
+                                            // Keep lock - will be released when apply session completes
                                             commands.push(Message::SetStatusMessage(Some(
                                                 "Conflicts detected, starting smart apply...".to_string()
                                             )));
@@ -1735,6 +1772,7 @@ impl App {
                                         }
                                         Err(e) => {
                                             // Error during rebase - try Claude
+                                            // Keep lock - will be released when apply session completes
                                             commands.push(Message::SetStatusMessage(Some(
                                                 format!("Fast rebase failed ({}), trying smart apply...", e)
                                             )));
@@ -1742,12 +1780,18 @@ impl App {
                                         }
                                     }
                                 } else {
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        project.release_main_worktree_lock(task_id);
+                                    }
                                     commands.push(Message::Error(
                                         "Cannot apply: worktree path not found.".to_string()
                                     ));
                                 }
                             } else {
                                 // No divergence but apply still failed - might be uncommitted changes
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
                                 commands.push(Message::Error(
                                     "Failed to apply changes. Ensure main worktree is clean.".to_string()
                                 ));
@@ -3396,6 +3440,9 @@ impl App {
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                             task.accepting_started_at = None;
                                         }
+
+                                        // Release lock - apply completed successfully
+                                        project.release_main_worktree_lock(task_id);
                                     }
 
                                     commands.push(Message::SetStatusMessage(Some(
@@ -3410,6 +3457,7 @@ impl App {
                                             task.status = TaskStatus::Review;
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                         }
+                                        project.release_main_worktree_lock(task_id);
                                     }
                                     commands.push(Message::Error(format!(
                                         "Apply failed even after rebase: {}",
@@ -3428,6 +3476,7 @@ impl App {
                                         task.session_state = crate::model::ClaudeSessionState::Paused;
                                     }
                                 }
+                                project.release_main_worktree_lock(task_id);
                             }
                             commands.push(Message::Error(
                                 "Rebase failed. Check the Claude session for errors.".to_string()
@@ -3440,6 +3489,7 @@ impl App {
                                         task.status = TaskStatus::Review;
                                     }
                                 }
+                                project.release_main_worktree_lock(task_id);
                             }
                             commands.push(Message::Error(format!("Error verifying rebase: {}", e)));
                         }

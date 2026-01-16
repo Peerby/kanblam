@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::model::MainWorktreeOperation;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -111,6 +112,28 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(
             format!(" ({} active Claude session{})", active_count, if active_count == 1 { "" } else { "s" }),
             Style::default().fg(Color::Green),
+        ));
+    }
+
+    // Show main worktree lock indicator if locked
+    if let Some((task_id, operation, task_title)) = project.main_worktree_lock_info() {
+        let op_text = match operation {
+            MainWorktreeOperation::Accepting => "accepting",
+            MainWorktreeOperation::Applying => "applying",
+        };
+        // Format as "[abc123] title trunc.."
+        let short_id = &task_id.to_string()[..6];
+        let truncated_title: String = if task_title.len() > 15 {
+            format!("{}..", &task_title[..13])
+        } else {
+            task_title
+        };
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!("{} [{}] {}", op_text, short_id, truncated_title),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow),
         ));
     }
 

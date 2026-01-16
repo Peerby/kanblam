@@ -149,6 +149,22 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // Check if this task is the one being feedbacked
                     let is_feedback_task = app.model.ui_state.feedback_task_id == Some(task.id);
 
+                    // Check if this task is blocked (in Review but another task has lock/applied)
+                    let is_blocked = if status == TaskStatus::Review {
+                        // Check if another task's changes are applied
+                        let blocked_by_applied = project.applied_task_id
+                            .map(|id| id != task.id)
+                            .unwrap_or(false);
+                        // Check if another task has the worktree lock
+                        let blocked_by_lock = project.main_worktree_lock
+                            .as_ref()
+                            .map(|lock| lock.task_id != task.id)
+                            .unwrap_or(false);
+                        blocked_by_applied || blocked_by_lock
+                    } else {
+                        false
+                    };
+
                     // Styles for different parts of the task line
                     // Title gets the main style, brackets are very dim, code is dim
                     let (title_style, bracket_style, code_style) = if is_task_selected {
@@ -162,6 +178,13 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         (
                             Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
                             Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::DarkGray),
+                        )
+                    } else if is_blocked {
+                        // Dimmed style for blocked tasks
+                        (
+                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
                             Style::default().fg(Color::DarkGray),
                         )
                     } else {
@@ -419,6 +442,23 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         let hints = if let Some(ref task) = selected_task {
             if task.status == TaskStatus::Accepting {
                 get_accepting_hints(task)
+            } else if status == TaskStatus::Review {
+                // Get context for review hints
+                let project = app.model.active_project();
+                let has_applied = project.and_then(|p| p.applied_task_id).is_some();
+                let is_this_task_applied = project
+                    .and_then(|p| p.applied_task_id)
+                    .map(|id| id == task.id)
+                    .unwrap_or(false);
+                let is_blocked = project
+                    .and_then(|p| p.applied_task_id)
+                    .map(|id| id != task.id)
+                    .unwrap_or(false)
+                    || project
+                        .and_then(|p| p.main_worktree_lock.as_ref())
+                        .map(|lock| lock.task_id != task.id)
+                        .unwrap_or(false);
+                get_review_hints(has_applied, is_this_task_applied, is_blocked)
             } else {
                 get_column_hints(status)
             }
@@ -687,6 +727,45 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("-reset", desc_style),
         ],
     }
+}
+
+/// Get context-aware hints for the Review column
+/// - has_applied: true if any task has changes applied to main
+/// - is_this_task_applied: true if the selected task is the one with applied changes
+/// - is_blocked: true if this task can't be merged (another task has lock/applied)
+fn get_review_hints(has_applied: bool, is_this_task_applied: bool, is_blocked: bool) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+
+    let mut hints = Vec::new();
+
+    // Show apply only if nothing is applied
+    if !has_applied {
+        hints.push(Span::styled("a", key_style));
+        hints.push(Span::styled("pply ", desc_style));
+    }
+
+    // Show unapply only if this task is applied
+    if is_this_task_applied {
+        hints.push(Span::styled("u", key_style));
+        hints.push(Span::styled("napply ", desc_style));
+    }
+
+    // Show merge only if not blocked
+    if !is_blocked {
+        hints.push(Span::styled("m", key_style));
+        hints.push(Span::styled("erge ", desc_style));
+    }
+
+    // Always show discard, check, feedback
+    hints.push(Span::styled("d", key_style));
+    hints.push(Span::styled("iscard ", desc_style));
+    hints.push(Span::styled("c", key_style));
+    hints.push(Span::styled("heck ", desc_style));
+    hints.push(Span::styled("f", key_style));
+    hints.push(Span::styled("eedback", desc_style));
+
+    hints
 }
 
 /// Get hints for a task in Accepting state (merge/rebase in progress)

@@ -192,6 +192,31 @@ pub struct Project {
     /// Stash ref created when applying task changes (to restore original work on unapply)
     #[serde(default)]
     pub applied_stash_ref: Option<String>,
+
+    // Main worktree lock state (prevents concurrent git operations)
+    /// Task ID that currently has exclusive access to the main worktree
+    /// Set during Accept/Apply operations that modify main's git state
+    /// NOT persisted - lock is transient and resets on app restart
+    #[serde(skip)]
+    pub main_worktree_lock: Option<MainWorktreeLock>,
+}
+
+/// Represents an exclusive lock on the main worktree for git operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainWorktreeLock {
+    /// The task that holds the lock
+    pub task_id: Uuid,
+    /// What operation is being performed
+    pub operation: MainWorktreeOperation,
+}
+
+/// Operations that require exclusive access to the main worktree
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MainWorktreeOperation {
+    /// Merging task changes into main (Accept flow)
+    Accepting,
+    /// Applying task changes for testing (Apply flow)
+    Applying,
 }
 
 impl Project {
@@ -207,7 +232,83 @@ impl Project {
             hooks_installed: false,
             applied_task_id: None,
             applied_stash_ref: None,
+            main_worktree_lock: None,
         }
+    }
+
+    /// Format a task reference for display in messages: "[abc123] title truncat..."
+    /// Short ID (6 chars) + truncated title (max 20 chars)
+    fn format_task_ref(&self, task_id: Uuid) -> String {
+        let short_id = &task_id.to_string()[..6];
+        let title = self.tasks.iter()
+            .find(|t| t.id == task_id)
+            .map(|t| {
+                if t.title.len() > 20 {
+                    format!("{}..", &t.title[..18])
+                } else {
+                    t.title.clone()
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        format!("[{}] {}", short_id, title)
+    }
+
+    /// Try to acquire exclusive lock on main worktree for a git operation.
+    /// Returns Ok(()) if lock acquired, Err with reason if another operation is in progress.
+    pub fn try_lock_main_worktree(&mut self, task_id: Uuid, operation: MainWorktreeOperation) -> Result<(), String> {
+        // Check if changes are applied (blocks accept operations)
+        if operation == MainWorktreeOperation::Accepting {
+            if let Some(applied_id) = self.applied_task_id {
+                if applied_id != task_id {
+                    let task_ref = self.format_task_ref(applied_id);
+                    return Err(format!(
+                        "Cannot accept: changes from {} are applied. Press 'u' to unapply first.",
+                        task_ref
+                    ));
+                }
+            }
+        }
+
+        // Check existing lock
+        if let Some(ref lock) = self.main_worktree_lock {
+            if lock.task_id == task_id {
+                // Same task already has lock - that's fine (re-entry)
+                return Ok(());
+            }
+            let task_ref = self.format_task_ref(lock.task_id);
+            let op_name = match lock.operation {
+                MainWorktreeOperation::Accepting => "accepting",
+                MainWorktreeOperation::Applying => "applying",
+            };
+            return Err(format!(
+                "Cannot proceed: currently {} {}. Wait for it to complete.",
+                op_name, task_ref
+            ));
+        }
+
+        // Acquire the lock
+        self.main_worktree_lock = Some(MainWorktreeLock { task_id, operation });
+        Ok(())
+    }
+
+    /// Release the main worktree lock. Only the task holding the lock can release it.
+    pub fn release_main_worktree_lock(&mut self, task_id: Uuid) {
+        if let Some(ref lock) = self.main_worktree_lock {
+            if lock.task_id == task_id {
+                self.main_worktree_lock = None;
+            }
+        }
+    }
+
+    /// Check if main worktree is locked and by whom
+    pub fn main_worktree_lock_info(&self) -> Option<(Uuid, MainWorktreeOperation, String)> {
+        self.main_worktree_lock.as_ref().map(|lock| {
+            let task_title = self.tasks.iter()
+                .find(|t| t.id == lock.task_id)
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| "unknown task".to_string());
+            (lock.task_id, lock.operation, task_title)
+        })
     }
 
     /// Get a URL-safe slug for the project name
