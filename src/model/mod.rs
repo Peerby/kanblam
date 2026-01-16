@@ -329,10 +329,10 @@ impl Project {
 
     pub fn tasks_by_status(&self, status: TaskStatus) -> Vec<&Task> {
         // Return tasks in Vec order - allows manual reordering with +/-
-        // Accepting and Updating tasks appear in the Review column
+        // Accepting, Updating, and Applying tasks appear in the Review column
         self.tasks.iter().filter(|t| {
             t.status == status ||
-            (status == TaskStatus::Review && (t.status == TaskStatus::Accepting || t.status == TaskStatus::Updating))
+            (status == TaskStatus::Review && (t.status == TaskStatus::Accepting || t.status == TaskStatus::Updating || t.status == TaskStatus::Applying))
         }).collect()
     }
 

@@ -220,10 +220,11 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     };
 
                     // Add spinner for in-progress tasks, pulsing indicator for needs-input,
-                    // merge animation for accepting tasks
+                    // merge animation for accepting tasks, apply animation for applying tasks
                     let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                     let pulse_frames = ['◐', '◓', '◑', '◒'];
                     let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
+                    let apply_frames = ['⇣', '↓', '⬇', '↓']; // Downward arrow animation for applying
                     let prefix = match task.status {
                         TaskStatus::InProgress => {
                             let frame = app.model.ui_state.animation_frame % spinner_frames.len();
@@ -236,6 +237,10 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         TaskStatus::Accepting => {
                             let frame = app.model.ui_state.animation_frame % merge_frames.len();
                             format!("{} ", merge_frames[frame])
+                        }
+                        TaskStatus::Applying => {
+                            let frame = app.model.ui_state.animation_frame % apply_frames.len();
+                            format!("{} ", apply_frames[frame])
                         }
                         _ => String::new(),
                     };
