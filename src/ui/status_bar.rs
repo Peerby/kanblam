@@ -115,24 +115,13 @@ fn get_current_branch(working_dir: &std::path::Path) -> Option<String> {
 fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
     let review_count = app.model.projects_needing_attention();
 
-    // Check if active project has hooks installed and up to date
-    let hooks_status = app.model.active_project()
-        .map(|p| if p.hooks_installed { "" } else { " [hooks missing/outdated]" })
-        .unwrap_or("");
-
     let summary = if review_count > 0 {
         Span::styled(
-            format!(" Review: {}{} ", review_count, hooks_status),
+            format!(" Review: {} ", review_count),
             Style::default()
                 .fg(Color::White)
                 .bg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
-        )
-    } else if !hooks_status.is_empty() {
-        Span::styled(
-            format!(" {}- Ctrl-R to install ", hooks_status.trim()),
-            Style::default()
-                .fg(Color::Yellow),
         )
     } else {
         Span::styled(

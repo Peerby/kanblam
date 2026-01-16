@@ -181,7 +181,6 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     #[serde(skip)]
     pub captured_output: String,
-    #[serde(skip)]
     pub hooks_installed: bool,
 }
 

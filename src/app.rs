@@ -1876,32 +1876,18 @@ impl App {
                 if let Some(confirmation) = self.model.ui_state.pending_confirmation.take() {
                     match confirmation.action {
                         PendingAction::InstallHooks => {
-                            // Install hooks for the active project only
+                            // Hook installation has been removed - mark as installed
                             if let Some(project) = self.model.active_project_mut() {
-                                let name = project.name.clone();
-                                if let Err(e) = crate::hooks::install_hooks(&project.working_dir) {
-                                    commands.push(Message::Error(format!(
-                                        "Failed to install hooks for {}: {}",
-                                        name, e
-                                    )));
-                                } else {
-                                    project.hooks_installed = true;
-                                    // After installing, ask if user wants to reload
-                                    commands.push(Message::ShowConfirmation {
-                                        message: format!(
-                                            "Hooks installed for '{}'! Reload Claude now to activate? (y/n)\n\
-                                             Manual: wait for Claude to be idle, then /exit and run 'claude --continue'",
-                                            name
-                                        ),
-                                        action: PendingAction::ReloadClaude,
-                                    });
-                                }
+                                project.hooks_installed = true;
                             }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Hooks are no longer required.".to_string()
+                            )));
                         }
                         PendingAction::ReloadClaude => {
-                            // Hooks installed - show manual reload instructions
+                            // No-op: hooks no longer required
                             commands.push(Message::SetStatusMessage(Some(
-                                "Hooks installed! To reload: /exit in Claude, then run 'claude --continue'".to_string()
+                                "No reload needed.".to_string()
                             )));
                         }
                         PendingAction::DeleteTask(task_id) => {

@@ -799,11 +799,6 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Reload Claude hooks (Ctrl-R) - install hooks for active project
-        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            vec![Message::ReloadClaudeHooks]
-        }
-
         // Enter input mode
         KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
 
