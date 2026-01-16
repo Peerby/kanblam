@@ -169,9 +169,33 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
 
-    // Show existing projects
+    let is_focused = app.model.ui_state.focus == FocusArea::ProjectTabs;
+    let selected_tab_idx = app.model.ui_state.selected_project_tab_idx;
+    let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+    let num_projects = app.model.projects.len();
+
+    // First: Show +project button (index 0 in tab selection)
+    if num_projects < 9 {
+        let is_tab_selected = is_focused && selected_tab_idx == 0;
+        let style = if is_tab_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        // Show "+project" when no projects exist, just "+" otherwise
+        let label = if num_projects == 0 { " [!] +project " } else { " [!] + " };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+    }
+
+    // Show existing projects (index 1+ in tab selection)
     for (idx, project) in app.model.projects.iter().enumerate() {
         let is_active = idx == app.model.active_project_idx;
+        // Tab index is idx + 1 (since 0 is +project)
+        let is_tab_selected = is_focused && selected_tab_idx == idx + 1;
 
         // Build project name with attention indicator
         let name = if project.needs_attention {
@@ -180,7 +204,13 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
             project.name.clone()
         };
 
-        let style = if is_active {
+        let style = if is_tab_selected {
+            // Highlighted selection (when navigating with arrows in ProjectTabs focus)
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if is_active {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
@@ -193,26 +223,15 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Gray)
         };
 
-        // Add keyboard shortcut hint (Shift+1-0 for first 10 projects)
-        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
-        let tab_text = if idx < 10 {
-            format!(" [{}] {} ", shift_chars[idx], name)
+        // Keyboard shortcut: @ for first project, # for second, etc. (! is for +project)
+        let tab_text = if idx + 1 < 10 {
+            format!(" [{}] {} ", shift_chars[idx + 1], name)
         } else {
             format!(" {} ", name)
         };
 
         spans.push(Span::styled(tab_text, style));
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-    }
-
-    // Show hint for next available slot (if under 9 projects)
-    let num_projects = app.model.projects.len();
-    if num_projects < 9 {
-        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
-        spans.push(Span::styled(
-            format!(" [{}] + ", shift_chars[num_projects]),
-            Style::default().fg(Color::DarkGray),
-        ));
     }
 
     let bar = Paragraph::new(Line::from(spans));
@@ -227,9 +246,33 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
 
-    // Show existing projects
+    let is_focused = app.model.ui_state.focus == FocusArea::ProjectTabs;
+    let selected_tab_idx = app.model.ui_state.selected_project_tab_idx;
+    let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+    let num_projects = app.model.projects.len();
+
+    // First: Show +project button (index 0 in tab selection)
+    if num_projects < 9 {
+        let is_tab_selected = is_focused && selected_tab_idx == 0;
+        let style = if is_tab_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        // Show "+project" when no projects exist, just "+" otherwise
+        let label = if num_projects == 0 { " [!] +project " } else { " [!] + " };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+    }
+
+    // Show existing projects (index 1+ in tab selection)
     for (idx, project) in app.model.projects.iter().enumerate() {
         let is_active = idx == app.model.active_project_idx;
+        // Tab index is idx + 1 (since 0 is +project)
+        let is_tab_selected = is_focused && selected_tab_idx == idx + 1;
 
         // Build project name with attention indicator
         let name = if project.needs_attention {
@@ -238,7 +281,13 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
             project.name.clone()
         };
 
-        let style = if is_active {
+        let style = if is_tab_selected {
+            // Highlighted selection (when navigating with arrows in ProjectTabs focus)
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if is_active {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
@@ -251,26 +300,15 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Gray)
         };
 
-        // Add keyboard shortcut hint (Shift+1-0 for first 10 projects)
-        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
-        let tab_text = if idx < 10 {
-            format!(" [{}] {} ", shift_chars[idx], name)
+        // Keyboard shortcut: @ for first project, # for second, etc. (! is for +project)
+        let tab_text = if idx + 1 < 10 {
+            format!(" [{}] {} ", shift_chars[idx + 1], name)
         } else {
             format!(" {} ", name)
         };
 
         spans.push(Span::styled(tab_text, style));
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-    }
-
-    // Show hint for next available slot (if under 9 projects)
-    let num_projects = app.model.projects.len();
-    if num_projects < 9 {
-        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
-        spans.push(Span::styled(
-            format!(" [{}] + ", shift_chars[num_projects]),
-            Style::default().fg(Color::DarkGray),
-        ));
     }
 
     // Calculate remaining space for branding

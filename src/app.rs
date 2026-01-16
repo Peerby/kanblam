@@ -3758,6 +3758,12 @@ impl App {
             }
 
             Message::NavigateUp => {
+                // Handle ProjectTabs navigation separately
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    // Up from ProjectTabs does nothing (can't go higher)
+                    return vec![];
+                }
+
                 // Gather info first to avoid borrow issues
                 let current_column = self.model.ui_state.selected_column;
                 let above_status = match current_column {
@@ -3792,6 +3798,25 @@ impl App {
                         tasks.first().map(|t| t.divider_above)
                     })
                     .unwrap_or(false);
+
+                // Check if we're at the top of Planned or Queued and should move to ProjectTabs
+                let is_top_row = matches!(current_column, TaskStatus::Planned | TaskStatus::Queued);
+                let at_top_of_column = match idx {
+                    None => true, // Empty column
+                    Some(0) if self.model.ui_state.selected_is_divider_above => true,
+                    Some(0) if !first_has_divider_above && !self.model.ui_state.selected_is_divider => true,
+                    _ => false,
+                };
+
+                if is_top_row && at_top_of_column {
+                    // Move to ProjectTabs
+                    self.model.ui_state.focus = FocusArea::ProjectTabs;
+                    // Set selected tab based on current column:
+                    // Planned = left side, select based on active project
+                    // For now, select the active project + 1 (since 0 = +project button)
+                    self.model.ui_state.selected_project_tab_idx = self.model.active_project_idx + 1;
+                    return vec![];
+                }
 
                 if let Some(idx) = idx {
                     // If we're on divider_above, move to column above
@@ -3868,6 +3893,23 @@ impl App {
             }
 
             Message::NavigateDown => {
+                // Handle ProjectTabs navigation - down returns to KanbanBoard
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                    // Ensure we're in one of the top row columns (Planned or Queued)
+                    if !matches!(self.model.ui_state.selected_column, TaskStatus::Planned | TaskStatus::Queued) {
+                        self.model.ui_state.selected_column = TaskStatus::Planned;
+                    }
+                    // Select the first item in the column
+                    let tasks_len = self.model.active_project()
+                        .map(|p| p.tasks_by_status(self.model.ui_state.selected_column).len())
+                        .unwrap_or(0);
+                    self.model.ui_state.selected_task_idx = if tasks_len > 0 { Some(0) } else { None };
+                    self.model.ui_state.selected_is_divider = false;
+                    self.model.ui_state.selected_is_divider_above = false;
+                    return vec![];
+                }
+
                 // Gather info first to avoid borrow issues
                 let (tasks_len, current_idx, current_has_divider, below_status, below_tasks_len, needs_sync) = {
                     if let Some(project) = self.model.active_project() {
@@ -3979,6 +4021,15 @@ impl App {
             }
 
             Message::NavigateLeft => {
+                // Handle ProjectTabs navigation
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    // Move left in project tabs (0 = +project, 1+ = projects)
+                    if self.model.ui_state.selected_project_tab_idx > 0 {
+                        self.model.ui_state.selected_project_tab_idx -= 1;
+                    }
+                    return vec![];
+                }
+
                 // Linear navigation through all columns: Planned -> Queued -> InProgress -> NeedsInput -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {
@@ -3997,6 +4048,17 @@ impl App {
             }
 
             Message::NavigateRight => {
+                // Handle ProjectTabs navigation
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    // Move right in project tabs (0 = +project, 1..=n = projects)
+                    // Max index is num_projects (for projects 1..num_projects, and +project at 0)
+                    let max_idx = self.model.projects.len();
+                    if self.model.ui_state.selected_project_tab_idx < max_idx {
+                        self.model.ui_state.selected_project_tab_idx += 1;
+                    }
+                    return vec![];
+                }
+
                 // Linear navigation through all columns: Planned -> Queued -> InProgress -> NeedsInput -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {

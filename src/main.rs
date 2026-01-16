@@ -848,8 +848,33 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Enter input mode
         KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
 
-        // View task details (Enter opens task preview modal)
+        // View task details (Enter opens task preview modal) or select project tab
         KeyCode::Enter => {
+            // Handle ProjectTabs selection
+            if app.model.ui_state.focus == FocusArea::ProjectTabs {
+                let selected_idx = app.model.ui_state.selected_project_tab_idx;
+                if selected_idx == 0 {
+                    // 0 = +project button - open the dialog
+                    // Find the next available slot (for consistency with existing behavior)
+                    let num_projects = app.model.projects.len();
+                    if num_projects < 9 {
+                        return vec![Message::ShowOpenProjectDialog { slot: num_projects }];
+                    }
+                    return vec![];
+                } else {
+                    // 1+ = actual projects (idx 1 = project 0, etc.)
+                    let project_idx = selected_idx - 1;
+                    if project_idx < app.model.projects.len() {
+                        // Return to kanban board after switching
+                        return vec![
+                            Message::SwitchProject(project_idx),
+                            Message::FocusChanged(FocusArea::KanbanBoard),
+                        ];
+                    }
+                    return vec![];
+                }
+            }
+
             // Only show preview if a task is selected (not a divider)
             if app.model.ui_state.selected_task_idx.is_some()
                 && !app.model.ui_state.selected_is_divider
@@ -1068,18 +1093,25 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
         KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],
 
-        // Project switching (Shift+1-9: !@#$%^&*() ) or open new project dialog
-        KeyCode::Char(c) if "!@#$%^&*(".contains(c) => {
-            let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
+        // Project switching (Shift+1-9: !@#$%^&*() )
+        // ! = open new project dialog, @=project 0, #=project 1, etc.
+        KeyCode::Char('!') => {
+            // Open new project dialog (if under 9 projects)
+            let num_projects = app.model.projects.len();
+            if num_projects < 9 {
+                vec![Message::ShowOpenProjectDialog { slot: num_projects }]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::Char(c) if "@#$%^&*(".contains(c) => {
+            let shift_chars = ['@', '#', '$', '%', '^', '&', '*', '('];
             let idx = shift_chars.iter().position(|&ch| ch == c).unwrap();
             if idx < app.model.projects.len() {
                 // Switch to existing project
                 vec![Message::SwitchProject(idx)]
-            } else if idx == app.model.projects.len() && idx < 9 {
-                // Open new project dialog for the next available slot
-                vec![Message::ShowOpenProjectDialog { slot: idx }]
             } else {
-                // Slot not available (either gap in numbering or max reached)
+                // Project doesn't exist at this slot
                 vec![]
             }
         }

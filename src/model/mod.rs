@@ -677,6 +677,11 @@ pub struct UiState {
     /// Tick count when the app started (used to decay the navigation hints after ~10 seconds)
     /// None means hints have already decayed or should not be shown
     pub startup_hint_until_tick: Option<usize>,
+
+    // Project tabs navigation
+    /// Selected index in project tabs when focus is ProjectTabs
+    /// 0 = "+project" button, 1+ = project indices
+    pub selected_project_tab_idx: usize,
 }
 
 /// State for the interactive Claude terminal modal
@@ -748,6 +753,7 @@ impl Default for UiState {
             logo_shimmer_frame: 0,
             // Show startup hints for first ~10 seconds (100 ticks at 100ms each)
             startup_hint_until_tick: Some(100),
+            selected_project_tab_idx: 0,
         }
     }
 }
