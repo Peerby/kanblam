@@ -825,6 +825,16 @@ impl App {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
+                    // Commit any uncommitted changes on main first
+                    // This ensures merge_branch has a clean working directory
+                    if let Err(e) = crate::worktree::commit_main_changes(&project_dir) {
+                        commands.push(Message::Error(format!(
+                            "Failed to commit main changes: {}",
+                            e
+                        )));
+                        return commands;
+                    }
+
                     // Merge branch to main
                     if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
                         commands.push(Message::Error(format!(
@@ -908,6 +918,26 @@ impl App {
                                 )));
                                 return commands;
                             }
+                        }
+                    }
+
+                    // Commit any uncommitted changes on main BEFORE checking rebase
+                    // This ensures the worktree properly detects it needs to integrate
+                    // with main's latest state (including uncommitted work)
+                    match crate::worktree::commit_main_changes(&project_dir) {
+                        Ok(true) => {
+                            // Main had uncommitted changes that are now committed
+                            // The rebase check below will detect the worktree is behind
+                        }
+                        Ok(false) => {
+                            // Nothing to commit on main, that's fine
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!(
+                                "Failed to commit main changes: {}",
+                                e
+                            )));
+                            return commands;
                         }
                     }
 
@@ -2476,11 +2506,15 @@ impl App {
                 // Get the session_id and worktree_path from the task first (immutable borrow)
                 let task_info = self.model.active_project().and_then(|project| {
                     project.tasks.iter().find(|t| t.id == task_id)
-                        .map(|task| (task.claude_session_id.clone(), task.worktree_path.clone()))
+                        .and_then(|task| {
+                            task.claude_session_id.clone().and_then(|sid| {
+                                task.worktree_path.clone().map(|wt| (sid, wt))
+                            })
+                        })
                 });
 
                 // Resume the SDK session via sidecar
-                if let Some((Some(session_id), Some(worktree_path))) = task_info {
+                if let Some((session_id, worktree_path)) = task_info {
                     if let Some(ref client) = self.sidecar_client {
                         match client.resume_session(task_id, &session_id, &worktree_path, None) {
                             Ok(new_session_id) => {
@@ -2511,8 +2545,8 @@ impl App {
                         commands.push(Message::Error("Cannot resume: sidecar not connected".to_string()));
                     }
                 } else {
-                    // No session to resume
-                    commands.push(Message::Error("Cannot resume: no session ID found".to_string()));
+                    // No session or worktree path to resume
+                    commands.push(Message::Error("Cannot resume: no session ID or worktree path found".to_string()));
                 }
             }
 

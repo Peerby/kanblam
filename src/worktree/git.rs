@@ -195,55 +195,76 @@ pub fn has_changes_to_merge(project_dir: &PathBuf, task_id: Uuid) -> Result<bool
     Ok(!log.trim().is_empty())
 }
 
-/// Merge a task branch into the base branch (squash merge)
-/// Handles dirty working directory by stashing local changes first
-pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
-    let branch_name = format!("claude/{}", task_id);
-
-    // Check if there are local changes that need to be stashed
+/// Commit any uncommitted changes on main branch
+/// Returns Ok(true) if changes were committed, Ok(false) if nothing to commit
+/// This should be called before checking needs_rebase to ensure the worktree
+/// properly detects it needs to integrate with main's latest state
+pub fn commit_main_changes(project_dir: &PathBuf) -> Result<bool> {
+    // Check if there are local changes
     let status_check = Command::new("git")
         .current_dir(project_dir)
         .args(["status", "--porcelain"])
         .output()?;
 
-    let has_local_changes = !String::from_utf8_lossy(&status_check.stdout).trim().is_empty();
+    let status_output = String::from_utf8_lossy(&status_check.stdout);
+    if status_output.trim().is_empty() {
+        return Ok(false); // Nothing to commit
+    }
 
-    // Stash local changes if any
-    if has_local_changes {
-        let stash_output = Command::new("git")
-            .current_dir(project_dir)
-            .args(["stash", "push", "-m", "kanclaude: auto-stash before merge"])
-            .output()?;
+    // Stage all changes
+    let add_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["add", "-A"])
+        .output()?;
 
-        if !stash_output.status.success() {
-            let stderr = String::from_utf8_lossy(&stash_output.stderr);
-            return Err(anyhow!("Failed to stash local changes: {}", stderr));
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        return Err(anyhow!("Failed to stage changes on main: {}", stderr));
+    }
+
+    // Commit with a WIP message
+    let commit_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["commit", "-m", "WIP: uncommitted changes (auto-committed before task merge)"])
+        .output()?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        // Check if it's just "nothing to commit"
+        if stderr.contains("nothing to commit") ||
+           String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit") {
+            return Ok(false);
         }
+        return Err(anyhow!("Failed to commit changes on main: {}", stderr));
+    }
+
+    Ok(true)
+}
+
+/// Merge a task branch into the base branch (squash merge)
+/// Requires clean working directory - call commit_main_changes first if needed
+pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
+    let branch_name = format!("claude/{}", task_id);
+
+    // Verify working directory is clean
+    // Caller should have called commit_main_changes() first
+    let status_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    if !String::from_utf8_lossy(&status_check.stdout).trim().is_empty() {
+        return Err(anyhow!(
+            "Working directory is not clean. Commit or stash changes before merging."
+        ));
     }
 
     // Perform squash merge
-    let merge_result = Command::new("git")
+    let output = Command::new("git")
         .current_dir(project_dir)
         .args(["merge", "--squash", &branch_name])
-        .output();
-
-    // Helper to restore stash on error
-    let restore_stash = |project_dir: &PathBuf, had_changes: bool| {
-        if had_changes {
-            let _ = Command::new("git")
-                .current_dir(project_dir)
-                .args(["stash", "pop"])
-                .output();
-        }
-    };
-
-    let output = match merge_result {
-        Ok(o) => o,
-        Err(e) => {
-            restore_stash(project_dir, has_local_changes);
-            return Err(anyhow!("Failed to run merge: {}", e));
-        }
-    };
+        .output()
+        .context("Failed to run merge")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -252,7 +273,6 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
             .current_dir(project_dir)
             .args(["merge", "--abort"])
             .output();
-        restore_stash(project_dir, has_local_changes);
         return Err(anyhow!(
             "Merge failed (conflicts?): {}. Resolve in {} and commit manually.",
             stderr,
@@ -276,26 +296,7 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            restore_stash(project_dir, has_local_changes);
             return Err(anyhow!("Failed to commit merge: {}", stderr));
-        }
-    }
-
-    // Restore stashed changes
-    if has_local_changes {
-        let pop_output = Command::new("git")
-            .current_dir(project_dir)
-            .args(["stash", "pop"])
-            .output()?;
-
-        if !pop_output.status.success() {
-            // Stash pop might fail due to conflicts with merged changes
-            // This is expected - user will need to resolve manually
-            let stderr = String::from_utf8_lossy(&pop_output.stderr);
-            return Err(anyhow!(
-                "Merge committed but stash pop had conflicts: {}. Resolve manually with 'git stash pop'.",
-                stderr
-            ));
         }
     }
 
