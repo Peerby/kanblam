@@ -190,7 +190,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // merge animation for accepting tasks
                     let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                     let pulse_frames = ['◐', '◓', '◑', '◒'];
-                    let merge_frames = ['⟳', '↻', '⟲', '↺'];
+                    let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
                     let prefix = match task.status {
                         TaskStatus::InProgress => {
                             let frame = app.model.ui_state.animation_frame % spinner_frames.len();
