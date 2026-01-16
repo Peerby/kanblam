@@ -294,12 +294,19 @@ impl App {
                             project.tasks.insert(0, task);
                             follow_to_planned = true;
                         }
+                    } else if to_status == TaskStatus::Done {
+                        // Special handling for moving to Done: move to end of list
+                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                            let mut task = project.tasks.remove(idx);
+                            task.status = TaskStatus::Done;
+                            task.completed_at = Some(Utc::now());
+                            // Push to end (will be last in Done column)
+                            project.tasks.push(task);
+                        }
                     } else if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.status = to_status;
-                        match to_status {
-                            TaskStatus::InProgress => task.started_at = Some(Utc::now()),
-                            TaskStatus::Done => task.completed_at = Some(Utc::now()),
-                            _ => {}
+                        if to_status == TaskStatus::InProgress {
+                            task.started_at = Some(Utc::now());
                         }
                     }
                     // Clear attention flag if no more review tasks
@@ -843,14 +850,16 @@ impl App {
                         )));
                     }
 
-                    // Update task
+                    // Update task and move to end of list (bottom of Done column)
                     if let Some(project) = self.model.active_project_mut() {
-                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                            let mut task = project.tasks.remove(idx);
                             task.status = TaskStatus::Done;
                             task.completed_at = Some(Utc::now());
                             task.worktree_path = None;
                             task.tmux_window = None;
                             task.session_state = crate::model::ClaudeSessionState::Ended;
+                            project.tasks.push(task);
                         }
                         project.needs_attention = project.review_count() > 0;
                         if !project.needs_attention {
@@ -1057,15 +1066,17 @@ impl App {
                         )));
                     }
 
-                    // Update task
+                    // Update task and move to end of list (bottom of Done column)
                     if let Some(project) = self.model.active_project_mut() {
-                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                            let mut task = project.tasks.remove(idx);
                             task.status = TaskStatus::Done;
                             task.completed_at = Some(Utc::now());
                             task.worktree_path = None;
                             task.tmux_window = None;
                             task.git_branch = None;
                             task.session_state = crate::model::ClaudeSessionState::Ended;
+                            project.tasks.push(task);
                         }
                         project.needs_attention = project.review_count() > 0;
                         if !project.needs_attention {
