@@ -1908,6 +1908,72 @@ impl App {
                                 self.model.ui_state.selected_is_divider_above = false;
                             }
                         }
+                        PendingAction::AcceptTask(task_id) => {
+                            // Accept task: merge changes and mark as done
+                            // This reuses the SmartAcceptTask logic
+                            commands.push(Message::SmartAcceptTask(task_id));
+                        }
+                        PendingAction::DeclineTask(task_id) => {
+                            // Decline task: discard all changes and mark as done
+                            // Get task info needed for cleanup
+                            let task_info = self.model.active_project().and_then(|p| {
+                                p.tasks.iter()
+                                    .find(|t| t.id == task_id)
+                                    .map(|t| (
+                                        p.slug(),
+                                        p.working_dir.clone(),
+                                        t.tmux_window.clone(),
+                                        t.worktree_path.clone(),
+                                    ))
+                            });
+
+                            if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                                // Kill tmux window if exists
+                                if let Some(ref window) = window_name {
+                                    let _ = crate::tmux::kill_task_window(&project_slug, window);
+                                }
+
+                                // Remove worktree (discards all changes)
+                                if let Some(ref wt_path) = worktree_path {
+                                    if let Err(e) = crate::worktree::remove_worktree(&project_dir, wt_path) {
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            format!("Warning: Could not remove worktree: {}", e)
+                                        )));
+                                    }
+                                    // Clean up trust entry from Claude's config
+                                    let _ = crate::worktree::remove_worktree_trust(wt_path);
+                                }
+
+                                // Delete branch (discards all commits)
+                                if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("Warning: Could not delete branch: {}", e)
+                                    )));
+                                }
+
+                                // Update task and move to end of list (bottom of Done column)
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
+                                        let mut task = project.tasks.remove(idx);
+                                        task.status = TaskStatus::Done;
+                                        task.completed_at = Some(Utc::now());
+                                        task.worktree_path = None;
+                                        task.tmux_window = None;
+                                        task.git_branch = None;
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        project.tasks.push(task);
+                                    }
+                                    project.needs_attention = project.review_count() > 0;
+                                    if !project.needs_attention {
+                                        notify::clear_attention_indicator();
+                                    }
+                                }
+
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Task declined. Changes discarded.".to_string()
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -1937,6 +2003,12 @@ impl App {
                         }
                         PendingAction::CloseProject(_) => {
                             // User cancelled closing project, no message needed
+                        }
+                        PendingAction::AcceptTask(_) | PendingAction::DeclineTask(_) => {
+                            // User cancelled, task stays in Review
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cancelled. Task left in Review.".to_string()
+                            )));
                         }
                     }
                 }

@@ -496,17 +496,11 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
             ]));
-            lines.push(Line::from(vec![
-                Span::styled(" x ", key_style), Span::styled(" Mark as done", label_style),
-            ]));
         }
 
         crate::model::TaskStatus::Queued => {
             lines.push(Line::from(vec![
                 Span::styled(" s ", key_style), Span::styled(" Start immediately", label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" p ", key_style), Span::styled(" Move back to Planned", label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
@@ -527,7 +521,10 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 Span::styled(" t ", key_style), Span::styled(" Open test shell in worktree", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+                Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
             ]));
         }
 
@@ -536,31 +533,25 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 Span::styled(" s ", key_style), Span::styled(" Continue / switch to session", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" c ", key_style), Span::styled(" Continue task", label_style),
-            ]));
-            lines.push(Line::from(vec![
                 Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Reset task", label_style),
+                Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
             ]));
         }
 
         crate::model::TaskStatus::Review => {
             lines.push(Line::from(vec![
-                Span::styled(" y ", key_style), Span::styled(" Accept: rebase and merge to main", label_style),
+                Span::styled(" a ", key_style), Span::styled(" Accept: merge changes and mark done", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" n ", key_style), Span::styled(" Discard: delete branch without merging", label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" c ", key_style), Span::styled(" Continue working on task", label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" a ", key_style), Span::styled(" Apply changes to main (for testing)", label_style),
+                Span::styled(" d ", key_style), Span::styled(" Decline: discard changes and mark done", label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
@@ -569,10 +560,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" p ", key_style), Span::styled(" Move back to Planned", label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Reset task", label_style),
+                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
             ]));
         }
 
@@ -679,22 +667,19 @@ fn render_help(frame: &mut Frame) {
         Line::from("  v/Space    View task details"),
         Line::from("  i          New task (focus input)"),
         Line::from("  e          Edit task/divider"),
-        Line::from("  s          Start (Planned/Queued) / Switch to (InProgress) / Continue (Review)"),
+        Line::from("  s          Start (Planned/Queued) / Switch to (InProgress/NeedsInput)"),
         Line::from("  d          Delete task/divider"),
-        Line::from("  x          Mark as Done"),
+        Line::from("  r          Move to Review (InProgress/NeedsInput/Done)"),
+        Line::from("  x          Reset: cleanup & move to Planned"),
         Line::from("  +/-        Reorder task up/down"),
         Line::from("  |          Toggle divider below task"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Review Column", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  y          Accept: merge branch & cleanup"),
-        Line::from("  n          Discard: delete worktree, no merge"),
-        Line::from("  c          Continue working on task"),
-        Line::from("  a          Apply changes to main (for testing)"),
-        Line::from("  u          Unapply changes from main"),
-        Line::from("  p          Move back to Planned"),
-        Line::from("  r          Reset: cleanup & move to Planned"),
+        Line::from("  a          Accept: merge changes and mark done"),
+        Line::from("  d          Decline: discard changes and mark done"),
+        Line::from("  x          Reset: cleanup & move to Planned"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Input (Vim-style)", Style::default().add_modifier(Modifier::UNDERLINED)),

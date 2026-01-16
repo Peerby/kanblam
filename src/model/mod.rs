@@ -691,6 +691,10 @@ pub enum PendingAction {
     /// Mark task as done and clean up worktree (when nothing to merge)
     MarkDoneNoMerge(Uuid),
     CloseProject(usize),
+    /// Accept task: merge changes and mark as done
+    AcceptTask(Uuid),
+    /// Decline task: discard changes and mark as done
+    DeclineTask(Uuid),
 }
 
 /// Which UI element has focus

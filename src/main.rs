@@ -766,19 +766,22 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Apply task changes to main worktree (for testing)
+        // Accept task (merge changes and mark done) - 'a' in Review column
         KeyCode::Char('a') => {
             let column = app.model.ui_state.selected_column;
-            // Only in Review column for tasks with a git branch
             if column == TaskStatus::Review {
                 if let Some(project) = app.model.active_project() {
                     let tasks = project.tasks_by_status(column);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
                         if let Some(task) = tasks.get(idx) {
-                            // Check for git_branch (branch may exist even if worktree is gone)
-                            if task.git_branch.is_some() {
-                                return vec![Message::ApplyTaskChanges(task.id)];
+                            // Don't accept tasks that are already being accepted
+                            if task.status == TaskStatus::Accepting {
+                                return vec![];
                             }
+                            return vec![Message::ShowConfirmation {
+                                message: "Merge all changes and mark done?".to_string(),
+                                action: model::PendingAction::AcceptTask(task.id),
+                            }];
                         }
                     }
                 }
@@ -863,88 +866,35 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Continue task from Review (alias for Enter in Review column)
-        KeyCode::Char('c') => {
-            if app.model.ui_state.selected_column == TaskStatus::Review {
-                if let Some(project) = app.model.active_project() {
-                    let tasks = project.tasks_by_status(TaskStatus::Review);
-                    if let Some(idx) = app.model.ui_state.selected_task_idx {
-                        if let Some(task) = tasks.get(idx) {
-                            if task.worktree_path.is_some() {
-                                return vec![Message::ContinueTask(task.id)];
-                            } else {
-                                return vec![Message::StartTask(task.id)];
-                            }
+        // Decline task (discard changes and mark done) - 'd' in Review column
+        KeyCode::Char('d') if app.model.ui_state.selected_column == TaskStatus::Review => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(TaskStatus::Review);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // Don't process tasks that are already being accepted
+                        if task.status == TaskStatus::Accepting {
+                            return vec![];
                         }
+                        return vec![Message::ShowConfirmation {
+                            message: "Discard all changes and mark done?".to_string(),
+                            action: model::PendingAction::DeclineTask(task.id),
+                        }];
                     }
                 }
             }
             vec![]
         }
 
-        // Accept task (merge and cleanup) - 'y' in Review column
-        KeyCode::Char('y') => {
-            if app.model.ui_state.selected_column == TaskStatus::Review {
-                if let Some(project) = app.model.active_project() {
-                    let tasks = project.tasks_by_status(TaskStatus::Review);
-                    if let Some(idx) = app.model.ui_state.selected_task_idx {
-                        if let Some(task) = tasks.get(idx) {
-                            // Don't accept tasks that are already being accepted
-                            if task.status == TaskStatus::Accepting {
-                                return vec![];
-                            }
-                            if task.worktree_path.is_some() {
-                                return vec![Message::SmartAcceptTask(task.id)];
-                            } else {
-                                // Legacy: just mark as done
-                                return vec![Message::MoveTask {
-                                    task_id: task.id,
-                                    to_status: TaskStatus::Done,
-                                }];
-                            }
-                        }
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // Discard task (delete worktree without merging) - 'n' in Review column (without modifiers)
-        KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.model.ui_state.selected_column == TaskStatus::Review {
-                if let Some(project) = app.model.active_project() {
-                    let tasks = project.tasks_by_status(TaskStatus::Review);
-                    if let Some(idx) = app.model.ui_state.selected_task_idx {
-                        if let Some(task) = tasks.get(idx) {
-                            if task.worktree_path.is_some() {
-                                return vec![Message::DiscardTask(task.id)];
-                            } else {
-                                // Legacy: move back to planned
-                                return vec![Message::MoveTask {
-                                    task_id: task.id,
-                                    to_status: TaskStatus::Planned,
-                                }];
-                            }
-                        }
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // 'r' key: Reset task in Review/InProgress/NeedsInput, or move to Review from other columns
+        // 'r' key: Move to Review (from InProgress, NeedsInput, Done)
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // In Review, InProgress, or NeedsInput: reset the task (clean up and reset to top of Planned)
-                        if matches!(column, TaskStatus::Review | TaskStatus::InProgress | TaskStatus::NeedsInput) {
-                            return vec![Message::ResetTask(task.id)];
-                        }
-                        // In other columns: move to Review
-                        if column != TaskStatus::Review {
+                        // Move to Review from InProgress, NeedsInput, or Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Done) {
                             return vec![Message::MoveTask {
                                 task_id: task.id,
                                 to_status: model::TaskStatus::Review,
@@ -1000,35 +950,17 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Move back to Planned (from Review or Queued)
-        KeyCode::Char('p') => {
-            let column = app.model.ui_state.selected_column;
-            if column == model::TaskStatus::Review || column == model::TaskStatus::Queued {
-                if let Some(project) = app.model.active_project() {
-                    let tasks = project.tasks_by_status(column);
-                    if let Some(idx) = app.model.ui_state.selected_task_idx {
-                        if let Some(task) = tasks.get(idx) {
-                            return vec![Message::MoveTask {
-                                task_id: task.id,
-                                to_status: model::TaskStatus::Planned,
-                            }];
-                        }
-                    }
-                }
-            }
-            vec![]
-        }
-
-        // Mark as Done
+        // 'x' key: Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
+            let column = app.model.ui_state.selected_column;
             if let Some(project) = app.model.active_project() {
-                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        return vec![Message::MoveTask {
-                            task_id: task.id,
-                            to_status: model::TaskStatus::Done,
-                        }];
+                        // Reset works on InProgress, NeedsInput, Review
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
+                            return vec![Message::ResetTask(task.id)];
+                        }
                     }
                 }
             }
@@ -1184,56 +1116,6 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             msgs
         }
 
-        // Continue task (Review/NeedsInput)
-        KeyCode::Char('c') => {
-            if matches!(task.status, TaskStatus::Review | TaskStatus::NeedsInput) {
-                let mut msgs = vec![Message::ToggleTaskPreview];
-                if task.worktree_path.is_some() {
-                    msgs.push(Message::ContinueTask(task.id));
-                } else {
-                    msgs.push(Message::StartTask(task.id));
-                }
-                msgs
-            } else {
-                vec![]
-            }
-        }
-
-        // Accept task (Review only)
-        KeyCode::Char('y') => {
-            if task.status == TaskStatus::Review {
-                let mut msgs = vec![Message::ToggleTaskPreview];
-                if task.worktree_path.is_some() {
-                    msgs.push(Message::SmartAcceptTask(task.id));
-                } else {
-                    msgs.push(Message::MoveTask {
-                        task_id: task.id,
-                        to_status: TaskStatus::Done,
-                    });
-                }
-                msgs
-            } else {
-                vec![]
-            }
-        }
-
-        // Discard task (Review only)
-        KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if task.status == TaskStatus::Review {
-                let mut msgs = vec![Message::ToggleTaskPreview];
-                if task.worktree_path.is_some() {
-                    msgs.push(Message::DiscardTask(task.id));
-                } else {
-                    msgs.push(Message::MoveTask {
-                        task_id: task.id,
-                        to_status: TaskStatus::Planned,
-                    });
-                }
-                msgs
-            } else {
-                vec![]
-            }
-        }
 
         // Open interactive modal
         KeyCode::Char('o') => {
@@ -1255,10 +1137,20 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Apply changes to main (Review only)
+        // Accept task (merge and mark done) - Review only
         KeyCode::Char('a') => {
-            if task.status == TaskStatus::Review && task.git_branch.is_some() {
-                vec![Message::ToggleTaskPreview, Message::ApplyTaskChanges(task.id)]
+            if task.status == TaskStatus::Review {
+                // Don't accept tasks that are already being accepted
+                if task.status == TaskStatus::Accepting {
+                    return vec![];
+                }
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::ShowConfirmation {
+                        message: "Merge all changes and mark done?".to_string(),
+                        action: model::PendingAction::AcceptTask(task.id),
+                    },
+                ]
             } else {
                 vec![]
             }
@@ -1269,30 +1161,44 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::ToggleTaskPreview, Message::EditTask(task.id)]
         }
 
-        // Delete task (with confirmation)
+        // Decline (Review) or Delete (other statuses) - with confirmation
         KeyCode::Char('d') => {
-            let title = if task.title.len() > 30 {
-                format!("{}...", &task.title[..27])
+            if task.status == TaskStatus::Review {
+                // Don't process tasks that are already being accepted
+                if task.status == TaskStatus::Accepting {
+                    return vec![];
+                }
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::ShowConfirmation {
+                        message: "Discard all changes and mark done?".to_string(),
+                        action: model::PendingAction::DeclineTask(task.id),
+                    },
+                ]
             } else {
-                task.title.clone()
-            };
-            vec![
-                Message::ToggleTaskPreview,
-                Message::ShowConfirmation {
-                    message: format!("Delete '{}'? (y/n)", title),
-                    action: model::PendingAction::DeleteTask(task.id),
-                },
-            ]
+                let title = if task.title.len() > 30 {
+                    format!("{}...", &task.title[..27])
+                } else {
+                    task.title.clone()
+                };
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::ShowConfirmation {
+                        message: format!("Delete '{}'? (y/n)", title),
+                        action: model::PendingAction::DeleteTask(task.id),
+                    },
+                ]
+            }
         }
 
-        // Move back to Planned (from Review or Queued)
-        KeyCode::Char('p') => {
-            if matches!(task.status, TaskStatus::Review | TaskStatus::Queued) {
+        // Move to Review (from InProgress, NeedsInput, Done)
+        KeyCode::Char('r') => {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
                     Message::MoveTask {
                         task_id: task.id,
-                        to_status: TaskStatus::Planned,
+                        to_status: TaskStatus::Review,
                     },
                 ]
             } else {
@@ -1300,29 +1206,12 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Reset task (Review/InProgress/NeedsInput) or move to Review (Done)
-        KeyCode::Char('r') => {
-            let mut msgs = vec![Message::ToggleTaskPreview];
-            if matches!(task.status, TaskStatus::Review | TaskStatus::InProgress | TaskStatus::NeedsInput) {
-                msgs.push(Message::ResetTask(task.id));
-            } else if task.status == TaskStatus::Done {
-                msgs.push(Message::MoveTask {
-                    task_id: task.id,
-                    to_status: TaskStatus::Review,
-                });
-            }
-            msgs
-        }
-
-        // Mark as done
+        // Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
-            if !matches!(task.status, TaskStatus::Done | TaskStatus::Accepting) {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
                 vec![
                     Message::ToggleTaskPreview,
-                    Message::MoveTask {
-                        task_id: task.id,
-                        to_status: TaskStatus::Done,
-                    },
+                    Message::ResetTask(task.id),
                 ]
             } else {
                 vec![]
