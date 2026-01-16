@@ -44,9 +44,10 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     let input_height = calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width);
 
     // Determine header height based on available space
-    // Show full 4-line logo header when terminal is wide enough and tall enough
+    // Show full 3-line logo header when terminal is wide enough and tall enough
+    // (mascot overlays the project bar line to save vertical space)
     let show_full_header = logo::should_show_full_logo(frame.area().width, frame.area().height);
-    let header_height = if show_full_header { 4 } else { 1 };
+    let header_height = if show_full_header { 3 } else { 1 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)

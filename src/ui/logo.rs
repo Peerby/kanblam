@@ -45,7 +45,7 @@ const FEET_MAGENTA_SAT: Color = Color::Rgb(235, 46, 138);    // Dimmed saturated
 pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
     let width = area.width;
 
-    if width >= FULL_LOGO_WIDTH && area.height >= 4 {
+    if width >= FULL_LOGO_WIDTH && area.height >= 3 {
         render_full_logo(frame, area, shimmer_frame);
     } else if width >= COMPACT_LOGO_WIDTH {
         render_compact_logo(frame, area);
@@ -98,10 +98,6 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
     let eye_style = Style::default().fg(green);
 
     let lines = vec![
-        // Empty first line to push logo down
-        Line::from(vec![
-            Span::styled("                                                           ", Style::default()),
-        ]),
         Line::from(vec![
             Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
             Span::styled("    ", Style::default()),
@@ -171,7 +167,7 @@ fn render_minimal_logo(frame: &mut Frame, area: Rect) {
 
 /// Calculate how much width the logo needs based on available space
 pub fn logo_width_needed(available_width: u16, available_height: u16) -> u16 {
-    if available_width >= FULL_LOGO_WIDTH && available_height >= 4 {
+    if available_width >= FULL_LOGO_WIDTH && available_height >= 3 {
         FULL_LOGO_WIDTH
     } else if available_width >= COMPACT_LOGO_WIDTH {
         COMPACT_LOGO_WIDTH
