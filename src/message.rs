@@ -152,6 +152,8 @@ pub enum Message {
 
     // System
     Tick,
+    /// Trigger the logo shimmer animation (called on successful merge)
+    TriggerLogoShimmer,
     Quit,
     QuitAndSwitchPane(String), // Quit and switch to this pane ID
     Error(String),

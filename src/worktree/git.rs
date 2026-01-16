@@ -342,6 +342,18 @@ pub fn delete_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
 pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option<String>> {
     let branch_name = format!("claude/{}", task_id);
 
+    // Debug logging to file (TUI covers stderr)
+    let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");
+    let mut log = |msg: &str| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            let _ = writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg);
+        }
+    };
+
+    log(&format!("=== apply_task_changes START: task={} ===", task_id));
+    log(&format!("project_dir={:?}, branch={}", project_dir, branch_name));
+
     // Check if there are local changes that need to be stashed
     let status_check = Command::new("git")
         .current_dir(project_dir)
@@ -349,6 +361,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         .output()?;
 
     let has_local_changes = !String::from_utf8_lossy(&status_check.stdout).trim().is_empty();
+    log(&format!("has_local_changes={}", has_local_changes));
     let mut stash_ref = None;
 
     // Stash local changes if any
@@ -375,6 +388,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
                 stash_ref = Some(ref_part.trim().to_string());
             }
         }
+        log(&format!("stashed changes, stash_ref={:?}", stash_ref));
     }
 
     // Find the merge-base (common ancestor) between HEAD and the task branch
@@ -397,6 +411,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     }
 
     let merge_base = String::from_utf8_lossy(&merge_base_output.stdout).trim().to_string();
+    log(&format!("merge_base={}", merge_base));
 
     // Get the diff from merge-base to the task branch (only the task's changes)
     let diff_output = Command::new("git")
@@ -416,13 +431,18 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         return Err(anyhow!("Failed to get diff: {}", stderr));
     }
 
-    // Apply the diff (capture stderr to prevent it from leaking to terminal)
+    log(&format!("diff size={} bytes", diff_output.stdout.len()));
+    if diff_output.stdout.is_empty() {
+        log("WARNING: diff is empty! Nothing to apply.");
+    }
+
+    // Apply the diff (capture stderr so we can log it)
     let mut apply_cmd = Command::new("git")
         .current_dir(project_dir)
         .args(["apply", "--3way"])
         .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()?;
 
     // Write diff to stdin and explicitly close it (drop) so git knows we're done
@@ -435,9 +455,20 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         // stdin is dropped here, closing the pipe
     }
 
-    let apply_result = apply_cmd.wait()?;
+    let apply_output = apply_cmd.wait_with_output()?;
+    log(&format!("git apply exit code: {:?}", apply_output.status.code()));
 
-    if !apply_result.success() {
+    let stdout = String::from_utf8_lossy(&apply_output.stdout);
+    let stderr = String::from_utf8_lossy(&apply_output.stderr);
+    if !stdout.is_empty() {
+        log(&format!("git apply stdout: {}", stdout));
+    }
+    if !stderr.is_empty() {
+        log(&format!("git apply stderr: {}", stderr));
+    }
+
+    if !apply_output.status.success() {
+        log("FAILED to apply changes");
         // Restore stash if we made one
         if stash_ref.is_some() {
             let _ = Command::new("git")
@@ -448,6 +479,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         return Err(anyhow!("Failed to apply changes. There may be conflicts."));
     }
 
+    log("SUCCESS - changes applied");
     Ok(stash_ref)
 }
 

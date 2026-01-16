@@ -1,6 +1,6 @@
 mod interactive_modal;
 mod kanban;
-mod logo;
+pub mod logo;
 mod output;
 mod status_bar;
 
@@ -63,6 +63,18 @@ pub fn view(frame: &mut Frame, app: &mut App) {
 
     // Render kanban board (full width - tmux handles the split)
     render_kanban(frame, chunks[1], app);
+
+    // Render mascot feet overlapping the kanban border (only when full logo is shown)
+    if show_full_header {
+        // The feet should be rendered at the top row of the kanban area, right-aligned
+        let feet_area = Rect {
+            x: chunks[1].x,
+            y: chunks[1].y,
+            width: chunks[1].width,
+            height: 1,
+        };
+        logo::render_mascot_feet(frame, feet_area, app.model.ui_state.logo_shimmer_frame);
+    }
 
     // Render task input area
     render_input(frame, chunks[2], app);
@@ -144,7 +156,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, show_full_logo: bool)
         render_project_bar(frame, project_bar_area, app);
 
         // Render logo using full area - it will right-align itself
-        logo::render_logo(frame, area);
+        logo::render_logo(frame, area, app.model.ui_state.logo_shimmer_frame);
     } else {
         // Compact mode: project bar with inline branding
         render_project_bar_with_branding(frame, area, app);

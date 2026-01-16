@@ -638,6 +638,11 @@ pub struct UiState {
     /// If set, we're entering feedback for this task (task must be in Review status)
     /// The input area will be used to capture feedback text
     pub feedback_task_id: Option<Uuid>,
+
+    // Logo shimmer animation (triggered on successful merge)
+    /// Current shimmer position (0-7, where 0 = no shimmer, 1-4 = beam going up rows 4-1, 5-7 = fade out)
+    /// The beam travels from bottom to top, lighting up each row with saturated colors
+    pub logo_shimmer_frame: u8,
 }
 
 /// State for the interactive Claude terminal modal
@@ -706,6 +711,7 @@ impl Default for UiState {
             open_project_dialog_slot: None,
             directory_browser: None,
             feedback_task_id: None,
+            logo_shimmer_frame: 0,
         }
     }
 }

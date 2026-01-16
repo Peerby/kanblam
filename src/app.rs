@@ -1178,6 +1178,8 @@ impl App {
                     commands.push(Message::SetStatusMessage(Some(
                         "Task accepted and merged to main.".to_string()
                     )));
+                    // Trigger celebratory logo shimmer animation
+                    commands.push(Message::TriggerLogoShimmer);
                 }
             }
 
@@ -2424,6 +2426,11 @@ impl App {
 
             Message::SetStatusMessage(msg) => {
                 self.model.ui_state.status_message = msg;
+            }
+
+            Message::TriggerLogoShimmer => {
+                // Start the shimmer animation (frame 1 = bottom row lit)
+                self.model.ui_state.logo_shimmer_frame = 1;
             }
 
             Message::HookSignalReceived(signal) => {
@@ -3799,6 +3806,15 @@ impl App {
             Message::Tick => {
                 // Increment animation frame for spinners
                 self.model.ui_state.animation_frame = self.model.ui_state.animation_frame.wrapping_add(1);
+
+                // Advance logo highlight animation if active (frames 1-4, then back to 0)
+                // Frame 1 = lead-in (absorbs timing variance), frames 2-4 = highlight glides up
+                if self.model.ui_state.logo_shimmer_frame > 0 {
+                    self.model.ui_state.logo_shimmer_frame += 1;
+                    if self.model.ui_state.logo_shimmer_frame > 4 {
+                        self.model.ui_state.logo_shimmer_frame = 0; // Animation complete
+                    }
+                }
 
                 // Animate scroll for long task titles (every tick = ~100ms)
                 // Wait ~1 second (10 ticks) before starting to scroll so user can read the first word

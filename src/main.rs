@@ -360,17 +360,28 @@ fn handle_mouse_event(
     let input_height = 5u16;
 
     // Calculate layout regions (project bar at top now)
-    let project_bar_height = 1u16;
+    // Header height is dynamic based on terminal size (must match ui/mod.rs)
+    let show_full_logo = crate::ui::logo::should_show_full_logo(size.width, size.height);
+    let header_height = if show_full_logo { 4u16 } else { 1u16 };
     let status_height = 1u16;
-    let kanban_height = size.height.saturating_sub(project_bar_height + input_height + status_height);
+    let kanban_height = size.height.saturating_sub(header_height + input_height + status_height);
 
-    let project_bar_y = 0u16;
-    let kanban_y = project_bar_height;
-    let input_y = project_bar_height + kanban_height;
-    let status_y = project_bar_height + kanban_height + input_height;
+    let header_y = 0u16;
+    let kanban_y = header_height;
+    let input_y = header_height + kanban_height;
+    let status_y = header_height + kanban_height + input_height;
 
-    // Check if click is in project bar
+    // Check if click is in header area (project bar + logo)
     if y < kanban_y {
+        // Check if click is on the logo (right side, when full logo is shown)
+        if show_full_logo {
+            let logo_start_x = size.width.saturating_sub(crate::ui::logo::FULL_LOGO_WIDTH);
+            if x >= logo_start_x && y < 4 {
+                // Click on the mascot/logo - trigger shimmer animation
+                return Some(Message::TriggerLogoShimmer);
+            }
+        }
+
         // Project tabs are roughly spaced out
         // Estimate project width based on name lengths
         let mut current_x = 1u16; // Initial space
@@ -453,7 +464,7 @@ fn handle_mouse_event(
 
     // Click in status bar - could add session switching here in the future
     // For now, status bar shows session info but isn't clickable
-    let _ = (project_bar_y, status_y); // Suppress unused variable warnings
+    let _ = (header_y, status_y); // Suppress unused variable warnings
 
     None
 }
