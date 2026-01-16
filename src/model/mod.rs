@@ -643,6 +643,11 @@ pub struct UiState {
     /// Current shimmer position (0-7, where 0 = no shimmer, 1-4 = beam going up rows 4-1, 5-7 = fade out)
     /// The beam travels from bottom to top, lighting up each row with saturated colors
     pub logo_shimmer_frame: u8,
+
+    // Startup hint decay
+    /// Tick count when the app started (used to decay the navigation hints after ~10 seconds)
+    /// None means hints have already decayed or should not be shown
+    pub startup_hint_until_tick: Option<usize>,
 }
 
 /// State for the interactive Claude terminal modal
@@ -712,6 +717,8 @@ impl Default for UiState {
             directory_browser: None,
             feedback_task_id: None,
             logo_shimmer_frame: 0,
+            // Show startup hints for first ~10 seconds (100 ticks at 100ms each)
+            startup_hint_until_tick: Some(100),
         }
     }
 }

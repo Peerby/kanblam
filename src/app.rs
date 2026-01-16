@@ -3816,6 +3816,15 @@ impl App {
                     }
                 }
 
+                // Decay startup navigation hints after ~10 seconds
+                if let Some(remaining) = self.model.ui_state.startup_hint_until_tick {
+                    if remaining > 0 {
+                        self.model.ui_state.startup_hint_until_tick = Some(remaining - 1);
+                    } else {
+                        self.model.ui_state.startup_hint_until_tick = None;
+                    }
+                }
+
                 // Animate scroll for long task titles (every tick = ~100ms)
                 // Wait ~1 second (10 ticks) before starting to scroll so user can read the first word
                 const SCROLL_DELAY_TICKS: usize = 10;

@@ -303,20 +303,6 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_feedback_mode = app.model.ui_state.feedback_task_id.is_some();
     let is_editing = is_editing_task || is_editing_divider;
 
-    // Choose title based on mode
-    let pending_count = app.model.ui_state.pending_images.len();
-    let title = if is_feedback_mode {
-        " Feedback ".to_string()
-    } else if is_editing_divider {
-        " Divider Title ".to_string()
-    } else if is_editing_task {
-        " Edit Task ".to_string()
-    } else if pending_count > 0 {
-        format!(" New Task [+{} img] ", pending_count)
-    } else {
-        " New Task ".to_string()
-    };
-
     // Choose colors based on focus and mode
     let (border_color, text_color) = if is_focused {
         let color = if is_feedback_mode {
@@ -331,18 +317,31 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         (Color::DarkGray, Color::DarkGray)
     };
 
+    // Choose title based on mode
+    let pending_count = app.model.ui_state.pending_images.len();
+    let title_style = if is_focused {
+        Style::default().fg(border_color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(border_color)
+    };
+
+    let title = if is_feedback_mode {
+        Line::from(Span::styled(" Feedback ", title_style))
+    } else if is_editing_divider {
+        Line::from(Span::styled(" Divider Title ", title_style))
+    } else if is_editing_task {
+        Line::from(Span::styled(" Edit Task ", title_style))
+    } else if pending_count > 0 {
+        Line::from(Span::styled(format!(" New Task [+{} img] ", pending_count), title_style))
+    } else {
+        Line::from(Span::styled(" New Task ", title_style))
+    };
+
     // Create the block for the editor
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            title,
-            if is_focused {
-                Style::default().fg(border_color).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(border_color)
-            },
-        ));
+        .title(title);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -364,17 +363,19 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         .render(inner, frame.buffer_mut());
 
     // Render hints at bottom-right of the border
-    // Only show full hints when focused; when unfocused just show ^V hint
+    // Only show full hints when focused; when unfocused show insert hint + ^V
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
     let (hints, hints_width) = if !is_focused {
-        // When unfocused, only show paste image hint
+        // When unfocused, show insert hint and paste image hint
         (
             Line::from(vec![
+                Span::styled("i", key_style),
+                Span::styled("nsert  ", desc_style),
                 Span::styled("^V", key_style),
                 Span::styled(" img", desc_style),
             ]),
-            6u16,
+            14u16,
         )
     } else if pending_count > 0 {
         // Show image management hints when images are pending

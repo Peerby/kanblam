@@ -2,7 +2,7 @@ use crate::app::App;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
@@ -44,6 +44,12 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
                 .bg(Color::Blue),
         ));
         frame.render_widget(status, area);
+        return;
+    }
+
+    // Show startup navigation hints for the first ~10 seconds
+    if let Some(remaining) = app.model.ui_state.startup_hint_until_tick {
+        render_startup_hints(frame, area, remaining);
         return;
     }
 
@@ -145,4 +151,97 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
 
     let summary_widget = Paragraph::new(summary).alignment(Alignment::Right);
     frame.render_widget(summary_widget, area);
+}
+
+/// Render startup navigation hints (shown for first ~10 seconds)
+/// remaining: ticks remaining (100 = just started, 0 = about to disappear)
+fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
+    let width = area.width as usize;
+
+    // Animation: light sweeps from left to right during first ~2 seconds (20 ticks)
+    // The light position moves across the width of the screen
+    let ticks_elapsed = 100_usize.saturating_sub(remaining);
+    let animation_duration = 20; // ticks for the sweep animation
+    let light_pos = if ticks_elapsed < animation_duration {
+        // Map elapsed ticks to position across screen width
+        (ticks_elapsed * width) / animation_duration
+    } else {
+        usize::MAX // Animation complete, no light
+    };
+    let light_width = 8; // Width of the bright spot
+
+    // First, fill the entire bar with yellow background
+    let bg_style = Style::default().bg(Color::Yellow);
+    let full_bg = " ".repeat(width);
+    frame.render_widget(
+        Paragraph::new(Span::styled(&full_bg, bg_style)),
+        area,
+    );
+
+    // Build the hint text with character-by-character styling for the light effect
+    let hint_text = " ↑↓←→ navigate   enter select   esc back   ctrl-c exit   ? help ";
+    let hint_chars: Vec<char> = hint_text.chars().collect();
+
+    // Center the hint text
+    let hint_width = hint_chars.len();
+    let start_x = if width > hint_width {
+        (width - hint_width) / 2
+    } else {
+        0
+    };
+
+    // Keys that should be bold (character positions in hint_text)
+    let bold_ranges: Vec<(usize, usize)> = vec![
+        (1, 5),   // ↑↓←→
+        (17, 22), // enter
+        (32, 35), // esc
+        (43, 49), // ctrl-c
+        (57, 58), // ?
+    ];
+
+    let is_bold = |pos: usize| -> bool {
+        bold_ranges.iter().any(|(start, end)| pos >= *start && pos < *end)
+    };
+
+    // Create spans for each character with appropriate styling
+    let mut spans = Vec::new();
+
+    for (i, ch) in hint_chars.iter().enumerate() {
+        let screen_x = start_x + i;
+        let dist_from_light = if light_pos == usize::MAX {
+            usize::MAX
+        } else if screen_x >= light_pos {
+            screen_x - light_pos
+        } else {
+            light_pos - screen_x
+        };
+
+        // Determine background color based on distance from light
+        let bg = if dist_from_light == 0 {
+            Color::White // Brightest at center
+        } else if dist_from_light <= light_width / 2 {
+            Color::Rgb(255, 255, 200) // Near-white yellow
+        } else if dist_from_light <= light_width {
+            Color::Rgb(255, 255, 150) // Bright yellow
+        } else {
+            Color::Yellow // Base yellow
+        };
+
+        let mut style = Style::default().fg(Color::Black).bg(bg);
+        if is_bold(i) {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+
+        spans.push(Span::styled(ch.to_string(), style));
+    }
+
+    // Render centered hint text
+    let hints = Line::from(spans);
+    let hint_area = Rect {
+        x: area.x + start_x as u16,
+        y: area.y,
+        width: hint_width.min(width) as u16,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hints), hint_area);
 }
