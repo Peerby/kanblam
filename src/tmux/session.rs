@@ -561,6 +561,120 @@ pub fn create_test_shell(
     Ok(session_name)
 }
 
+/// Result of creating a detached session
+pub struct DetachedSessionResult {
+    pub session_name: String,
+    pub was_created: bool,
+}
+
+/// Create a test shell session for a task in detached mode (don't switch to it)
+/// Returns the session name and whether it was newly created
+pub fn create_test_shell_detached(
+    _project_slug: &str,
+    task_id: &str,
+    worktree_path: &std::path::Path,
+) -> Result<DetachedSessionResult> {
+    let session_name = format!("tst-{}", &task_id[..4.min(task_id.len())]);
+
+    // Check if session already exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", &session_name])
+        .output()?;
+
+    let session_exists = check.status.success();
+
+    if !session_exists {
+        // Create new detached session starting in the worktree directory
+        let output = Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &session_name,
+                "-c",
+                &worktree_path.to_string_lossy(),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create test session: {}", stderr));
+        }
+    }
+
+    // Don't switch - stay in current session
+    Ok(DetachedSessionResult {
+        session_name,
+        was_created: !session_exists,
+    })
+}
+
+/// Open Claude in a separate tmux session in detached mode (don't switch to it)
+/// Returns the session name and whether it was newly created
+pub fn open_popup_detached(
+    worktree_path: &std::path::Path,
+    session_id: Option<&str>,
+) -> Result<DetachedSessionResult> {
+    // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
+    let dir_name = worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("claude");
+
+    // Use full task-id suffix for uniqueness (e.g., "task-6cfe1853" -> "cl-6cfe1853")
+    let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
+        &stripped[..8.min(stripped.len())]
+    } else if dir_name.len() > 8 {
+        &dir_name[..8]
+    } else {
+        dir_name
+    };
+    let session_name = format!("cl-{}", short_name);
+
+    // Build claude command - resume if we have a valid session_id
+    let claude_cmd = match session_id {
+        Some(id) => format!("claude --resume {}", id),
+        None => "claude".to_string(),
+    };
+
+    // Check if session already exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", &session_name])
+        .output()?;
+
+    let session_exists = check.status.success();
+
+    if !session_exists {
+        // Create new detached session with Claude running
+        let shell_cmd = format!(
+            "cd '{}' && {}",
+            worktree_path.to_string_lossy(),
+            claude_cmd
+        );
+
+        let output = Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s", &session_name,
+                "-c", &worktree_path.to_string_lossy(),
+                "bash", "-l", "-c", &shell_cmd,
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to create Claude session: {}", stderr));
+        }
+    }
+
+    // Don't switch - stay in current session
+    Ok(DetachedSessionResult {
+        session_name,
+        was_created: !session_exists,
+    })
+}
+
 /// Kill a task window
 pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
     let session_name = format!("kc-{}", project_slug);

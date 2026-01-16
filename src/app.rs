@@ -1292,6 +1292,87 @@ impl App {
                 }
             }
 
+            Message::OpenTestShellDetached(task_id) => {
+                let test_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .and_then(|t| t.worktree_path.as_ref().map(|wt| (p.slug(), wt.clone())))
+                });
+
+                if let Some((project_slug, worktree_path)) = test_info {
+                    match crate::tmux::create_test_shell_detached(
+                        &project_slug,
+                        &task_id.to_string(),
+                        &worktree_path,
+                    ) {
+                        Ok(result) => {
+                            let status = if result.was_created {
+                                format!("Created session '{}'", result.session_name)
+                            } else {
+                                format!("Session '{}' already exists", result.session_name)
+                            };
+                            commands.push(Message::SetStatusMessage(Some(status)));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to create test shell: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::OpenInteractiveDetached(task_id) => {
+                // Gather task info
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.worktree_path.clone(),
+                            task.claude_session_id.clone(),
+                        )
+                    })
+                });
+
+                if let Some((worktree_path, session_id)) = task_info {
+                    let Some(worktree_path) = worktree_path else {
+                        commands.push(Message::Error(
+                            "Cannot open interactive mode: no worktree path.".to_string()
+                        ));
+                        return commands;
+                    };
+
+                    // Stop SDK session first (if running) before CLI takeover
+                    if let Some(ref client) = self.sidecar_client {
+                        if let Err(e) = client.stop_session(task_id) {
+                            eprintln!("Note: Could not stop SDK session: {}", e);
+                        }
+                    }
+
+                    let resume_session_id = session_id.as_deref();
+
+                    match crate::tmux::open_popup_detached(&worktree_path, resume_session_id) {
+                        Ok(result) => {
+                            let status = if result.was_created {
+                                format!("Created session '{}'", result.session_name)
+                            } else {
+                                format!("Session '{}' already exists", result.session_name)
+                            };
+                            commands.push(Message::SetStatusMessage(Some(status)));
+
+                            // Update session mode to CLI
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.session_mode = crate::model::SessionMode::CliInteractive;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!(
+                                "Failed to create interactive session: {}", e
+                            )));
+                        }
+                    }
+                }
+            }
+
             Message::ApplyTaskChanges(task_id) => {
                 // Check if changes are already applied
                 if self.model.ui_state.applied_task_id.is_some() {

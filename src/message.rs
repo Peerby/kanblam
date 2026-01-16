@@ -44,6 +44,10 @@ pub enum Message {
     SwitchToTaskWindow(Uuid),
     /// Open a test shell in the task's worktree
     OpenTestShell(Uuid),
+    /// Open interactive Claude session in detached mode (don't switch to it)
+    OpenInteractiveDetached(Uuid),
+    /// Open test shell in detached mode (don't switch to it)
+    OpenTestShellDetached(Uuid),
     /// Apply task's changes to main worktree (for testing)
     ApplyTaskChanges(Uuid),
     /// Unapply/revert previously applied task changes

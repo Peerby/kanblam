@@ -714,6 +714,40 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // Open interactive modal in detached mode (Shift-O)
+        KeyCode::Char('O') => {
+            if let Some(project) = app.model.active_project() {
+                let column = app.model.ui_state.selected_column;
+                let tasks = project.tasks_by_status(column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        if task.claude_session_id.is_some() {
+                            return vec![Message::OpenInteractiveDetached(task.id)];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // Open test shell in detached mode (Shift-T)
+        KeyCode::Char('T') => {
+            let column = app.model.ui_state.selected_column;
+            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            if task.worktree_path.is_some() {
+                                return vec![Message::OpenTestShellDetached(task.id)];
+                            }
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
         // Apply task changes to main worktree (for testing)
         KeyCode::Char('a') => {
             let column = app.model.ui_state.selected_column;
