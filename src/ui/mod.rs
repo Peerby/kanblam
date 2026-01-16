@@ -207,9 +207,9 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
     // Show hint for next available slot (if under 9 projects)
     let num_projects = app.model.projects.len();
     if num_projects < 9 {
-        let next_slot = num_projects + 1;
+        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
         spans.push(Span::styled(
-            format!(" [{}] + ", next_slot),
+            format!(" [{}] + ", shift_chars[num_projects]),
             Style::default().fg(Color::DarkGray),
         ));
     }
@@ -265,9 +265,9 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
     // Show hint for next available slot (if under 9 projects)
     let num_projects = app.model.projects.len();
     if num_projects < 9 {
-        let next_slot = num_projects + 1;
+        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
         spans.push(Span::styled(
-            format!(" [{}] + ", next_slot),
+            format!(" [{}] + ", shift_chars[num_projects]),
             Style::default().fg(Color::DarkGray),
         ));
     }

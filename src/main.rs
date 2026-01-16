@@ -1040,9 +1040,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
         KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],
 
-        // Project switching (1-9) or open new project dialog
-        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let idx = c.to_digit(10).unwrap() as usize - 1;
+        // Project switching (Shift+1-9: !@#$%^&*() ) or open new project dialog
+        KeyCode::Char(c) if "!@#$%^&*(".contains(c) => {
+            let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '('];
+            let idx = shift_chars.iter().position(|&ch| ch == c).unwrap();
             if idx < app.model.projects.len() {
                 // Switch to existing project
                 vec![Message::SwitchProject(idx)]
