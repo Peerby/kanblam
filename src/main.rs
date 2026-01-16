@@ -28,6 +28,15 @@ use std::io;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Process commands recursively to ensure nested commands are also handled.
+/// For example, CompleteAcceptTask may return ShowConfirmation which must be processed.
+fn process_commands_recursively(app: &mut App, commands: Vec<Message>) {
+    let mut pending = commands;
+    while let Some(cmd) = pending.pop() {
+        let more = app.update(cmd);
+        pending.extend(more);
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -68,10 +77,7 @@ async fn main() -> anyhow::Result<()> {
         for event in pending_events {
             if let Some(msg) = convert_watcher_event(event) {
                 let commands = app.update(msg);
-                // Process any commands generated
-                for cmd in commands {
-                    app.update(cmd);
-                }
+                process_commands_recursively(&mut app, commands);
             }
         }
     }
@@ -82,9 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initial git status refresh for all tasks with worktrees
     let commands = app.update(Message::RefreshGitStatus);
-    for cmd in commands {
-        app.update(cmd);
-    }
+    process_commands_recursively(&mut app, commands);
 
     // Setup terminal
     enable_raw_mode()?;
@@ -144,9 +148,8 @@ where
             while let Some(event) = watcher.poll() {
                 if let Some(msg) = convert_watcher_event(event) {
                     let commands = app.update(msg);
-                    for cmd in commands {
-                        app.update(cmd);
-                    }
+                    // Process commands recursively to handle nested commands
+                    process_commands_recursively(app, commands);
                 }
             }
         }
@@ -159,9 +162,9 @@ where
                     Ok(Some(event)) => {
                         let msg = Message::SidecarEvent(event);
                         let commands = app.update(msg);
-                        for cmd in commands {
-                            app.update(cmd);
-                        }
+                        // Process commands recursively to handle nested commands
+                        // (e.g., CompleteAcceptTask returning ShowConfirmation)
+                        process_commands_recursively(app, commands);
                     }
                     Ok(None) => break, // No more events
                     Err(_) => break,   // Error, stop polling
@@ -190,27 +193,21 @@ where
                         let messages = handle_interactive_modal_input(key, app);
                         for msg in messages {
                             let commands = app.update(msg);
-                            for cmd in commands {
-                                app.update(cmd);
-                            }
+                            process_commands_recursively(app, commands);
                         }
                     } else if app.model.ui_state.is_open_project_dialog_open() {
                         // Handle open project dialog input directly
                         let messages = handle_open_project_dialog_input(key, app);
                         for msg in messages {
                             let commands = app.update(msg);
-                            for cmd in commands {
-                                app.update(cmd);
-                            }
+                            process_commands_recursively(app, commands);
                         }
                     } else if app.model.ui_state.focus == FocusArea::TaskInput {
                         // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
                         for msg in messages {
                             let commands = app.update(msg);
-                            for cmd in commands {
-                                app.update(cmd);
-                            }
+                            process_commands_recursively(app, commands);
                         }
                     } else {
                         let messages = handle_key_event(key, app);
@@ -230,9 +227,7 @@ where
                     let rect = Rect::new(0, 0, size.width, size.height);
                     if let Some(msg) = handle_mouse_event(mouse, app, rect) {
                         let commands = app.update(msg);
-                        for cmd in commands {
-                            app.update(cmd);
-                        }
+                        process_commands_recursively(app, commands);
                     }
                 }
                 _ => {}
