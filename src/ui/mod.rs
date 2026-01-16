@@ -273,9 +273,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(hints), hints_area);
 }
 
-/// Render the task preview modal (shown with v/space)
+/// Render the task preview modal (shown with v/space/enter)
+/// Phase-aware modal showing contextual information and available actions
 fn render_task_preview_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(70, 70, frame.area());
+    let area = centered_rect(75, 80, frame.area());
 
     // Get the selected task
     let task = app.model.active_project().and_then(|project| {
@@ -284,110 +285,369 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
     });
 
     let Some(task) = task else {
-        // No task selected, close the modal
         return;
     };
 
-    // Get column color for the border (Accepting tasks appear in Review column)
-    let column_color = match app.model.ui_state.selected_column {
-        crate::model::TaskStatus::Planned => Color::Blue,
-        crate::model::TaskStatus::Queued => Color::Cyan,
-        crate::model::TaskStatus::InProgress => Color::Yellow,
-        crate::model::TaskStatus::NeedsInput => Color::Red,
-        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => Color::Magenta,
-        crate::model::TaskStatus::Done => Color::Green,
+    // Get column color for the border
+    let (column_color, phase_label) = match task.status {
+        crate::model::TaskStatus::Planned => (Color::Blue, "Planned"),
+        crate::model::TaskStatus::Queued => (Color::Cyan, "Queued"),
+        crate::model::TaskStatus::InProgress => (Color::Yellow, "In Progress"),
+        crate::model::TaskStatus::NeedsInput => (Color::Red, "Needs Input"),
+        crate::model::TaskStatus::Review => (Color::Magenta, "Review"),
+        crate::model::TaskStatus::Accepting => (Color::Magenta, "Accepting"),
+        crate::model::TaskStatus::Done => (Color::Green, "Done"),
     };
 
-    // Build the preview content
     let mut lines: Vec<Line> = Vec::new();
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(Color::DarkGray);
+    let value_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::DarkGray);
 
-    // Task title (bold, large)
-    lines.push(Line::from(Span::styled(
-        &task.title,
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-    )));
+    // ═══════════════════════════════════════════════════════════════════════
+    // HEADER: Title and phase badge
+    // ═══════════════════════════════════════════════════════════════════════
+    lines.push(Line::from(vec![
+        Span::styled(&task.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(format!("[{}]", phase_label), Style::default().fg(column_color).add_modifier(Modifier::BOLD)),
+    ]));
 
-    // Description if present
+    // ═══════════════════════════════════════════════════════════════════════
+    // DESCRIPTION (if any)
+    // ═══════════════════════════════════════════════════════════════════════
     if !task.description.is_empty() {
-        lines.push(Line::from("")); // Empty line
+        lines.push(Line::from(""));
         for desc_line in task.description.lines() {
-            lines.push(Line::from(Span::styled(
-                desc_line,
-                Style::default().fg(Color::Gray),
-            )));
+            lines.push(Line::from(Span::styled(desc_line, Style::default().fg(Color::Gray))));
         }
     }
 
-    // Image count if present
+    // ═══════════════════════════════════════════════════════════════════════
+    // ATTACHMENTS
+    // ═══════════════════════════════════════════════════════════════════════
     if !task.images.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("[{} image(s) attached]", task.images.len()),
-            Style::default().fg(Color::Cyan),
-        )));
-    }
-
-    // Worktree info if present
-    if let Some(ref branch) = task.git_branch {
-        lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(branch.clone(), Style::default().fg(Color::Green)),
+            Span::styled("📎 ", dim_style),
+            Span::styled(format!("{} image(s) attached", task.images.len()), Style::default().fg(Color::Cyan)),
         ]));
     }
 
-    // Session state if active
-    if task.session_state != crate::model::ClaudeSessionState::NotStarted {
-        let state_color = match task.session_state {
-            crate::model::ClaudeSessionState::NotStarted => Color::DarkGray,
-            crate::model::ClaudeSessionState::Creating |
-            crate::model::ClaudeSessionState::Starting => Color::Yellow,
-            crate::model::ClaudeSessionState::Ready |
-            crate::model::ClaudeSessionState::Working => Color::Green,
-            crate::model::ClaudeSessionState::Paused => Color::Magenta,
-            crate::model::ClaudeSessionState::Continuing => Color::Cyan,
-            crate::model::ClaudeSessionState::Ended => Color::DarkGray,
-        };
-        lines.push(Line::from(vec![
-            Span::styled("Session: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:?}", task.session_state),
-                Style::default().fg(state_color),
-            ),
-        ]));
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE-SPECIFIC INFORMATION
+    // ═══════════════════════════════════════════════════════════════════════
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+
+    match task.status {
+        crate::model::TaskStatus::Planned | crate::model::TaskStatus::Queued => {
+            // Show creation time and queue info
+            lines.push(Line::from(vec![
+                Span::styled("Created: ", label_style),
+                Span::styled(format_datetime(task.created_at), value_style),
+            ]));
+
+            if task.status == crate::model::TaskStatus::Queued {
+                if let Some(queued_for) = task.queued_for_session {
+                    if let Some(project) = app.model.active_project() {
+                        if let Some(parent_task) = project.tasks.iter().find(|t| t.id == queued_for) {
+                            lines.push(Line::from(vec![
+                                Span::styled("Queued for: ", label_style),
+                                Span::styled(&parent_task.title, Style::default().fg(Color::Yellow)),
+                            ]));
+                        }
+                    }
+                }
+            }
+        }
+
+        crate::model::TaskStatus::InProgress => {
+            // Show session state and timing
+            if let Some(started) = task.started_at {
+                let duration = chrono::Utc::now().signed_duration_since(started);
+                lines.push(Line::from(vec![
+                    Span::styled("Running for: ", label_style),
+                    Span::styled(format_duration(duration), Style::default().fg(Color::Yellow)),
+                ]));
+            }
+
+            // Session state with color
+            let (state_label, state_color) = match task.session_state {
+                crate::model::ClaudeSessionState::Creating => ("Creating worktree...", Color::Yellow),
+                crate::model::ClaudeSessionState::Starting => ("Starting session...", Color::Yellow),
+                crate::model::ClaudeSessionState::Ready => ("Ready", Color::Green),
+                crate::model::ClaudeSessionState::Working => ("Working", Color::Green),
+                crate::model::ClaudeSessionState::Continuing => ("Continuing", Color::Cyan),
+                _ => ("Unknown", Color::DarkGray),
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Session: ", label_style),
+                Span::styled(state_label, Style::default().fg(state_color)),
+            ]));
+
+            // Last tool activity
+            if let Some(ref tool_name) = task.last_tool_name {
+                lines.push(Line::from(vec![
+                    Span::styled("Last tool: ", label_style),
+                    Span::styled(tool_name, value_style),
+                ]));
+            }
+        }
+
+        crate::model::TaskStatus::NeedsInput => {
+            // Urgent - show waiting time
+            if let Some(started) = task.started_at {
+                let duration = chrono::Utc::now().signed_duration_since(started);
+                lines.push(Line::from(vec![
+                    Span::styled("⚠ ", Style::default().fg(Color::Red)),
+                    Span::styled("Waiting for input since ", label_style),
+                    Span::styled(format_duration(duration), Style::default().fg(Color::Red)),
+                ]));
+            }
+
+            lines.push(Line::from(vec![
+                Span::styled("Session: ", label_style),
+                Span::styled("Paused - needs your input", Style::default().fg(Color::Red)),
+            ]));
+        }
+
+        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => {
+            // Show timing and branch info
+            if let Some(started) = task.started_at {
+                let duration = chrono::Utc::now().signed_duration_since(started);
+                lines.push(Line::from(vec![
+                    Span::styled("Total time: ", label_style),
+                    Span::styled(format_duration(duration), value_style),
+                ]));
+            }
+
+            if let Some(ref branch) = task.git_branch {
+                lines.push(Line::from(vec![
+                    Span::styled("Branch: ", label_style),
+                    Span::styled(branch, Style::default().fg(Color::Green)),
+                ]));
+            }
+
+            if task.status == crate::model::TaskStatus::Accepting {
+                if let Some(accept_started) = task.accepting_started_at {
+                    let elapsed = chrono::Utc::now().signed_duration_since(accept_started).num_seconds();
+                    let tool_info = task.last_tool_name.as_deref().unwrap_or("merging");
+                    lines.push(Line::from(vec![
+                        Span::styled("⟳ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("Rebasing ({}) {}s", tool_info, elapsed), Style::default().fg(Color::Yellow)),
+                    ]));
+                }
+            }
+        }
+
+        crate::model::TaskStatus::Done => {
+            // Show completion info
+            if let Some(completed) = task.completed_at {
+                lines.push(Line::from(vec![
+                    Span::styled("Completed: ", label_style),
+                    Span::styled(format_datetime(completed), Style::default().fg(Color::Green)),
+                ]));
+            }
+
+            if let (Some(started), Some(completed)) = (task.started_at, task.completed_at) {
+                let duration = completed.signed_duration_since(started);
+                lines.push(Line::from(vec![
+                    Span::styled("Duration: ", label_style),
+                    Span::styled(format_duration(duration), value_style),
+                ]));
+            }
+        }
     }
 
-    // Worktree path if present
+    // Worktree path (collapsed for active tasks, shown for debugging)
     if let Some(ref wt_path) = task.worktree_path {
         lines.push(Line::from(vec![
-            Span::styled("Worktree: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                wt_path.display().to_string(),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled("Worktree: ", label_style),
+            Span::styled(wt_path.display().to_string(), dim_style),
         ]));
     }
 
-    // Add close hint
+    // ═══════════════════════════════════════════════════════════════════════
+    // ACTIONS - Phase-specific key hints
+    // ═══════════════════════════════════════════════════════════════════════
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Press any key to close",
-        Style::default().fg(Color::DarkGray),
-    )));
+    lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+    lines.push(Line::from(Span::styled("Actions", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+    lines.push(Line::from(""));
+
+    match task.status {
+        crate::model::TaskStatus::Planned => {
+            lines.push(Line::from(vec![
+                Span::styled(" s ", key_style), Span::styled(" Start task with worktree isolation", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" q ", key_style), Span::styled(" Queue for running session", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" x ", key_style), Span::styled(" Mark as done", label_style),
+            ]));
+        }
+
+        crate::model::TaskStatus::Queued => {
+            lines.push(Line::from(vec![
+                Span::styled(" s ", key_style), Span::styled(" Start immediately", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" p ", key_style), Span::styled(" Move back to Planned", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+            ]));
+        }
+
+        crate::model::TaskStatus::InProgress => {
+            lines.push(Line::from(vec![
+                Span::styled(" s ", key_style), Span::styled(" Switch to Claude session", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" t ", key_style), Span::styled(" Open test shell in worktree", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" r ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+            ]));
+        }
+
+        crate::model::TaskStatus::NeedsInput => {
+            lines.push(Line::from(vec![
+                Span::styled(" s ", key_style), Span::styled(" Continue / switch to session", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" c ", key_style), Span::styled(" Continue task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" r ", key_style), Span::styled(" Reset task", label_style),
+            ]));
+        }
+
+        crate::model::TaskStatus::Review => {
+            lines.push(Line::from(vec![
+                Span::styled(" y ", key_style), Span::styled(" Accept: rebase and merge to main", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" n ", key_style), Span::styled(" Discard: delete branch without merging", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" c ", key_style), Span::styled(" Continue working on task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" a ", key_style), Span::styled(" Apply changes to main (for testing)", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" p ", key_style), Span::styled(" Move back to Planned", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" r ", key_style), Span::styled(" Reset task", label_style),
+            ]));
+        }
+
+        crate::model::TaskStatus::Accepting => {
+            lines.push(Line::from(Span::styled(
+                "  Task is being rebased onto main...",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+
+        crate::model::TaskStatus::Done => {
+            lines.push(Line::from(vec![
+                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" r ", key_style), Span::styled(" Move back to Review", label_style),
+            ]));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FOOTER: Close hint
+    // ═══════════════════════════════════════════════════════════════════════
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Esc", key_style),
+        Span::styled("/", dim_style),
+        Span::styled("Enter", key_style),
+        Span::styled("/", dim_style),
+        Span::styled("Space", key_style),
+        Span::styled(" close    ", dim_style),
+        Span::styled("?", key_style),
+        Span::styled(" full help", dim_style),
+    ]));
 
     let preview = Paragraph::new(lines)
         .block(
             Block::default()
-                .title(" Task Details ")
+                .title(format!(" {} ", task.status.label()))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(column_color)),
         )
         .style(Style::default().fg(Color::White))
         .wrap(ratatui::widgets::Wrap { trim: false });
 
-    // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(preview, area);
+}
+
+/// Format a datetime for display
+fn format_datetime(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let local = dt.with_timezone(&chrono::Local);
+    local.format("%b %d, %H:%M").to_string()
+}
+
+/// Format a duration for display (human-readable)
+fn format_duration(duration: chrono::Duration) -> String {
+    let total_secs = duration.num_seconds();
+    if total_secs < 60 {
+        format!("{}s", total_secs)
+    } else if total_secs < 3600 {
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        if secs > 0 {
+            format!("{}m {}s", mins, secs)
+        } else {
+            format!("{}m", mins)
+        }
+    } else {
+        let hours = total_secs / 3600;
+        let mins = (total_secs % 3600) / 60;
+        if mins > 0 {
+            format!("{}h {}m", hours, mins)
+        } else {
+            format!("{}h", hours)
+        }
+    }
 }
 
 /// Render help overlay

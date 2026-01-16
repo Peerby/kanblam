@@ -627,9 +627,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return vec![Message::ToggleHelp];
     }
 
-    // Handle task preview modal
+    // Handle task preview modal - allow action keys to work, only close on Esc/Enter/Space/?
     if app.model.ui_state.show_task_preview {
-        return vec![Message::ToggleTaskPreview];
+        return handle_task_preview_modal_key(key, app);
     }
 
     // Handle queue dialog if open
@@ -1069,6 +1069,226 @@ fn handle_queue_dialog_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::QueueDialogConfirm]
         }
 
+        _ => vec![],
+    }
+}
+
+/// Handle key events when the task preview modal is open
+/// Actions work directly from within the modal, closing it first
+fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
+    // Get the selected task for context-aware action handling
+    let task = app.model.active_project().and_then(|project| {
+        let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+        app.model.ui_state.selected_task_idx.and_then(|idx| tasks.get(idx).copied())
+    });
+
+    let Some(task) = task else {
+        return vec![Message::ToggleTaskPreview];
+    };
+
+    match key.code {
+        // Close modal only on Esc, Enter, Space
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+            vec![Message::ToggleTaskPreview]
+        }
+
+        // Open full help (closes modal, opens help)
+        KeyCode::Char('?') => {
+            vec![Message::ToggleTaskPreview, Message::ToggleHelp]
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PHASE-SPECIFIC ACTIONS (close modal then execute)
+        // ═══════════════════════════════════════════════════════════════════
+
+        // Start task (Planned/Queued) or switch to session (InProgress/NeedsInput/Review)
+        KeyCode::Char('s') => {
+            let mut msgs = vec![Message::ToggleTaskPreview];
+            match task.status {
+                TaskStatus::Planned | TaskStatus::Queued => {
+                    if let Some(project) = app.model.active_project() {
+                        if project.is_git_repo() {
+                            msgs.push(Message::StartTaskWithWorktree(task.id));
+                        } else {
+                            msgs.push(Message::StartTask(task.id));
+                        }
+                    }
+                }
+                TaskStatus::Review | TaskStatus::NeedsInput => {
+                    if task.worktree_path.is_some() {
+                        msgs.push(Message::ContinueTask(task.id));
+                    }
+                }
+                TaskStatus::InProgress => {
+                    if task.tmux_window.is_some() {
+                        msgs.push(Message::SwitchToTaskWindow(task.id));
+                    }
+                }
+                _ => {}
+            }
+            msgs
+        }
+
+        // Continue task (Review/NeedsInput)
+        KeyCode::Char('c') => {
+            if matches!(task.status, TaskStatus::Review | TaskStatus::NeedsInput) {
+                let mut msgs = vec![Message::ToggleTaskPreview];
+                if task.worktree_path.is_some() {
+                    msgs.push(Message::ContinueTask(task.id));
+                } else {
+                    msgs.push(Message::StartTask(task.id));
+                }
+                msgs
+            } else {
+                vec![]
+            }
+        }
+
+        // Accept task (Review only)
+        KeyCode::Char('y') => {
+            if task.status == TaskStatus::Review {
+                let mut msgs = vec![Message::ToggleTaskPreview];
+                if task.worktree_path.is_some() {
+                    msgs.push(Message::SmartAcceptTask(task.id));
+                } else {
+                    msgs.push(Message::MoveTask {
+                        task_id: task.id,
+                        to_status: TaskStatus::Done,
+                    });
+                }
+                msgs
+            } else {
+                vec![]
+            }
+        }
+
+        // Discard task (Review only)
+        KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if task.status == TaskStatus::Review {
+                let mut msgs = vec![Message::ToggleTaskPreview];
+                if task.worktree_path.is_some() {
+                    msgs.push(Message::DiscardTask(task.id));
+                } else {
+                    msgs.push(Message::MoveTask {
+                        task_id: task.id,
+                        to_status: TaskStatus::Planned,
+                    });
+                }
+                msgs
+            } else {
+                vec![]
+            }
+        }
+
+        // Open interactive modal
+        KeyCode::Char('o') => {
+            if task.claude_session_id.is_some() {
+                vec![Message::ToggleTaskPreview, Message::OpenInteractiveModal(task.id)]
+            } else {
+                vec![]
+            }
+        }
+
+        // Open test shell
+        KeyCode::Char('t') => {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput)
+                && task.worktree_path.is_some()
+            {
+                vec![Message::ToggleTaskPreview, Message::OpenTestShell(task.id)]
+            } else {
+                vec![]
+            }
+        }
+
+        // Apply changes to main (Review only)
+        KeyCode::Char('a') => {
+            if task.status == TaskStatus::Review && task.git_branch.is_some() {
+                vec![Message::ToggleTaskPreview, Message::ApplyTaskChanges(task.id)]
+            } else {
+                vec![]
+            }
+        }
+
+        // Edit task
+        KeyCode::Char('e') => {
+            vec![Message::ToggleTaskPreview, Message::EditTask(task.id)]
+        }
+
+        // Delete task (with confirmation)
+        KeyCode::Char('d') => {
+            let title = if task.title.len() > 30 {
+                format!("{}...", &task.title[..27])
+            } else {
+                task.title.clone()
+            };
+            vec![
+                Message::ToggleTaskPreview,
+                Message::ShowConfirmation {
+                    message: format!("Delete '{}'? (y/n)", title),
+                    action: model::PendingAction::DeleteTask(task.id),
+                },
+            ]
+        }
+
+        // Move back to Planned (from Review or Queued)
+        KeyCode::Char('p') => {
+            if matches!(task.status, TaskStatus::Review | TaskStatus::Queued) {
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::MoveTask {
+                        task_id: task.id,
+                        to_status: TaskStatus::Planned,
+                    },
+                ]
+            } else {
+                vec![]
+            }
+        }
+
+        // Reset task (Review/InProgress/NeedsInput) or move to Review (Done)
+        KeyCode::Char('r') => {
+            let mut msgs = vec![Message::ToggleTaskPreview];
+            if matches!(task.status, TaskStatus::Review | TaskStatus::InProgress | TaskStatus::NeedsInput) {
+                msgs.push(Message::ResetTask(task.id));
+            } else if task.status == TaskStatus::Done {
+                msgs.push(Message::MoveTask {
+                    task_id: task.id,
+                    to_status: TaskStatus::Review,
+                });
+            }
+            msgs
+        }
+
+        // Mark as done
+        KeyCode::Char('x') => {
+            if !matches!(task.status, TaskStatus::Done | TaskStatus::Accepting) {
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::MoveTask {
+                        task_id: task.id,
+                        to_status: TaskStatus::Done,
+                    },
+                ]
+            } else {
+                vec![]
+            }
+        }
+
+        // Queue task (Planned only)
+        KeyCode::Char('q') => {
+            if task.status == TaskStatus::Planned {
+                if let Some(project) = app.model.active_project() {
+                    let running_sessions = project.tasks_with_active_sessions();
+                    if !running_sessions.is_empty() {
+                        return vec![Message::ToggleTaskPreview, Message::ShowQueueDialog(task.id)];
+                    }
+                }
+            }
+            // If not in Planned or no sessions, q closes the modal
+            vec![Message::ToggleTaskPreview]
+        }
+
+        // Ignore other keys (don't close modal)
         _ => vec![],
     }
 }
