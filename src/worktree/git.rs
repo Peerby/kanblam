@@ -630,8 +630,40 @@ pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result
         .context("Failed to run rebase")?;
 
     if rebase_result.status.success() {
-        // Rebase succeeded without conflicts
-        return Ok(true);
+        // Rebase succeeded without git conflicts, but we must verify the build
+        // Git rebase only catches line-level conflicts, not semantic conflicts
+        // (e.g., code using old APIs/structures that have since changed)
+
+        let build_result = Command::new("cargo")
+            .current_dir(worktree_path)
+            .args(["build"])
+            .output();
+
+        match build_result {
+            Ok(output) if output.status.success() => {
+                // Build succeeded - safe to proceed with merge
+                return Ok(true);
+            }
+            Ok(output) => {
+                // Build failed - semantic conflicts exist
+                // Restore to pre-rebase state and let Claude handle it
+                if let Some(ref orig) = original_head {
+                    let _ = Command::new("git")
+                        .current_dir(worktree_path)
+                        .args(["reset", "--hard", orig])
+                        .output();
+                }
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("Fast rebase succeeded but build failed - falling back to Claude: {}",
+                    stderr.lines().take(5).collect::<Vec<_>>().join("\n"));
+                return Ok(false); // Fall back to Claude
+            }
+            Err(_) => {
+                // Couldn't run cargo build - proceed anyway but warn
+                // This could happen in non-Rust projects
+                return Ok(true);
+            }
+        }
     }
 
     // Rebase failed - check if it's due to conflicts
@@ -715,29 +747,62 @@ pub fn verify_rebase_success(project_dir: &PathBuf, task_id: Uuid) -> Result<boo
     Ok(is_ancestor.success())
 }
 
-/// Generate a prompt for Claude to rebase the current branch
+/// Generate a prompt for Claude to integrate task changes with latest main
 pub fn generate_rebase_prompt(main_branch: &str) -> String {
-    format!(r#"IMPORTANT: The main branch has advanced. You must rebase your changes before they can be merged.
+    format!(r#"CRITICAL INTEGRATION TASK: Your task branch is behind the main branch. You must integrate your changes with the latest main WITHOUT losing any work.
 
-Execute these steps IN ORDER:
+CONTEXT:
+- Your branch contains work that was done on an OLDER version of the codebase
+- The main branch has progressed with new features, refactors, and bug fixes
+- You must preserve YOUR work while also keeping ALL changes from main
+- This is NOT just a mechanical rebase - you may need to adapt your changes to work with the new codebase
 
-1. REBASE onto main:
-   git rebase {}
+STEP 1 - UNDERSTAND THE DIVERGENCE:
+First, see what has changed on main since your branch diverged:
+```
+git log --oneline HEAD..{0}
+git diff HEAD...{0} --stat
+```
 
-2. IF CONFLICTS occur during rebase:
-   - Open each conflicted file and resolve the conflict (keep both changes merged intelligently)
-   - Remove the conflict markers (<<<<<<<, =======, >>>>>>>)
-   - Stage the resolved file: git add <filename>
-   - Continue rebase: git rebase --continue
-   - Repeat for each conflict
+STEP 2 - ATTEMPT REBASE:
+```
+git fetch origin {0} 2>/dev/null || true
+git rebase {0}
+```
 
-3. VERIFY the rebase succeeded by checking the log shows main's commits:
-   git log --oneline -5
+STEP 3 - IF CONFLICTS OCCUR:
+For each conflict:
+1. Read BOTH versions carefully - understand what each side was trying to do
+2. The goal is to KEEP BOTH: your task's changes AND main's changes
+3. If main added new fields/functions your code doesn't know about, ADD them
+4. If main refactored something your code uses, ADAPT your code to the new structure
+5. Resolve the conflict, then: `git add <file>` and `git rebase --continue`
 
-When rebase is complete, just say "Rebase complete" and stop.
-If rebase fails and you cannot resolve it, say "Rebase failed" and stop.
+STEP 4 - VERIFY BUILD:
+After rebase completes, verify the code compiles:
+```
+cargo build 2>&1 | head -50
+```
 
-Do not explain. Execute these commands now."#, main_branch)
+If build fails:
+- Read the errors carefully
+- The errors likely indicate semantic conflicts (your code uses old APIs/structures)
+- Fix each error by adapting your code to work with main's new structure
+- Commit fixes: `git add -A && git commit -m "Fix integration with latest main"`
+
+STEP 5 - FINAL VERIFICATION:
+```
+git log --oneline -5
+cargo build
+```
+
+IMPORTANT PRINCIPLES:
+- NEVER discard work from either branch - integrate both
+- If unsure how to merge conflicting approaches, prefer main's structure but keep your functionality
+- The goal is: main's latest code + your task's feature/fix working together
+
+When complete, say "Integration complete - build verified".
+If you cannot resolve issues, explain what's blocking you."#, main_branch)
 }
 
 /// Check if a rebase is currently in progress in the worktree
