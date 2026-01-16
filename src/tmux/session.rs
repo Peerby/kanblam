@@ -518,14 +518,14 @@ pub fn switch_to_task_window(project_slug: &str, window_name: &str) -> Result<()
 }
 
 /// Create a test shell session for a task and switch to it
-/// Each task gets its own dedicated tmux session named "kb-{short-task-id}"
+/// Each task gets its own dedicated tmux session named "tst-{short-task-id}"
 /// If the session already exists, we reconnect to it
 pub fn create_test_shell(
     _project_slug: &str,
     task_id: &str,
     worktree_path: &std::path::Path,
 ) -> Result<String> {
-    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+    let session_name = format!("tst-{}", &task_id[..4.min(task_id.len())]);
 
     // Check if session already exists
     let check = Command::new("tmux")
