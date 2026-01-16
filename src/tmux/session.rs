@@ -479,43 +479,31 @@ pub fn switch_to_task_window(project_slug: &str, window_name: &str) -> Result<()
     Ok(())
 }
 
-/// Create a test shell window for a task and switch to it
-/// The window is created in the same session as the task, with a "test-" prefix
+/// Create a test shell session for a task and switch to it
+/// Each task gets its own dedicated tmux session named "kb-{short-task-id}"
+/// If the session already exists, we reconnect to it
 pub fn create_test_shell(
-    project_slug: &str,
+    _project_slug: &str,
     task_id: &str,
     worktree_path: &std::path::Path,
 ) -> Result<String> {
-    let session_name = format!("kc-{}", project_slug);
-    let window_name = format!("test-{}", &task_id[..8.min(task_id.len())]);
+    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
 
-    // Check if window already exists
+    // Check if session already exists
     let check = Command::new("tmux")
-        .args([
-            "list-windows",
-            "-t",
-            &session_name,
-            "-F",
-            "#{window_name}",
-        ])
+        .args(["has-session", "-t", &session_name])
         .output()?;
 
-    let window_exists = if check.status.success() {
-        let windows = String::from_utf8_lossy(&check.stdout);
-        windows.lines().any(|w| w == window_name)
-    } else {
-        false
-    };
+    let session_exists = check.status.success();
 
-    if !window_exists {
-        // Create new window in the session
+    if !session_exists {
+        // Create new detached session starting in the worktree directory
         let output = Command::new("tmux")
             .args([
-                "new-window",
-                "-t",
+                "new-session",
+                "-d",
+                "-s",
                 &session_name,
-                "-n",
-                &window_name,
                 "-c",
                 &worktree_path.to_string_lossy(),
             ])
@@ -523,20 +511,16 @@ pub fn create_test_shell(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create test window: {}", stderr));
+            return Err(anyhow!("Failed to create test session: {}", stderr));
         }
     }
 
-    // Switch to the test window
-    let target = format!("{}:{}", session_name, window_name);
+    // Switch to the test session
     let _ = Command::new("tmux")
-        .args(["switch-client", "-t", &target])
-        .output();
-    let _ = Command::new("tmux")
-        .args(["select-window", "-t", &target])
+        .args(["switch-client", "-t", &session_name])
         .output();
 
-    Ok(window_name)
+    Ok(session_name)
 }
 
 /// Kill a task window
