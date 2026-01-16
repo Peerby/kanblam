@@ -584,6 +584,15 @@ pub fn needs_rebase(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
 /// Returns Ok(false) if rebase failed due to conflicts (aborted automatically).
 /// Returns Err if something unexpected went wrong.
 pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result<bool> {
+    // SAFETY: Check if a rebase is already in progress (from a previous failed attempt)
+    if is_rebase_in_progress(worktree_path) {
+        // Abort any existing rebase first
+        let _ = Command::new("git")
+            .current_dir(worktree_path)
+            .args(["rebase", "--abort"])
+            .output();
+    }
+
     // First, fetch to make sure we have latest main
     // (ignore errors - might not have remote configured)
     let _ = Command::new("git")
@@ -603,6 +612,15 @@ pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result
     }
 
     let main_ref = String::from_utf8_lossy(&main_head.stdout).trim().to_string();
+
+    // SAFETY: Record original HEAD so we can restore if something goes wrong
+    let original_head = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
     // Try to rebase the worktree branch onto main
     let rebase_result = Command::new("git")
@@ -625,26 +643,48 @@ pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result
         .args(["rebase", "--abort"])
         .output();
 
-    if let Err(e) = abort_result {
-        // If abort fails, try to clean up
-        let _ = Command::new("git")
-            .current_dir(worktree_path)
-            .args(["reset", "--hard", "HEAD"])
-            .output();
-        return Err(anyhow!("Rebase failed and abort failed: {}", e));
+    // Check if abort succeeded (both execution and exit code)
+    let abort_ok = match &abort_result {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    };
+
+    if !abort_ok {
+        // Abort failed - try to restore to original state
+        if let Some(ref orig) = original_head {
+            let reset_result = Command::new("git")
+                .current_dir(worktree_path)
+                .args(["reset", "--hard", orig])
+                .output();
+
+            if reset_result.is_err() || !reset_result.unwrap().status.success() {
+                // CRITICAL: Could not restore worktree state
+                return Err(anyhow!(
+                    "Rebase failed and could not restore worktree. Manual intervention needed in: {}",
+                    worktree_path.display()
+                ));
+            }
+        } else {
+            return Err(anyhow!(
+                "Rebase failed and abort failed. Manual intervention needed in: {}",
+                worktree_path.display()
+            ));
+        }
     }
 
     // Check if it was a conflict (expected) vs other error
     if stderr.contains("CONFLICT") || stderr.contains("could not apply") ||
-       stderr.contains("Resolve all conflicts") {
+       stderr.contains("Resolve all conflicts") || stderr.contains("merge conflict") {
         // Conflicts detected - need Claude to resolve
         Ok(false)
-    } else if stderr.contains("nothing to do") || stderr.contains("up to date") {
+    } else if stderr.contains("nothing to do") || stderr.contains("up to date") ||
+              stderr.contains("is up to date") {
         // Already up to date
         Ok(true)
     } else {
-        // Some other error
-        Err(anyhow!("Rebase failed: {}", stderr))
+        // Some other error - but we've cleaned up, so let Claude try
+        // This is safer than returning an error that might block the merge
+        Ok(false)
     }
 }
 
