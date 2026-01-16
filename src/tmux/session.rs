@@ -690,6 +690,24 @@ pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Kill any detached tmux sessions associated with a task.
+/// This includes:
+/// - Claude popup sessions: `cl-{first-8-chars-of-task-id}`
+/// - Test shell sessions: `tst-{first-4-chars-of-task-id}`
+pub fn kill_task_sessions(task_id: &str) {
+    // Kill Claude popup session (cl-{first-8-chars})
+    let claude_session = format!("cl-{}", &task_id[..8.min(task_id.len())]);
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", &claude_session])
+        .output();
+
+    // Kill test shell session (tst-{first-4-chars})
+    let test_session = format!("tst-{}", &task_id[..4.min(task_id.len())]);
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", &test_session])
+        .output();
+}
+
 /// Check if a task window exists
 pub fn task_window_exists(project_slug: &str, window_name: &str) -> bool {
     let session_name = format!("kc-{}", project_slug);

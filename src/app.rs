@@ -835,6 +835,9 @@ impl App {
                         return commands;
                     }
 
+                    // Kill any detached Claude/test sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
+
                     // Merge branch to main
                     if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
                         commands.push(Message::Error(format!(
@@ -1095,6 +1098,9 @@ impl App {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
+                    // Kill any detached Claude/test sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
+
                     // Merge branch to main (should be fast-forward now)
                     if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
                         // Return to Review status on error
@@ -1169,6 +1175,9 @@ impl App {
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
+
+                    // Kill any detached Claude/test sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
 
                     // Remove worktree (don't merge)
                     if let Some(ref wt_path) = worktree_path {
@@ -1880,6 +1889,9 @@ impl App {
                                 if let Some(ref window) = window_name {
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
                                 }
+
+                                // Kill any detached Claude/test sessions for this task
+                                crate::tmux::kill_task_sessions(&task_id.to_string());
 
                                 // Remove worktree
                                 if let Some(ref wt_path) = worktree_path {
