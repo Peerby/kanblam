@@ -74,15 +74,15 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
     let is_selected = app.model.ui_state.selected_column == status
         && app.model.ui_state.focus == FocusArea::KanbanBoard;
 
-    // (title, background color, contrasting foreground for selected items)
+    // (number, title, background color, contrasting foreground for selected items)
     // Note: Accepting tasks appear in the Review column, so Accepting is styled like Review
-    let (title, color, contrast_fg) = match status {
-        TaskStatus::Planned => ("Planned", Color::Blue, Color::White),
-        TaskStatus::Queued => ("Queued", Color::Cyan, Color::Black),
-        TaskStatus::InProgress => ("In Progress", Color::Yellow, Color::Black),
-        TaskStatus::NeedsInput => ("Needs Input", Color::Red, Color::White),
-        TaskStatus::Review | TaskStatus::Accepting => ("Review", Color::Magenta, Color::White),
-        TaskStatus::Done => ("Done", Color::Green, Color::Black),
+    let (num, title, color, contrast_fg) = match status {
+        TaskStatus::Planned => ("1", "Planned", Color::Blue, Color::White),
+        TaskStatus::Queued => ("2", "Queued", Color::Cyan, Color::Black),
+        TaskStatus::InProgress => ("3", "In Progress", Color::Yellow, Color::Black),
+        TaskStatus::NeedsInput => ("4", "Needs Input", Color::Red, Color::White),
+        TaskStatus::Review | TaskStatus::Accepting => ("5", "Review", Color::Magenta, Color::White),
+        TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
     };
 
     let border_style = if is_selected {
@@ -100,6 +100,10 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
 
     let block = Block::default()
         .title(Line::from(vec![
+            Span::styled(
+                format!(" {}", num),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(
                 format!(" {} ", title),
                 if is_selected {

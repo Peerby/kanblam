@@ -1026,20 +1026,26 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Toggle divider below task
         KeyCode::Char('|') => vec![Message::ToggleDivider],
 
-        // Column switching with Shift+1-6 (or !, @, #, $, %, ^)
+        // Column switching with 1-6
         // 2x3 grid: Row 1: Planned|Queued, Row 2: InProgress|NeedsInput, Row 3: Review|Done
-        KeyCode::Char('!') => vec![Message::SelectColumn(model::TaskStatus::Planned)],
-        KeyCode::Char('@') => vec![Message::SelectColumn(model::TaskStatus::Queued)],
-        KeyCode::Char('#') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
-        KeyCode::Char('$') => vec![Message::SelectColumn(model::TaskStatus::NeedsInput)],
-        KeyCode::Char('%') => vec![Message::SelectColumn(model::TaskStatus::Review)],
-        KeyCode::Char('^') => vec![Message::SelectColumn(model::TaskStatus::Done)],
+        KeyCode::Char('1') => vec![Message::SelectColumn(model::TaskStatus::Planned)],
+        KeyCode::Char('2') => vec![Message::SelectColumn(model::TaskStatus::Queued)],
+        KeyCode::Char('3') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
+        KeyCode::Char('4') => vec![Message::SelectColumn(model::TaskStatus::NeedsInput)],
+        KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
+        KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],
 
-        // Project switching (1-9)
-        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let idx = c.to_digit(10).unwrap() as usize - 1;
-            vec![Message::SwitchProject(idx)]
-        }
+        // Project switching with Shift+1-0 (!, @, #, $, %, ^, &, *, (, ))
+        KeyCode::Char('!') => vec![Message::SwitchProject(0)],
+        KeyCode::Char('@') => vec![Message::SwitchProject(1)],
+        KeyCode::Char('#') => vec![Message::SwitchProject(2)],
+        KeyCode::Char('$') => vec![Message::SwitchProject(3)],
+        KeyCode::Char('%') => vec![Message::SwitchProject(4)],
+        KeyCode::Char('^') => vec![Message::SwitchProject(5)],
+        KeyCode::Char('&') => vec![Message::SwitchProject(6)],
+        KeyCode::Char('*') => vec![Message::SwitchProject(7)],
+        KeyCode::Char('(') => vec![Message::SwitchProject(8)],
+        KeyCode::Char(')') => vec![Message::SwitchProject(9)],
 
         // Paste image (Ctrl+V)
         KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {

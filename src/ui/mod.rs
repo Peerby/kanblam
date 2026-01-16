@@ -142,9 +142,10 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Gray)
         };
 
-        // Add keyboard shortcut hint (1-9)
-        let tab_text = if idx < 9 {
-            format!(" [{}] {} ", idx + 1, name)
+        // Add keyboard shortcut hint (Shift+1-0 for first 10 projects)
+        let shift_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+        let tab_text = if idx < 10 {
+            format!(" [{}] {} ", shift_chars[idx], name)
         } else {
             format!(" {} ", name)
         };
