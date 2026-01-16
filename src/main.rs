@@ -540,26 +540,24 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::InputSubmit]
         }
 
-        // Escape cancels feedback mode or unfocuses editor
+        // Escape: always pass to edtui for vim mode switching (Insert -> Normal)
+        // Never unfocuses - use Ctrl+C or Up at position 0 to exit
         KeyCode::Esc => {
-            if app.model.ui_state.feedback_task_id.is_some() {
-                vec![Message::CancelFeedbackMode]
-            } else if app.model.ui_state.editing_task_id.is_some() {
-                vec![Message::CancelEdit]
-            } else {
-                app.model.ui_state.clear_input();
-                vec![Message::FocusChanged(FocusArea::KanbanBoard)]
-            }
+            app.model.ui_state.editor_event_handler.on_key_event(
+                key,
+                &mut app.model.ui_state.editor_state,
+            );
+            vec![]
         }
 
-        // Ctrl+C unfocuses editor, cancels edit/feedback if active (keeps pending images)
+        // Ctrl+C unfocuses editor, cancels edit/feedback if active (keeps content for new tasks)
         KeyCode::Char('c') if ctrl => {
             if app.model.ui_state.feedback_task_id.is_some() {
                 vec![Message::CancelFeedbackMode]
             } else if app.model.ui_state.editing_task_id.is_some() {
                 vec![Message::CancelEdit]
             } else {
-                app.model.ui_state.clear_input();
+                // Just unfocus, keep the content
                 vec![Message::FocusChanged(FocusArea::KanbanBoard)]
             }
         }
@@ -598,10 +596,11 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             }
         }
 
-        // Up arrow at position 0 moves focus to Kanban board
+        // Up arrow at position 0 moves focus to Kanban board (keeps content)
         KeyCode::Up => {
             let cursor = app.model.ui_state.editor_state.cursor;
             if cursor.row == 0 && cursor.col == 0 {
+                // Just unfocus, keep the content
                 vec![Message::FocusChanged(FocusArea::KanbanBoard)]
             } else {
                 // Let edtui handle normal cursor movement
