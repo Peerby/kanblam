@@ -395,13 +395,11 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         return Err(anyhow!("Failed to get diff: {}", stderr));
     }
 
-    // Apply the diff (capture stderr to prevent it from leaking to terminal)
+    // Apply the diff
     let mut apply_cmd = Command::new("git")
         .current_dir(project_dir)
         .args(["apply", "--3way"])
         .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
         .spawn()?;
 
     if let Some(stdin) = apply_cmd.stdin.as_mut() {
@@ -426,19 +424,24 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
 }
 
 /// Unapply task changes from the main worktree
-/// This discards all changes (staged and unstaged) and optionally restores a stash
+/// This discards all unstaged changes and optionally restores a stash
 pub fn unapply_task_changes(project_dir: &PathBuf, stash_ref: Option<&str>) -> Result<()> {
-    // Discard all changes (staged and unstaged) by restoring from HEAD
-    // Using "checkout HEAD -- ." bypasses the index and restores directly from HEAD
+    // Discard all changes (staged and unstaged)
     let reset_output = Command::new("git")
         .current_dir(project_dir)
-        .args(["checkout", "HEAD", "--", "."])
+        .args(["checkout", "--", "."])
         .output()?;
 
     if !reset_output.status.success() {
         let stderr = String::from_utf8_lossy(&reset_output.stderr);
         return Err(anyhow!("Failed to discard changes: {}", stderr));
     }
+
+    // Also unstage any staged changes
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["reset", "HEAD"])
+        .output();
 
     // Restore the stash if we have one
     if let Some(_ref) = stash_ref {
@@ -882,54 +885,6 @@ IMPORTANT PRINCIPLES:
 
 When complete, say "Integration complete - build verified".
 If you cannot resolve issues, explain what's blocking you."#, main_branch)
-}
-
-/// Generate a prompt for Claude to prepare task changes for applying to main worktree
-/// This is similar to rebase prompt but emphasizes the goal is to test changes in main
-pub fn generate_apply_prompt(main_branch: &str) -> String {
-    format!(r#"PREPARE FOR APPLY: Your task branch has diverged from main. To apply your changes to the main worktree for testing, we first need to integrate your branch with the latest main.
-
-CONTEXT:
-- The user wants to TEST your task's changes in the main worktree before accepting
-- Your branch is based on an older version of main, so a direct apply would fail with conflicts
-- You must rebase your branch onto main to make the changes compatible
-- After this integration, your changes will be applied to main for testing
-
-STEP 1 - UNDERSTAND THE DIVERGENCE:
-```
-git log --oneline HEAD..{0}
-git diff HEAD...{0} --stat
-```
-
-STEP 2 - REBASE ONTO MAIN:
-```
-git fetch origin {0} 2>/dev/null || true
-git rebase {0}
-```
-
-STEP 3 - IF CONFLICTS OCCUR:
-For each conflict:
-1. Read BOTH versions carefully
-2. Keep YOUR task's changes while adapting to main's new structure
-3. If main added new fields/functions, ADD them
-4. If main refactored something, ADAPT your code
-5. Resolve: `git add <file>` and `git rebase --continue`
-
-STEP 4 - VERIFY BUILD:
-```
-cargo build 2>&1 | head -50
-```
-
-Fix any build errors by adapting your code to work with main's structure.
-
-STEP 5 - FINAL CHECK:
-```
-git log --oneline -5
-cargo build
-```
-
-When complete, say "Ready for apply - build verified".
-After you finish, your changes will be applied to the main worktree for the user to test."#, main_branch)
 }
 
 /// Check if a rebase is currently in progress in the worktree

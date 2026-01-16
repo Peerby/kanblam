@@ -1458,8 +1458,7 @@ impl App {
                             report_lines.push("VERDICT: HAS UNCOMMITTED WORK".to_string());
                             report_lines.push("Worktree has changes that haven't been committed yet.".to_string());
                         } else {
-                            report_lines.push("VERDICT: NO WORK DONE".to_string());
-                            report_lines.push("No commits on branch and no uncommitted changes.".to_string());
+                            report_lines.push("VERDICT: NOT MERGED (no commits on branch)".to_string());
                         }
                         report_lines.push("".to_string());
                         report_lines.push("Press any key to close.".to_string());
@@ -1552,9 +1551,12 @@ impl App {
                 }
             }
 
-            Message::SmartApplyTask(task_id) => {
+            Message::ApplyTaskChanges(task_id) => {
                 // Check if changes are already applied
-                if self.model.ui_state.applied_task_id.is_some() {
+                let already_applied = self.model.active_project()
+                    .map(|p| p.applied_task_id.is_some())
+                    .unwrap_or(false);
+                if already_applied {
                     commands.push(Message::SetStatusMessage(Some(
                         "Changes already applied. Press 'u' to unapply first.".to_string()
                     )));
@@ -1565,23 +1567,13 @@ impl App {
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
                         .find(|t| t.id == task_id)
-                        .map(|t| (
-                            p.working_dir.clone(),
-                            t.worktree_path.clone(),
-                            t.git_branch.clone(),
-                            t.status,
-                        ))
+                        .map(|t| (p.working_dir.clone(), t.git_branch.clone()))
                 });
 
-                if let Some((project_dir, worktree_path, git_branch, current_status)) = task_info {
-                    // Don't process if already applying
-                    if current_status == TaskStatus::Applying {
-                        return commands;
-                    }
-
+                if let Some((project_dir, git_branch)) = task_info {
                     // Check if the task has a git branch reference
                     let branch_name = match git_branch {
-                        Some(ref b) => b.clone(),
+                        Some(b) => b,
                         None => {
                             commands.push(Message::Error(
                                 "Task has no git branch. Was it started before worktree support?".to_string()
@@ -1600,108 +1592,54 @@ impl App {
 
                     if !branch_exists {
                         commands.push(Message::Error(format!(
-                            "Branch '{}' no longer exists. Task data is stale.",
+                            "Branch '{}' no longer exists. Task data is stale - the branch may have been deleted manually or during a failed accept.",
                             branch_name
                         )));
                         return commands;
                     }
 
-                    // CRITICAL: Commit any uncommitted changes in the worktree FIRST
-                    // This ensures we apply all work that Claude did, not just what was committed
-                    if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
-                            Ok(_) => {
-                                // Changes committed (or nothing to commit)
-                            }
-                            Err(e) => {
-                                commands.push(Message::Error(format!(
-                                    "Failed to commit worktree changes: {}. Changes preserved in worktree.",
-                                    e
-                                )));
-                                return commands;
-                            }
-                        }
-                    }
-
-                    // STEP 1: Try fast apply first
                     match crate::worktree::apply_task_changes(&project_dir, task_id) {
                         Ok(stash_ref) => {
-                            // Fast apply succeeded
-                            self.model.ui_state.applied_task_id = Some(task_id);
-                            self.model.ui_state.applied_stash_ref = stash_ref;
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.applied_task_id = Some(task_id);
+                                project.applied_stash_ref = stash_ref;
+                            }
                             commands.push(Message::SetStatusMessage(Some(
-                                "✓ Changes applied to main worktree. Press 'u' to unapply.".to_string()
+                                "Changes applied to main worktree. Press 'u' to unapply.".to_string()
                             )));
                         }
-                        Err(_) => {
-                            // Fast apply failed - check if we need to rebase first
-                            let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
-
-                            if needs_rebase {
-                                // Worktree diverged from main - need to rebase first
-                                if let Some(ref wt_path) = worktree_path {
-                                    // Try fast rebase first
-                                    match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
-                                        Ok(true) => {
-                                            // Fast rebase succeeded, now try apply again
-                                            commands.push(Message::SetStatusMessage(Some(
-                                                "✓ Fast rebase succeeded, applying...".to_string()
-                                            )));
-                                            commands.push(Message::CompleteApplyTask(task_id));
-                                        }
-                                        Ok(false) => {
-                                            // Conflicts - need Claude to resolve
-                                            commands.push(Message::SetStatusMessage(Some(
-                                                "Conflicts detected, starting smart apply...".to_string()
-                                            )));
-                                            commands.push(Message::StartApplySession { task_id });
-                                        }
-                                        Err(e) => {
-                                            // Error during rebase - try Claude
-                                            commands.push(Message::SetStatusMessage(Some(
-                                                format!("Fast rebase failed ({}), trying smart apply...", e)
-                                            )));
-                                            commands.push(Message::StartApplySession { task_id });
-                                        }
-                                    }
-                                } else {
-                                    commands.push(Message::Error(
-                                        "Cannot apply: worktree path not found.".to_string()
-                                    ));
-                                }
-                            } else {
-                                // No divergence but apply still failed - might be uncommitted changes
-                                commands.push(Message::Error(
-                                    "Failed to apply changes. Ensure main worktree is clean.".to_string()
-                                ));
-                            }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to apply changes: {}", e)));
                         }
                     }
                 }
             }
 
             Message::UnapplyTaskChanges => {
-                if self.model.ui_state.applied_task_id.is_none() {
-                    commands.push(Message::SetStatusMessage(Some(
-                        "No changes applied to unapply.".to_string()
-                    )));
-                    return commands;
-                }
+                let project_info = self.model.active_project()
+                    .map(|p| (p.working_dir.clone(), p.applied_task_id, p.applied_stash_ref.clone()));
 
-                let project_dir = self.model.active_project().map(|p| p.working_dir.clone());
-                let stash_ref = self.model.ui_state.applied_stash_ref.clone();
-
-                if let Some(project_dir) = project_dir {
-                    match crate::worktree::unapply_task_changes(&project_dir, stash_ref.as_deref()) {
-                        Ok(()) => {
-                            self.model.ui_state.applied_task_id = None;
-                            self.model.ui_state.applied_stash_ref = None;
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Changes unapplied. Original work restored.".to_string()
-                            )));
-                        }
-                        Err(e) => {
-                            commands.push(Message::Error(format!("Failed to unapply changes: {}", e)));
+                match project_info {
+                    Some((_, None, _)) | None => {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "No changes applied to unapply.".to_string()
+                        )));
+                        return commands;
+                    }
+                    Some((project_dir, Some(_), stash_ref)) => {
+                        match crate::worktree::unapply_task_changes(&project_dir, stash_ref.as_deref()) {
+                            Ok(()) => {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.applied_task_id = None;
+                                    project.applied_stash_ref = None;
+                                }
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Changes unapplied. Original work restored.".to_string()
+                                )));
+                            }
+                            Err(e) => {
+                                commands.push(Message::Error(format!("Failed to unapply changes: {}", e)));
+                            }
                         }
                     }
                 }
@@ -2452,7 +2390,6 @@ impl App {
                         let has_queued = project.next_queued_for(task_id).is_some();
                         let was_accepting = project.tasks[idx].status == TaskStatus::Accepting;
                         let was_updating = project.tasks[idx].status == TaskStatus::Updating;
-                        let was_applying = project.tasks[idx].status == TaskStatus::Applying;
                         let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
 
@@ -2478,9 +2415,6 @@ impl App {
                                 } else if was_updating {
                                     // Task was rebasing for update - complete update (no merge!)
                                     commands.push(Message::CompleteUpdateTask(task_id));
-                                } else if was_applying {
-                                    // Task was rebasing for apply - complete the apply
-                                    commands.push(Message::CompleteApplyTask(task_id));
                                 } else if has_queued {
                                     // Don't move to review - send the queued task instead
                                     task.status = TaskStatus::Review;
@@ -2498,7 +2432,7 @@ impl App {
                             }
                             "end" => {
                                 task.log_activity("Session ended");
-                                // If session ends while Accepting/Updating/Applying, cancel the operation
+                                // If session ends while Accepting or Updating, cancel the operation
                                 if was_accepting {
                                     task.log_activity("Accept cancelled");
                                     commands.push(Message::SetStatusMessage(Some(
@@ -2509,11 +2443,6 @@ impl App {
                                     commands.push(Message::SetStatusMessage(Some(
                                         "Update cancelled: Claude session ended during rebase.".to_string()
                                     )));
-                                } else if was_applying {
-                                    task.log_activity("Apply cancelled");
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "Apply cancelled: Claude session ended during rebase.".to_string()
-                                    )));
                                 }
                                 task.status = TaskStatus::Review;
                                 task.session_state = crate::model::ClaudeSessionState::Ended;
@@ -2523,10 +2452,10 @@ impl App {
                             }
                             "needs-input" => {
                                 task.log_activity("Waiting for input...");
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
                                 // or already in Review (Stop hook already fired - this is
                                 // likely idle_prompt firing after completion, not a real question)
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Review {
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Review {
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
@@ -2537,8 +2466,8 @@ impl App {
                             }
                             "input-provided" => {
                                 task.log_activity("Input received, continuing...");
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                if !was_accepting && !was_updating && !was_applying {
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
+                                if !was_accepting && !was_updating {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2734,10 +2663,9 @@ impl App {
 
                 let task_id = event.task_id;
 
-                // Track if this was an Accepting/Updating/Applying task that stopped/ended (for completion)
+                // Track if this was an Accepting/Updating task that stopped/ended (for completion)
                 let mut was_accepting = false;
                 let mut was_updating = false;
-                let mut was_applying = false;
 
                 for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -2746,15 +2674,14 @@ impl App {
                             task.claude_session_id = Some(session_id.clone());
                         }
 
-                        // Check if task was in Accepting/Updating/Applying status (rebase in progress)
+                        // Check if task was in Accepting/Updating status (rebase in progress)
                         was_accepting = task.status == TaskStatus::Accepting;
                         was_updating = task.status == TaskStatus::Updating;
-                        was_applying = task.status == TaskStatus::Applying;
 
                         match event.event_type {
                             SessionEventType::Started => {
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
                                     task.status = TaskStatus::InProgress; // Move from Queued to InProgress
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2763,10 +2690,10 @@ impl App {
                             }
                             SessionEventType::Stopped => {
                                 task.log_activity("Session stopped");
-                                // If task was accepting/updating/applying (rebase) OR is already done, don't change status
+                                // If task was accepting/updating (rebase) OR is already done, don't change status
                                 // Note: Both stopped and ended events may arrive - if stopped triggered
-                                // CompleteAcceptTask/CompleteUpdateTask/CompleteApplyTask which moved task, we must not reset it to Review
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
+                                // CompleteAcceptTask/CompleteUpdateTask which moved task, we must not reset it to Review
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Done {
                                     task.status = TaskStatus::Review;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
@@ -2776,7 +2703,7 @@ impl App {
                             }
                             SessionEventType::Ended => {
                                 task.log_activity("Session ended");
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Done {
                                     task.status = TaskStatus::Review;
                                     task.session_state = crate::model::ClaudeSessionState::Ended;
                                     project.needs_attention = true;
@@ -2786,8 +2713,8 @@ impl App {
                             }
                             SessionEventType::NeedsInput => {
                                 task.log_activity("Waiting for input...");
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                if !was_accepting && !was_updating && !was_applying {
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
+                                if !was_accepting && !was_updating {
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
@@ -2797,8 +2724,8 @@ impl App {
                             }
                             SessionEventType::Working => {
                                 task.log_activity("Working...");
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2814,8 +2741,8 @@ impl App {
                                     "Using tool...".to_string()
                                 };
                                 task.log_activity(&tool_msg);
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2851,10 +2778,6 @@ impl App {
                 // If an Updating task's session stopped/ended, complete the update (no merge!)
                 if was_updating && matches!(event.event_type, SessionEventType::Stopped | SessionEventType::Ended) {
                     commands.push(Message::CompleteUpdateTask(task_id));
-                }
-                // If an Applying task's session stopped/ended, complete the apply
-                if was_applying && matches!(event.event_type, SessionEventType::Stopped | SessionEventType::Ended) {
-                    commands.push(Message::CompleteApplyTask(task_id));
                 }
             }
 
@@ -3060,155 +2983,6 @@ impl App {
                         commands.push(Message::Error(
                             "Cannot start rebase: sidecar not connected.".to_string()
                         ));
-                    }
-                }
-            }
-
-            Message::StartApplySession { task_id } => {
-                // Start an SDK session for rebasing before apply (different from accept)
-                let task_info = self.model.active_project().and_then(|project| {
-                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
-                        (
-                            task.worktree_path.clone(),
-                            project.working_dir.clone(),
-                        )
-                    })
-                });
-
-                if let Some((Some(worktree_path), project_dir)) = task_info {
-                    // Detect main branch name
-                    let main_branch = std::process::Command::new("git")
-                        .current_dir(&project_dir)
-                        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                        .output()
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        .unwrap_or_else(|_| "master".to_string());
-
-                    // Generate apply prompt (rebase with apply context)
-                    let prompt = crate::worktree::generate_apply_prompt(&main_branch);
-
-                    if let Some(ref client) = self.sidecar_client {
-                        match client.start_session(task_id, &worktree_path, &prompt, None) {
-                            Ok(session_id) => {
-                                // Update task with session ID and Applying status
-                                if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.claude_session_id = Some(session_id);
-                                        task.status = TaskStatus::Applying;
-                                        task.session_state = crate::model::ClaudeSessionState::Working;
-                                        task.session_mode = crate::model::SessionMode::SdkManaged;
-                                        task.accepting_started_at = Some(chrono::Utc::now());
-                                        task.last_activity_at = Some(chrono::Utc::now());
-                                        task.last_tool_name = None;
-                                        task.clear_activity_log();
-                                        task.log_activity("Starting smart apply...");
-                                        task.log_activity("Rebasing onto main for apply");
-                                    }
-                                }
-                                commands.push(Message::SetStatusMessage(Some(
-                                    "Rebasing for apply... Claude is resolving conflicts.".to_string()
-                                )));
-                            }
-                            Err(e) => {
-                                commands.push(Message::Error(format!("Failed to start apply session: {}", e)));
-                                // Task stays in Review status
-                            }
-                        }
-                    } else {
-                        commands.push(Message::Error(
-                            "Cannot start apply: sidecar not connected.".to_string()
-                        ));
-                    }
-                }
-            }
-
-            Message::CompleteApplyTask(task_id) => {
-                // Complete the apply after rebase - do the actual apply
-                let task_info = self.model.active_project().and_then(|p| {
-                    p.tasks.iter()
-                        .find(|t| t.id == task_id)
-                        .map(|t| (
-                            p.working_dir.clone(),
-                            t.worktree_path.clone(),
-                            t.status,
-                        ))
-                });
-
-                if let Some((project_dir, worktree_path, status)) = task_info {
-                    // Check if rebase is still in progress
-                    if let Some(ref wt_path) = worktree_path {
-                        if crate::worktree::is_rebase_in_progress(wt_path) {
-                            commands.push(Message::Error(
-                                "Rebase still in progress. Wait for Claude to finish.".to_string()
-                            ));
-                            return commands;
-                        }
-                    }
-
-                    // Verify rebase succeeded
-                    match crate::worktree::verify_rebase_success(&project_dir, task_id) {
-                        Ok(true) => {
-                            // Rebase successful, now do the apply
-                            match crate::worktree::apply_task_changes(&project_dir, task_id) {
-                                Ok(stash_ref) => {
-                                    // Apply succeeded!
-                                    self.model.ui_state.applied_task_id = Some(task_id);
-                                    self.model.ui_state.applied_stash_ref = stash_ref;
-
-                                    // Return task to Review status
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.status = TaskStatus::Review;
-                                            task.session_state = crate::model::ClaudeSessionState::Paused;
-                                            task.accepting_started_at = None;
-                                        }
-                                    }
-
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "✓ Changes applied to main worktree. Press 'u' to unapply.".to_string()
-                                    )));
-                                    commands.push(Message::RefreshGitStatus);
-                                }
-                                Err(e) => {
-                                    // Apply still failed after rebase - shouldn't happen
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.status = TaskStatus::Review;
-                                            task.session_state = crate::model::ClaudeSessionState::Paused;
-                                        }
-                                    }
-                                    commands.push(Message::Error(format!(
-                                        "Apply failed even after rebase: {}",
-                                        e
-                                    )));
-                                }
-                            }
-                        }
-                        Ok(false) => {
-                            // Rebase failed
-                            if let Some(project) = self.model.active_project_mut() {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    // Only reset if currently Applying
-                                    if status == TaskStatus::Applying {
-                                        task.status = TaskStatus::Review;
-                                        task.session_state = crate::model::ClaudeSessionState::Paused;
-                                    }
-                                }
-                            }
-                            commands.push(Message::Error(
-                                "Rebase failed. Check the Claude session for errors.".to_string()
-                            ));
-                        }
-                        Err(e) => {
-                            if let Some(project) = self.model.active_project_mut() {
-                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    if status == TaskStatus::Applying {
-                                        task.status = TaskStatus::Review;
-                                    }
-                                }
-                            }
-                            commands.push(Message::Error(format!("Error verifying rebase: {}", e)));
-                        }
                     }
                 }
             }

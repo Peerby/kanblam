@@ -12,7 +12,7 @@ pub use git::{
     get_worktree_path, list_worktrees, WorktreeInfo, is_git_repo,
     get_task_diff, apply_task_changes, unapply_task_changes,
     needs_rebase, verify_rebase_success, generate_rebase_prompt,
-    generate_apply_prompt, is_rebase_in_progress, abort_rebase, try_fast_rebase,
+    is_rebase_in_progress, abort_rebase, try_fast_rebase,
     commit_worktree_changes, has_changes_to_merge, commit_main_changes,
     get_worktree_git_status, update_worktree_to_main, WorktreeGitStatus,
     get_worktree_changed_files, ChangedFile, is_branch_merged,

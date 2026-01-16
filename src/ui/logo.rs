@@ -24,9 +24,6 @@ const LOGO_MASCOT: [&str; 4] = [
     "   ▀▀ ▀▀  ",
 ];
 
-const LOGO_TEXT_LINE1: &str = "█ █ ▄▀█ █▄ █ ██▄ █   ▄▀█ █▀▄▀█";
-const LOGO_TEXT_LINE2: &str = "█▀▄ █▀█ █ ▀█ █▀▄ █   █▀█ █ ▀ █";
-const LOGO_TEXT_LINE3: &str = "█ █ █ █ █  █ ██▀ █▄▄ █ █ █   █";
 
 /// Render the logo/branding in the given area
 /// Automatically chooses between full logo, compact text, or nothing based on available width
@@ -43,31 +40,62 @@ pub fn render_logo(frame: &mut Frame, area: Rect) {
     // If width < MIN_BRANDING_WIDTH, render nothing
 }
 
+/// BLAM-inspired color palette - comic book explosion colors!
+/// Fiery gradient from yellow through orange to red/magenta
+const BLAM_YELLOW: Color = Color::Rgb(255, 220, 50);   // Bright explosive yellow
+const BLAM_ORANGE: Color = Color::Rgb(255, 140, 0);    // Hot orange
+const BLAM_RED: Color = Color::Rgb(255, 60, 60);       // Action red
+const BLAM_MAGENTA: Color = Color::Rgb(255, 50, 150);  // Electric magenta
+
 /// Render the full ASCII art logo with mascot
 fn render_full_logo(frame: &mut Frame, area: Rect) {
-    let green = Color::Rgb(80, 200, 120);
-    let mascot_style = Style::default().fg(green);
-    let text_style = Style::default().fg(green);
+    // Mascot gets a gradient from yellow (top) to orange (bottom)
+    let mascot_styles = [
+        Style::default().fg(BLAM_YELLOW),
+        Style::default().fg(BLAM_ORANGE),
+        Style::default().fg(BLAM_RED),
+        Style::default().fg(BLAM_MAGENTA),
+    ];
 
+    // KANBLAM text - each letter gets its own explosive color
+    // K=yellow, A=orange, N=red, B=magenta, L=red, A=orange, M=yellow
     let lines = vec![
         Line::from(vec![
-            Span::styled(LOGO_MASCOT[0], mascot_style),
+            Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
             Span::styled("    ", Style::default()),
-            Span::styled(LOGO_TEXT_LINE1, text_style),
+            Span::styled("█ █ ", Style::default().fg(BLAM_YELLOW)),   // K
+            Span::styled("▄▀█ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█▄ █ ", Style::default().fg(BLAM_RED)),     // N
+            Span::styled("██▄ ", Style::default().fg(BLAM_MAGENTA)),  // B
+            Span::styled("█   ", Style::default().fg(BLAM_RED)),      // L
+            Span::styled("▄▀█ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█▀▄▀█", Style::default().fg(BLAM_YELLOW)),  // M
         ]),
         Line::from(vec![
-            Span::styled(LOGO_MASCOT[1], mascot_style),
+            Span::styled(LOGO_MASCOT[1], mascot_styles[1]),
             Span::styled("    ", Style::default()),
-            Span::styled(LOGO_TEXT_LINE2, text_style),
+            Span::styled("█▀▄ ", Style::default().fg(BLAM_YELLOW)),   // K
+            Span::styled("█▀█ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█ ▀█ ", Style::default().fg(BLAM_RED)),     // N
+            Span::styled("█▀▄ ", Style::default().fg(BLAM_MAGENTA)),  // B
+            Span::styled("█   ", Style::default().fg(BLAM_RED)),      // L
+            Span::styled("█▀█ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█ ▀ █", Style::default().fg(BLAM_YELLOW)),  // M
         ]),
         Line::from(vec![
-            Span::styled(LOGO_MASCOT[2], mascot_style),
+            Span::styled(LOGO_MASCOT[2], mascot_styles[2]),
             Span::styled("    ", Style::default()),
-            Span::styled(LOGO_TEXT_LINE3, text_style),
+            Span::styled("█ █ ", Style::default().fg(BLAM_YELLOW)),   // K
+            Span::styled("█ █ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█  █ ", Style::default().fg(BLAM_RED)),     // N
+            Span::styled("██▀ ", Style::default().fg(BLAM_MAGENTA)),  // B
+            Span::styled("█▄▄ ", Style::default().fg(BLAM_RED)),      // L
+            Span::styled("█ █ ", Style::default().fg(BLAM_ORANGE)),   // A
+            Span::styled("█   █", Style::default().fg(BLAM_YELLOW)),  // M
         ]),
         Line::from(vec![
-            Span::styled(LOGO_MASCOT[3], mascot_style),
-            Span::styled("                                   ", Style::default()), // 4 spaces + 31 chars to match text width
+            Span::styled(LOGO_MASCOT[3], mascot_styles[3]),
+            Span::styled("                                   ", Style::default()),
         ]),
     ];
 
@@ -75,23 +103,35 @@ fn render_full_logo(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-/// Render compact text-only version (single line)
+/// Render compact text-only version (single line) with BLAM gradient
 fn render_compact_logo(frame: &mut Frame, area: Rect) {
-    let green = Color::Rgb(80, 200, 120);
-
+    // Each letter gets its BLAM color
     let line = Line::from(vec![
-        Span::styled("KANBLAM", Style::default().fg(green)),
+        Span::styled("K", Style::default().fg(BLAM_YELLOW)),
+        Span::styled("A", Style::default().fg(BLAM_ORANGE)),
+        Span::styled("N", Style::default().fg(BLAM_RED)),
+        Span::styled("B", Style::default().fg(BLAM_MAGENTA)),
+        Span::styled("L", Style::default().fg(BLAM_RED)),
+        Span::styled("A", Style::default().fg(BLAM_ORANGE)),
+        Span::styled("M", Style::default().fg(BLAM_YELLOW)),
     ]);
 
     let paragraph = Paragraph::new(line).alignment(Alignment::Right);
     frame.render_widget(paragraph, area);
 }
 
-/// Render minimal version (just the name)
+/// Render minimal version (just the name) with BLAM gradient
 fn render_minimal_logo(frame: &mut Frame, area: Rect) {
-    let green = Color::Rgb(80, 200, 120);
-
-    let line = Line::from(Span::styled("KANBLAM", Style::default().fg(green)));
+    // Each letter gets its BLAM color
+    let line = Line::from(vec![
+        Span::styled("K", Style::default().fg(BLAM_YELLOW)),
+        Span::styled("A", Style::default().fg(BLAM_ORANGE)),
+        Span::styled("N", Style::default().fg(BLAM_RED)),
+        Span::styled("B", Style::default().fg(BLAM_MAGENTA)),
+        Span::styled("L", Style::default().fg(BLAM_RED)),
+        Span::styled("A", Style::default().fg(BLAM_ORANGE)),
+        Span::styled("M", Style::default().fg(BLAM_YELLOW)),
+    ]);
     let paragraph = Paragraph::new(line).alignment(Alignment::Right);
     frame.render_widget(paragraph, area);
 }

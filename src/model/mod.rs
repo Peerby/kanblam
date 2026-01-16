@@ -183,6 +183,15 @@ pub struct Project {
     pub captured_output: String,
     #[serde(default)]
     pub hooks_installed: bool,
+
+    // Applied changes state (persisted so unapply works after restart)
+    /// Task ID whose changes are currently applied to main worktree (for testing)
+    /// When set, user can press 'u' to unapply the changes
+    #[serde(default)]
+    pub applied_task_id: Option<Uuid>,
+    /// Stash ref created when applying task changes (to restore original work on unapply)
+    #[serde(default)]
+    pub applied_stash_ref: Option<String>,
 }
 
 impl Project {
@@ -196,6 +205,8 @@ impl Project {
             created_at: Utc::now(),
             captured_output: String::new(),
             hooks_installed: false,
+            applied_task_id: None,
+            applied_stash_ref: None,
         }
     }
 
@@ -524,7 +535,6 @@ pub enum TaskStatus {
     Review,
     Accepting, // Rebasing onto main before accepting
     Updating,  // Rebasing onto main without merging back (just updating worktree)
-    Applying,  // Applying task changes to main worktree for testing
     Done,
 }
 
@@ -538,7 +548,6 @@ impl TaskStatus {
             TaskStatus::Review => "Review",
             TaskStatus::Accepting => "Accepting",
             TaskStatus::Updating => "Updating",
-            TaskStatus::Applying => "Applying",
             TaskStatus::Done => "Done",
         }
     }
@@ -556,14 +565,14 @@ impl TaskStatus {
     }
 
     /// Get array index for this status (for column_scroll_offsets)
-    /// Accepting, Updating, and Applying tasks appear in the Review column
+    /// Accepting and Updating tasks appear in the Review column
     pub fn index(&self) -> usize {
         match self {
             TaskStatus::Planned => 0,
             TaskStatus::Queued => 1,
             TaskStatus::InProgress => 2,
             TaskStatus::NeedsInput => 3,
-            TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => 4,
+            TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating => 4,
             TaskStatus::Done => 5,
         }
     }
@@ -608,13 +617,6 @@ pub struct UiState {
     pub queue_dialog_task_id: Option<Uuid>,
     /// Selected index in the queue dialog session list
     pub queue_dialog_selected_idx: usize,
-
-    // Applied changes state
-    /// Task ID whose changes are currently applied to main worktree (for testing)
-    /// When set, user can press 'u' to unapply the changes
-    pub applied_task_id: Option<Uuid>,
-    /// Stash ref created when applying task changes (to restore original work on unapply)
-    pub applied_stash_ref: Option<String>,
 
     // Task preview modal
     /// If true, show the task preview modal for the selected task
@@ -697,8 +699,6 @@ impl Default for UiState {
             column_scroll_offsets: [0; 6],
             queue_dialog_task_id: None,
             queue_dialog_selected_idx: 0,
-            applied_task_id: None,
-            applied_stash_ref: None,
             show_task_preview: false,
             interactive_modal: None,
             open_project_dialog_slot: None,
