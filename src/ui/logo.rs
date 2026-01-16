@@ -141,7 +141,7 @@ pub fn render_mascot_feet(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
         Span::styled("─", border_style),          // Gap between feet
         Span::styled("▀▀", feet_style),           // Right foot
         Span::styled("──", border_style),         // Trailing border (was spaces)
-        Span::styled("───────────────────────────────────", border_style),  // 35 chars of line
+        Span::styled("──────────────────────────────────", border_style),  // 34 chars of line
         Span::styled("┐", border_style),          // Top-right corner
     ]);
 
