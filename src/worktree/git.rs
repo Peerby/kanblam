@@ -377,10 +377,31 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         }
     }
 
-    // Get the diff from the task branch and apply it
+    // Find the merge-base (common ancestor) between HEAD and the task branch
+    // This ensures we only apply the task's changes, not revert changes made to main
+    let merge_base_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "HEAD", &branch_name])
+        .output()?;
+
+    if !merge_base_output.status.success() {
+        // Restore stash if we made one
+        if stash_ref.is_some() {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+        let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
+        return Err(anyhow!("Failed to find merge-base: {}", stderr));
+    }
+
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout).trim().to_string();
+
+    // Get the diff from merge-base to the task branch (only the task's changes)
     let diff_output = Command::new("git")
         .current_dir(project_dir)
-        .args(["diff", "HEAD", &branch_name])
+        .args(["diff", &merge_base, &branch_name])
         .output()?;
 
     if !diff_output.status.success() {
@@ -404,9 +425,14 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    if let Some(stdin) = apply_cmd.stdin.as_mut() {
+    // Write diff to stdin and explicitly close it (drop) so git knows we're done
+    {
         use std::io::Write;
+        let stdin = apply_cmd.stdin.take().expect("stdin was piped");
+        let mut stdin = std::io::BufWriter::new(stdin);
         stdin.write_all(&diff_output.stdout)?;
+        stdin.flush()?;
+        // stdin is dropped here, closing the pipe
     }
 
     let apply_result = apply_cmd.wait()?;
