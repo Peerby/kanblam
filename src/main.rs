@@ -104,12 +104,6 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Failed to save state: {}", e);
     }
 
-    // Kill sidecar if we spawned it
-    if let Some(mut child) = sidecar_child {
-        let _ = child.kill();
-        let _ = child.wait(); // Reap the zombie process
-    }
-
     result
 }
 

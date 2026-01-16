@@ -916,8 +916,35 @@ impl App {
                         crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
 
                     if needs_rebase {
-                        // Rebase needed - start SDK session to handle it
-                        commands.push(Message::StartRebaseSession { task_id });
+                        // Try fast rebase first (no Claude needed)
+                        if let Some(ref wt_path) = worktree_path {
+                            match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
+                                Ok(true) => {
+                                    // Fast rebase succeeded, proceed to merge
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "✓ Fast rebase succeeded, merging...".to_string()
+                                    )));
+                                    commands.push(Message::CompleteAcceptTask(task_id));
+                                }
+                                Ok(false) => {
+                                    // Conflicts detected, need Claude to resolve
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Conflicts detected, starting smart merge...".to_string()
+                                    )));
+                                    commands.push(Message::StartRebaseSession { task_id });
+                                }
+                                Err(e) => {
+                                    // Error during rebase attempt, fallback to Claude
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("Fast rebase failed ({}), trying smart merge...", e)
+                                    )));
+                                    commands.push(Message::StartRebaseSession { task_id });
+                                }
+                            }
+                        } else {
+                            // No worktree path, fallback to Claude
+                            commands.push(Message::StartRebaseSession { task_id });
+                        }
                     } else {
                         // No rebase needed - go straight to accept
                         commands.push(Message::CompleteAcceptTask(task_id));

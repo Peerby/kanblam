@@ -579,6 +579,75 @@ pub fn needs_rebase(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
     Ok(merge_base_hash != main_head_hash)
 }
 
+/// Try to perform an automatic rebase without Claude.
+/// Returns Ok(true) if rebase succeeded (no conflicts).
+/// Returns Ok(false) if rebase failed due to conflicts (aborted automatically).
+/// Returns Err if something unexpected went wrong.
+pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result<bool> {
+    // First, fetch to make sure we have latest main
+    // (ignore errors - might not have remote configured)
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["fetch", "origin", "main"])
+        .output();
+
+    // Get the main branch HEAD to rebase onto
+    let main_head = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .context("Failed to get main HEAD")?;
+
+    if !main_head.status.success() {
+        return Err(anyhow!("Failed to get main HEAD"));
+    }
+
+    let main_ref = String::from_utf8_lossy(&main_head.stdout).trim().to_string();
+
+    // Try to rebase the worktree branch onto main
+    let rebase_result = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rebase", &main_ref])
+        .output()
+        .context("Failed to run rebase")?;
+
+    if rebase_result.status.success() {
+        // Rebase succeeded without conflicts
+        return Ok(true);
+    }
+
+    // Rebase failed - check if it's due to conflicts
+    let stderr = String::from_utf8_lossy(&rebase_result.stderr);
+
+    // Abort the failed rebase to restore clean state
+    let abort_result = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rebase", "--abort"])
+        .output();
+
+    if let Err(e) = abort_result {
+        // If abort fails, try to clean up
+        let _ = Command::new("git")
+            .current_dir(worktree_path)
+            .args(["reset", "--hard", "HEAD"])
+            .output();
+        return Err(anyhow!("Rebase failed and abort failed: {}", e));
+    }
+
+    // Check if it was a conflict (expected) vs other error
+    if stderr.contains("CONFLICT") || stderr.contains("could not apply") ||
+       stderr.contains("Resolve all conflicts") {
+        // Conflicts detected - need Claude to resolve
+        Ok(false)
+    } else if stderr.contains("nothing to do") || stderr.contains("up to date") {
+        // Already up to date
+        Ok(true)
+    } else {
+        // Some other error
+        Err(anyhow!("Rebase failed: {}", stderr))
+    }
+}
+
 /// Verify that the task branch has been rebased onto main
 /// Returns true if the branch is now on top of main (or equal)
 pub fn verify_rebase_success(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
