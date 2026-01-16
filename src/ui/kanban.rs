@@ -75,13 +75,13 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         && app.model.ui_state.focus == FocusArea::KanbanBoard;
 
     // (number, title, background color, contrasting foreground for selected items)
-    // Note: Accepting tasks appear in the Review column, so Accepting is styled like Review
+    // Note: Accepting/Updating tasks appear in the Review column, so they're styled like Review
     let (num, title, color, contrast_fg) = match status {
         TaskStatus::Planned => ("1", "Planned", Color::Blue, Color::White),
         TaskStatus::Queued => ("2", "Queued", Color::Cyan, Color::Black),
         TaskStatus::InProgress => ("3", "In Progress", Color::Yellow, Color::Black),
         TaskStatus::NeedsInput => ("4", "Needs Input", Color::Red, Color::White),
-        TaskStatus::Review | TaskStatus::Accepting => ("5", "Review", Color::Magenta, Color::White),
+        TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating => ("5", "Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
     };
 
@@ -239,6 +239,16 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     spans.push(Span::styled(display_title, title_style));
                     if !task.images.is_empty() {
                         spans.push(Span::styled(" [img]", bracket_style));
+                    }
+
+                    // Show behind indicator if task's worktree is behind main
+                    if task.worktree_path.is_some() && task.git_commits_behind > 0 {
+                        let behind_style = if is_task_selected {
+                            Style::default().fg(contrast_fg).bg(color).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        };
+                        spans.push(Span::styled(format!(" ↓{}", task.git_commits_behind), behind_style));
                     }
 
                     let task_item = ListItem::new(Line::from(spans));
@@ -618,6 +628,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
             Span::styled("est ", desc_style),
+            Span::styled("u", key_style),
+            Span::styled("pdate ", desc_style),
             Span::styled("r", key_style),
             Span::styled("eview ", desc_style),
             Span::styled("x", key_style),
@@ -630,6 +642,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
             Span::styled("est ", desc_style),
+            Span::styled("u", key_style),
+            Span::styled("pdate ", desc_style),
             Span::styled("r", key_style),
             Span::styled("eview ", desc_style),
             Span::styled("x", key_style),
@@ -642,6 +656,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("ecline ", desc_style),
             Span::styled("f", key_style),
             Span::styled("eedback ", desc_style),
+            Span::styled("u", key_style),
+            Span::styled("pdate ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-reset", desc_style),
         ],
@@ -649,6 +665,10 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             // This case is handled by get_accepting_hints when a task is selected
             // Fallback text if no task is selected
             Span::styled("merging...", desc_style),
+        ],
+        TaskStatus::Updating => vec![
+            // Shows when task is updating (rebasing worktree)
+            Span::styled("updating...", desc_style),
         ],
         TaskStatus::Done => vec![
             Span::styled("e", key_style),

@@ -1445,6 +1445,94 @@ impl App {
                 }
             }
 
+            Message::UpdateWorktreeToMain(task_id) => {
+                // Get task info
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.working_dir.clone(),
+                            t.worktree_path.clone(),
+                            t.status,
+                        ))
+                });
+
+                if let Some((project_dir, worktree_path, status)) = task_info {
+                    // Don't update tasks that are already being accepted or updated
+                    if status == TaskStatus::Accepting || status == TaskStatus::Updating {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Cannot update while rebasing is in progress.".to_string()
+                        )));
+                        return commands;
+                    }
+
+                    if let Some(ref wt_path) = worktree_path {
+                        // First commit any uncommitted changes
+                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                commands.push(Message::Error(format!(
+                                    "Failed to commit changes before update: {}", e
+                                )));
+                                return commands;
+                            }
+                        }
+
+                        // Try fast rebase (update only - no merge, no status change)
+                        match crate::worktree::update_worktree_to_main(wt_path, &project_dir) {
+                            Ok(true) => {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "✓ Updated to latest main successfully.".to_string()
+                                )));
+                                // Refresh git status to update the UI
+                                commands.push(Message::RefreshGitStatus);
+                            }
+                            Ok(false) => {
+                                // Conflicts detected - start Claude to resolve them
+                                // Uses Updating status (not Accepting) so it doesn't merge after
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Conflicts detected, starting smart update...".to_string()
+                                )));
+                                commands.push(Message::StartUpdateRebaseSession { task_id });
+                            }
+                            Err(e) => {
+                                // Error during rebase attempt - also try Claude
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Fast rebase failed ({}), trying smart update...", e)
+                                )));
+                                commands.push(Message::StartUpdateRebaseSession { task_id });
+                            }
+                        }
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "No worktree found for this task.".to_string()
+                        )));
+                    }
+                }
+            }
+
+            Message::RefreshGitStatus => {
+                // Refresh git status for all tasks with worktrees in the active project
+                if let Some(project) = self.model.active_project_mut() {
+                    let project_dir = project.working_dir.clone();
+
+                    for task in project.tasks.iter_mut() {
+                        // Only need worktree_path - branch name is derived from task ID
+                        if task.worktree_path.is_some() {
+                            // Update git status cache
+                            if let Ok(status) = crate::worktree::get_worktree_git_status(&project_dir, task.id) {
+                                task.git_additions = status.additions;
+                                task.git_deletions = status.deletions;
+                                task.git_files_changed = status.files_changed;
+                                task.git_commits_ahead = status.commits_ahead;
+                                task.git_commits_behind = status.commits_behind;
+                                task.git_status_updated_at = Some(chrono::Utc::now());
+                            }
+                        }
+                    }
+                }
+            }
+
             // === Task queueing ===
 
             Message::ShowQueueDialog(task_id) => {
@@ -1634,6 +1722,9 @@ impl App {
                     self.model.ui_state.selected_is_divider = false;
                     self.model.ui_state.selected_is_divider_above = false;
                     self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                    // Refresh git status for the new project
+                    commands.push(Message::RefreshGitStatus);
 
                     // Check if this project needs hooks installed
                     if let Some(project) = self.model.projects.get(idx) {
@@ -2040,6 +2131,7 @@ impl App {
                         // Check if there's a queued task before getting mutable ref
                         let has_queued = project.next_queued_for(task_id).is_some();
                         let was_accepting = project.tasks[idx].status == TaskStatus::Accepting;
+                        let was_updating = project.tasks[idx].status == TaskStatus::Updating;
                         let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
 
@@ -2057,10 +2149,14 @@ impl App {
 
                         match signal.event.as_str() {
                             "stop" => {
+                                task.log_activity("Session stopped");
                                 if was_accepting {
-                                    // Task was rebasing - try to complete the accept
+                                    // Task was rebasing for accept - try to complete the accept
                                     // Keep status as Accepting, CompleteAcceptTask will verify and update
                                     commands.push(Message::CompleteAcceptTask(task_id));
+                                } else if was_updating {
+                                    // Task was rebasing for update - complete update (no merge!)
+                                    commands.push(Message::CompleteUpdateTask(task_id));
                                 } else if has_queued {
                                     // Don't move to review - send the queued task instead
                                     task.status = TaskStatus::Review;
@@ -2077,10 +2173,17 @@ impl App {
                                 }
                             }
                             "end" => {
-                                // If session ends while Accepting, cancel the accept
+                                task.log_activity("Session ended");
+                                // If session ends while Accepting or Updating, cancel the operation
                                 if was_accepting {
+                                    task.log_activity("Accept cancelled");
                                     commands.push(Message::SetStatusMessage(Some(
                                         "Accept cancelled: Claude session ended during rebase.".to_string()
+                                    )));
+                                } else if was_updating {
+                                    task.log_activity("Update cancelled");
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Update cancelled: Claude session ended during rebase.".to_string()
                                     )));
                                 }
                                 task.status = TaskStatus::Review;
@@ -2090,10 +2193,11 @@ impl App {
                                 notify::set_attention_indicator(&project.name);
                             }
                             "needs-input" => {
-                                // Don't change status if task is Accepting (mid-rebase)
+                                task.log_activity("Waiting for input...");
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
                                 // or already in Review (Stop hook already fired - this is
                                 // likely idle_prompt firing after completion, not a real question)
-                                if !was_accepting && task.status != TaskStatus::Review {
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Review {
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
@@ -2102,9 +2206,20 @@ impl App {
                                 }
                                 // If already in Review, ignore - Stop hook already handled it
                             }
-                            "input-provided" | "working" => {
-                                // Don't change status if task is Accepting (mid-rebase)
-                                if !was_accepting {
+                            "input-provided" => {
+                                task.log_activity("Input received, continuing...");
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
+                                if !was_accepting && !was_updating {
+                                    task.status = TaskStatus::InProgress;
+                                }
+                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                project.needs_attention = false;
+                                notify::clear_attention_indicator();
+                            }
+                            "working" => {
+                                task.log_activity("Working...");
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
+                                if !was_accepting && !was_updating {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2291,8 +2406,9 @@ impl App {
 
                 let task_id = event.task_id;
 
-                // Track if this was an Accepting task that stopped/ended (for smart merge completion)
+                // Track if this was an Accepting/Updating task that stopped/ended (for completion)
                 let mut was_accepting = false;
+                let mut was_updating = false;
 
                 for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -2301,44 +2417,75 @@ impl App {
                             task.claude_session_id = Some(session_id.clone());
                         }
 
-                        // Check if task was in Accepting status (smart merge rebase in progress)
+                        // Check if task was in Accepting/Updating status (rebase in progress)
                         was_accepting = task.status == TaskStatus::Accepting;
+                        was_updating = task.status == TaskStatus::Updating;
 
                         match event.event_type {
                             SessionEventType::Started => {
-                                // Don't override Accepting status if this is a rebase session
-                                if task.status != TaskStatus::Accepting {
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
                                     task.status = TaskStatus::InProgress; // Move from Queued to InProgress
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                 task.session_mode = crate::model::SessionMode::SdkManaged;
+                                task.log_activity("Session started");
                             }
-                            SessionEventType::Stopped | SessionEventType::Ended => {
-                                // If task was accepting (rebase) OR is already done, don't change status
+                            SessionEventType::Stopped => {
+                                task.log_activity("Session stopped");
+                                // If task was accepting/updating (rebase) OR is already done, don't change status
                                 // Note: Both stopped and ended events may arrive - if stopped triggered
-                                // CompleteAcceptTask which moved task to Done, we must not reset it to Review
-                                if !was_accepting && task.status != TaskStatus::Done {
+                                // CompleteAcceptTask/CompleteUpdateTask which moved task, we must not reset it to Review
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Done {
                                     task.status = TaskStatus::Review;
-                                    task.session_state = if event.event_type == SessionEventType::Ended {
-                                        crate::model::ClaudeSessionState::Ended
-                                    } else {
-                                        crate::model::ClaudeSessionState::Paused
-                                    };
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                }
+                            }
+                            SessionEventType::Ended => {
+                                task.log_activity("Session ended");
+                                if !was_accepting && !was_updating && task.status != TaskStatus::Done {
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Ended;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
                                 }
                             }
                             SessionEventType::NeedsInput => {
-                                task.status = TaskStatus::NeedsInput;
-                                task.session_state = crate::model::ClaudeSessionState::Paused;
-                                project.needs_attention = true;
-                                notify::play_attention_sound();
-                                notify::set_attention_indicator(&project.name);
+                                task.log_activity("Waiting for input...");
+                                // Don't change status if task is Accepting/Updating (mid-rebase)
+                                if !was_accepting && !was_updating {
+                                    task.status = TaskStatus::NeedsInput;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                }
                             }
-                            SessionEventType::Working | SessionEventType::ToolUse => {
-                                // Don't override Accepting status if this is a rebase session
-                                if task.status != TaskStatus::Accepting {
+                            SessionEventType::Working => {
+                                task.log_activity("Working...");
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
+                                    task.status = TaskStatus::InProgress;
+                                }
+                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                project.needs_attention = false;
+                                notify::clear_attention_indicator();
+                                task.last_activity_at = Some(chrono::Utc::now());
+                            }
+                            SessionEventType::ToolUse => {
+                                // Log the tool being used
+                                let tool_msg = if let Some(ref tool_name) = event.tool_name {
+                                    format!("Using {}", tool_name)
+                                } else {
+                                    "Using tool...".to_string()
+                                };
+                                task.log_activity(&tool_msg);
+                                // Don't override Accepting/Updating status if this is a rebase session
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -2354,6 +2501,11 @@ impl App {
                                 // Store output for display (could be used by output panel)
                                 if let Some(ref output) = event.output {
                                     project.captured_output.push_str(output);
+                                    // Log first line of output if it's meaningful
+                                    let first_line = output.lines().next().unwrap_or("").trim();
+                                    if !first_line.is_empty() && first_line.len() <= 60 {
+                                        task.log_activity(first_line);
+                                    }
                                 }
                             }
                         }
@@ -2365,6 +2517,10 @@ impl App {
                 // If an Accepting task's session stopped/ended, try to complete the smart merge
                 if was_accepting && matches!(event.event_type, SessionEventType::Stopped | SessionEventType::Ended) {
                     commands.push(Message::CompleteAcceptTask(task_id));
+                }
+                // If an Updating task's session stopped/ended, complete the update (no merge!)
+                if was_updating && matches!(event.event_type, SessionEventType::Stopped | SessionEventType::Ended) {
+                    commands.push(Message::CompleteUpdateTask(task_id));
                 }
             }
 
@@ -2546,6 +2702,10 @@ impl App {
                                         task.accepting_started_at = Some(chrono::Utc::now());
                                         task.last_activity_at = Some(chrono::Utc::now());
                                         task.last_tool_name = None;
+                                        // Clear and start activity log
+                                        task.clear_activity_log();
+                                        task.log_activity("Starting smart merge...");
+                                        task.log_activity("Rebasing onto main branch");
                                     }
                                 }
                                 commands.push(Message::SetStatusMessage(Some(
@@ -2670,6 +2830,142 @@ impl App {
                     }
                 } else {
                     commands.push(Message::Error("Task not found".to_string()));
+                }
+            }
+
+            Message::StartUpdateRebaseSession { task_id } => {
+                // Start an SDK session for rebasing during update (NOT accept)
+                // Uses Updating status so completion doesn't merge to main
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.worktree_path.clone(),
+                            project.working_dir.clone(),
+                            task.status,
+                        )
+                    })
+                });
+
+                if let Some((Some(worktree_path), project_dir, previous_status)) = task_info {
+                    // Detect main branch name (master or main)
+                    let main_branch = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                        .output()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .unwrap_or_else(|_| "master".to_string());
+
+                    // Generate the rebase prompt
+                    let prompt = crate::worktree::generate_rebase_prompt(&main_branch);
+
+                    if let Some(ref client) = self.sidecar_client {
+                        match client.start_session(task_id, &worktree_path, &prompt, None) {
+                            Ok(session_id) => {
+                                // Update task with session ID and Updating status (NOT Accepting!)
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.claude_session_id = Some(session_id);
+                                        task.status = TaskStatus::Updating;
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                                        task.last_activity_at = Some(chrono::Utc::now());
+                                        task.last_tool_name = None;
+                                        // Clear and start activity log
+                                        task.clear_activity_log();
+                                        task.log_activity("Starting worktree update...");
+                                        task.log_activity("Rebasing onto main branch");
+                                    }
+                                }
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Updating worktree... Claude is resolving conflicts.".to_string()
+                                )));
+                            }
+                            Err(e) => {
+                                commands.push(Message::Error(format!("Failed to start update session: {}", e)));
+                                // Reset task to previous status
+                                if let Some(project) = self.model.active_project_mut() {
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.status = previous_status;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        commands.push(Message::Error(
+                            "Cannot start update: sidecar not connected.".to_string()
+                        ));
+                    }
+                }
+            }
+
+            Message::CompleteUpdateTask(task_id) => {
+                // Complete an update operation - verify rebase succeeded, then return to Review
+                // Does NOT merge to main and does NOT mark as done!
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.working_dir.clone(),
+                            t.worktree_path.clone(),
+                            t.status,
+                        ))
+                });
+
+                if let Some((project_dir, worktree_path, status)) = task_info {
+                    // Only process if task was updating
+                    if status != TaskStatus::Updating {
+                        return commands;
+                    }
+
+                    // Check if rebase is still in progress
+                    if let Some(ref wt_path) = worktree_path {
+                        if crate::worktree::is_rebase_in_progress(wt_path) {
+                            commands.push(Message::Error(
+                                "Rebase still in progress. Wait for Claude to finish.".to_string()
+                            ));
+                            return commands;
+                        }
+                    }
+
+                    // Verify branch is now on top of main
+                    match crate::worktree::verify_rebase_success(&project_dir, task_id) {
+                        Ok(true) => {
+                            // Rebase successful - return to Review status
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                }
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "✓ Worktree updated to latest main successfully.".to_string()
+                            )));
+                            commands.push(Message::RefreshGitStatus);
+                        }
+                        Ok(false) => {
+                            // Rebase failed - return to Review status
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                }
+                            }
+                            commands.push(Message::Error(
+                                "Update failed. Check the Claude session for errors.".to_string()
+                            ));
+                            commands.push(Message::RefreshGitStatus);
+                        }
+                        Err(e) => {
+                            // Error checking - return to Review
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Review;
+                                }
+                            }
+                            commands.push(Message::Error(format!("Error verifying update: {}", e)));
+                            commands.push(Message::RefreshGitStatus);
+                        }
+                    }
                 }
             }
 
@@ -3037,6 +3333,11 @@ impl App {
                             }
                         }
                     }
+                }
+
+                // Refresh git status every ~5 seconds (50 ticks at 100ms per tick)
+                if self.model.ui_state.animation_frame % 50 == 0 {
+                    commands.push(Message::RefreshGitStatus);
                 }
             }
 

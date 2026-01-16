@@ -310,6 +310,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskStatus::NeedsInput => (Color::Red, "Needs Input"),
         crate::model::TaskStatus::Review => (Color::Magenta, "Review"),
         crate::model::TaskStatus::Accepting => (Color::Magenta, "Accepting"),
+        crate::model::TaskStatus::Updating => (Color::Magenta, "Updating"),
         crate::model::TaskStatus::Done => (Color::Green, "Done"),
     };
 
@@ -427,7 +428,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             ]));
         }
 
-        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting => {
+        crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting | crate::model::TaskStatus::Updating => {
             // Show timing and branch info
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
@@ -453,6 +454,15 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                         Span::styled(format!("Rebasing ({}) {}s", tool_info, elapsed), Style::default().fg(Color::Yellow)),
                     ]));
                 }
+            } else if task.status == crate::model::TaskStatus::Updating {
+                if let Some(activity_at) = task.last_activity_at {
+                    let elapsed = chrono::Utc::now().signed_duration_since(activity_at).num_seconds();
+                    let tool_info = task.last_tool_name.as_deref().unwrap_or("updating");
+                    lines.push(Line::from(vec![
+                        Span::styled("⟳ ", Style::default().fg(Color::Cyan)),
+                        Span::styled(format!("Updating ({}) {}s", tool_info, elapsed), Style::default().fg(Color::Cyan)),
+                    ]));
+                }
             }
         }
 
@@ -475,10 +485,161 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // GIT STATUS - For tasks with worktrees
+    // ═══════════════════════════════════════════════════════════════════════
+    if task.worktree_path.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+        lines.push(Line::from(Span::styled("Git Status", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(""));
+
+        // Show branch
+        if let Some(ref branch) = task.git_branch {
+            lines.push(Line::from(vec![
+                Span::styled("Branch: ", label_style),
+                Span::styled(branch, Style::default().fg(Color::Green)),
+            ]));
+        }
+
+        // Show line changes with visual bar
+        let total_changes = task.git_additions + task.git_deletions;
+        if total_changes > 0 {
+            // Create a visual bar showing proportion of additions vs deletions
+            let bar_width = 20usize;
+            let add_ratio = task.git_additions as f64 / total_changes as f64;
+            let add_chars = (add_ratio * bar_width as f64).round() as usize;
+            let del_chars = bar_width.saturating_sub(add_chars);
+
+            let add_bar = "█".repeat(add_chars);
+            let del_bar = "█".repeat(del_chars);
+
+            lines.push(Line::from(vec![
+                Span::styled("Changes: ", label_style),
+                Span::styled(format!("+{}", task.git_additions), Style::default().fg(Color::Green)),
+                Span::styled(" / ", dim_style),
+                Span::styled(format!("-{}", task.git_deletions), Style::default().fg(Color::Red)),
+                Span::styled("  ", dim_style),
+                Span::styled(add_bar, Style::default().fg(Color::Green)),
+                Span::styled(del_bar, Style::default().fg(Color::Red)),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::styled("Files:   ", label_style),
+                Span::styled(format!("{} changed", task.git_files_changed), value_style),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("Changes: ", label_style),
+                Span::styled("No changes yet", dim_style),
+            ]));
+        }
+
+        // Show commits ahead/behind with status indicator
+        if task.git_commits_ahead > 0 || task.git_commits_behind > 0 {
+            let mut commit_spans = vec![Span::styled("Commits: ", label_style)];
+
+            if task.git_commits_ahead > 0 {
+                commit_spans.push(Span::styled(
+                    format!("↑{} ahead", task.git_commits_ahead),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+
+            if task.git_commits_behind > 0 {
+                if task.git_commits_ahead > 0 {
+                    commit_spans.push(Span::styled("  ", dim_style));
+                }
+                commit_spans.push(Span::styled(
+                    format!("↓{} behind", task.git_commits_behind),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            lines.push(Line::from(commit_spans));
+
+            // Show warning if behind main
+            if task.git_commits_behind > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("         ", label_style),
+                    Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+                    Span::styled("Main has new commits - press ", Style::default().fg(Color::Yellow)),
+                    Span::styled("u", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(" to update", Style::default().fg(Color::Yellow)),
+                ]));
+            }
+        } else if total_changes > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("Commits: ", label_style),
+                Span::styled("✓ Up to date with main", Style::default().fg(Color::Green)),
+            ]));
+        }
+
+        // Get and show changed files (limited to top 8)
+        if let Some(project) = app.model.active_project() {
+            if let Ok(files) = crate::worktree::get_worktree_changed_files(&project.working_dir, task.id) {
+                if !files.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled("Changed Files:", label_style)));
+
+                    let max_files = 8;
+                    for (i, file) in files.iter().take(max_files).enumerate() {
+                        // Truncate long paths
+                        let max_path_len = 35;
+                        let display_path = if file.path.len() > max_path_len {
+                            format!("...{}", &file.path[file.path.len() - max_path_len + 3..])
+                        } else {
+                            file.path.clone()
+                        };
+
+                        let status_indicator = if file.is_new {
+                            Span::styled(" (new)", Style::default().fg(Color::Green))
+                        } else if file.is_deleted {
+                            Span::styled(" (del)", Style::default().fg(Color::Red))
+                        } else if file.is_renamed {
+                            Span::styled(" (ren)", Style::default().fg(Color::Yellow))
+                        } else {
+                            Span::raw("")
+                        };
+
+                        let line_spans = vec![
+                            Span::styled("  ", dim_style),
+                            Span::styled(display_path, value_style),
+                            status_indicator,
+                            Span::styled(
+                                format!("  +{}", file.additions),
+                                Style::default().fg(Color::Green),
+                            ),
+                            Span::styled("/", dim_style),
+                            Span::styled(
+                                format!("-{}", file.deletions),
+                                Style::default().fg(Color::Red),
+                            ),
+                        ];
+
+                        lines.push(Line::from(line_spans));
+
+                        // Show "and X more..." if truncated
+                        if i == max_files - 1 && files.len() > max_files {
+                            lines.push(Line::from(vec![
+                                Span::styled("  ", dim_style),
+                                Span::styled(
+                                    format!("... and {} more files", files.len() - max_files),
+                                    dim_style,
+                                ),
+                            ]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Worktree path (collapsed for active tasks, shown for debugging)
     if let Some(ref wt_path) = task.worktree_path {
+        lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Worktree: ", label_style),
+            Span::styled("Path: ", label_style),
             Span::styled(wt_path.display().to_string(), dim_style),
         ]));
     }
@@ -529,6 +690,12 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" t ", key_style), Span::styled(" Open test shell in worktree", label_style),
             ]));
+            if task.git_commits_behind > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
+                ]));
+            }
             lines.push(Line::from(vec![
                 Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
             ]));
@@ -547,6 +714,12 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
             ]));
+            if task.git_commits_behind > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
+                ]));
+            }
             lines.push(Line::from(vec![
                 Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
             ]));
@@ -571,6 +744,12 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
             ]));
+            if task.git_commits_behind > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
+                ]));
+            }
             lines.push(Line::from(vec![
                 Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
             ]));
@@ -580,6 +759,13 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(Span::styled(
                 "  Task is being rebased onto main...",
                 Style::default().fg(Color::Yellow),
+            )));
+        }
+
+        crate::model::TaskStatus::Updating => {
+            lines.push(Line::from(Span::styled(
+                "  Worktree is being updated to latest main...",
+                Style::default().fg(Color::Cyan),
             )));
         }
 
@@ -595,6 +781,61 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+            ]));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ACTIVITY LOG - Show recent activity during Accepting/Updating
+    // ═══════════════════════════════════════════════════════════════════════
+    if !task.activity_log.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+
+        // Show different header based on status
+        let log_header = match task.status {
+            crate::model::TaskStatus::Accepting => "Merge Activity",
+            crate::model::TaskStatus::Updating => "Update Activity",
+            _ => "Recent Activity",
+        };
+        lines.push(Line::from(Span::styled(
+            log_header,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        )));
+        lines.push(Line::from(""));
+
+        // Show the last 6 entries (most recent at bottom for natural scrolling feel)
+        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(6).collect();
+        for entry in entries_to_show.iter().rev() {
+            // Format timestamp as relative time
+            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
+            let time_ago = if elapsed.num_seconds() < 5 {
+                "now".to_string()
+            } else if elapsed.num_seconds() < 60 {
+                format!("{}s ago", elapsed.num_seconds())
+            } else if elapsed.num_minutes() < 60 {
+                format!("{}m ago", elapsed.num_minutes())
+            } else {
+                format!("{}h ago", elapsed.num_hours())
+            };
+
+            // Color based on message content
+            let msg_color = if entry.message.starts_with("Using ") {
+                Color::Cyan
+            } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
+                Color::Red
+            } else if entry.message.contains("success") || entry.message.contains("complete") {
+                Color::Green
+            } else {
+                Color::White
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    truncate_string(&entry.message, 35),
+                    Style::default().fg(msg_color)
+                ),
             ]));
         }
     }
@@ -632,6 +873,17 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
 fn format_datetime(dt: chrono::DateTime<chrono::Utc>) -> String {
     let local = dt.with_timezone(&chrono::Local);
     local.format("%b %d, %H:%M").to_string()
+}
+
+/// Truncate a string to a maximum length with ellipsis
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len <= 3 {
+        "...".to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
 }
 
 /// Format a duration for display (human-readable)

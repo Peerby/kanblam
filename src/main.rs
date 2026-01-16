@@ -80,6 +80,12 @@ async fn main() -> anyhow::Result<()> {
     // This catches cases where signals were lost or had wrong session IDs
     detect_idle_tasks_from_tmux(&mut app);
 
+    // Initial git status refresh for all tasks with worktrees
+    let commands = app.update(Message::RefreshGitStatus);
+    for cmd in commands {
+        app.update(cmd);
+    }
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -769,10 +775,27 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Unapply task changes from main worktree
+        // Unapply task changes OR Update worktree to latest main
         KeyCode::Char('u') => {
+            // If there's an applied task, unapply it first
             if app.model.ui_state.applied_task_id.is_some() {
                 return vec![Message::UnapplyTaskChanges];
+            }
+
+            // Otherwise, update worktree to latest main (for tasks with worktrees)
+            let column = app.model.ui_state.selected_column;
+            if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review) {
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(column);
+                    if let Some(idx) = app.model.ui_state.selected_task_idx {
+                        if let Some(task) = tasks.get(idx) {
+                            // Only allow update for tasks with worktrees that are behind
+                            if task.worktree_path.is_some() && task.git_commits_behind > 0 {
+                                return vec![Message::UpdateWorktreeToMain(task.id)];
+                            }
+                        }
+                    }
+                }
             }
             vec![]
         }
@@ -834,7 +857,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                                 }
                             }
                             TaskStatus::Accepting => {
-                                // Task is being rebased - can't interact via s
+                                // Task is being rebased for accept - can't interact via s
+                            }
+                            TaskStatus::Updating => {
+                                // Task is being rebased for update - can't interact via s
                             }
                             TaskStatus::Done => {
                                 // Can't do anything with done tasks via s

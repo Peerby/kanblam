@@ -217,10 +217,10 @@ impl Project {
 
     pub fn tasks_by_status(&self, status: TaskStatus) -> Vec<&Task> {
         // Return tasks in Vec order - allows manual reordering with +/-
-        // Accepting tasks appear in the Review column
+        // Accepting and Updating tasks appear in the Review column
         self.tasks.iter().filter(|t| {
             t.status == status ||
-            (status == TaskStatus::Review && t.status == TaskStatus::Accepting)
+            (status == TaskStatus::Review && (t.status == TaskStatus::Accepting || t.status == TaskStatus::Updating))
         }).collect()
     }
 
@@ -261,6 +261,24 @@ impl Project {
 
     pub fn needs_input_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsInput).count()
+    }
+}
+
+/// A single entry in the task activity log
+#[derive(Debug, Clone)]
+pub struct ActivityLogEntry {
+    /// When this activity occurred
+    pub timestamp: DateTime<Utc>,
+    /// Short description of the activity
+    pub message: String,
+}
+
+impl ActivityLogEntry {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            message: message.into(),
+        }
     }
 }
 
@@ -384,6 +402,33 @@ pub struct Task {
     /// Name of the last tool used (for activity display)
     #[serde(default)]
     pub last_tool_name: Option<String>,
+
+    // === Activity log (for UI feedback during Accepting/Updating) ===
+
+    /// Recent activity log entries (not persisted)
+    #[serde(skip)]
+    pub activity_log: Vec<ActivityLogEntry>,
+
+    // === Git status cache (updated periodically) ===
+
+    /// Cached git status for the worktree (lines added)
+    #[serde(skip)]
+    pub git_additions: usize,
+    /// Cached git status for the worktree (lines deleted)
+    #[serde(skip)]
+    pub git_deletions: usize,
+    /// Cached git status for the worktree (files changed)
+    #[serde(skip)]
+    pub git_files_changed: usize,
+    /// Cached git status for the worktree (commits ahead of main)
+    #[serde(skip)]
+    pub git_commits_ahead: usize,
+    /// Cached git status for the worktree (commits behind main)
+    #[serde(skip)]
+    pub git_commits_behind: usize,
+    /// When the git status was last updated
+    #[serde(skip)]
+    pub git_status_updated_at: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -414,12 +459,34 @@ impl Task {
             accepting_started_at: None,
             last_activity_at: None,
             last_tool_name: None,
+            activity_log: Vec::new(),
+            // Git status cache
+            git_additions: 0,
+            git_deletions: 0,
+            git_files_changed: 0,
+            git_commits_ahead: 0,
+            git_commits_behind: 0,
+            git_status_updated_at: None,
         }
     }
 
     /// Check if this task has an active worktree session
     pub fn has_active_session(&self) -> bool {
         self.worktree_path.is_some() && self.session_state.is_active()
+    }
+
+    /// Add an entry to the activity log (keeps last 30 entries)
+    pub fn log_activity(&mut self, message: impl Into<String>) {
+        const MAX_LOG_ENTRIES: usize = 30;
+        self.activity_log.push(ActivityLogEntry::new(message));
+        if self.activity_log.len() > MAX_LOG_ENTRIES {
+            self.activity_log.remove(0);
+        }
+    }
+
+    /// Clear the activity log (e.g., when starting a new accept/update)
+    pub fn clear_activity_log(&mut self) {
+        self.activity_log.clear();
     }
 
     /// Check if this task can be started (not already active)
@@ -456,6 +523,7 @@ pub enum TaskStatus {
     NeedsInput,
     Review,
     Accepting, // Rebasing onto main before accepting
+    Updating,  // Rebasing onto main without merging back (just updating worktree)
     Done,
 }
 
@@ -468,6 +536,7 @@ impl TaskStatus {
             TaskStatus::NeedsInput => "Needs Input",
             TaskStatus::Review => "Review",
             TaskStatus::Accepting => "Accepting",
+            TaskStatus::Updating => "Updating",
             TaskStatus::Done => "Done",
         }
     }
@@ -485,14 +554,14 @@ impl TaskStatus {
     }
 
     /// Get array index for this status (for column_scroll_offsets)
-    /// Accepting tasks appear in the Review column
+    /// Accepting and Updating tasks appear in the Review column
     pub fn index(&self) -> usize {
         match self {
             TaskStatus::Planned => 0,
             TaskStatus::Queued => 1,
             TaskStatus::InProgress => 2,
             TaskStatus::NeedsInput => 3,
-            TaskStatus::Review | TaskStatus::Accepting => 4,
+            TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating => 4,
             TaskStatus::Done => 5,
         }
     }

@@ -48,6 +48,14 @@ pub enum Message {
     ApplyTaskChanges(Uuid),
     /// Unapply/revert previously applied task changes
     UnapplyTaskChanges,
+    /// Update worktree to latest main (rebase without merging)
+    UpdateWorktreeToMain(Uuid),
+    /// Start SDK update rebase session (internal - smart update with conflict resolution)
+    StartUpdateRebaseSession { task_id: Uuid },
+    /// Complete update after rebase verification (internal - no merge, just refresh status)
+    CompleteUpdateTask(Uuid),
+    /// Refresh git status (additions/deletions/behind) for all tasks with worktrees
+    RefreshGitStatus,
 
     // Task queueing
     /// Show the queue dialog to select a session to queue the task for

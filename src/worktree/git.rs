@@ -841,6 +841,194 @@ pub fn abort_rebase(worktree_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Git status information for a worktree
+#[derive(Debug, Clone, Default)]
+pub struct WorktreeGitStatus {
+    /// Number of lines added (insertions)
+    pub additions: usize,
+    /// Number of lines deleted
+    pub deletions: usize,
+    /// Number of files changed
+    pub files_changed: usize,
+    /// Number of commits ahead of main
+    pub commits_ahead: usize,
+    /// Number of commits behind main
+    pub commits_behind: usize,
+}
+
+/// Get git status (additions, deletions, commits ahead/behind) for a worktree
+pub fn get_worktree_git_status(project_dir: &PathBuf, task_id: Uuid) -> Result<WorktreeGitStatus> {
+    let branch_name = format!("claude/{}", task_id);
+    let mut status = WorktreeGitStatus::default();
+
+    // Get merge base between main and task branch
+    let merge_base_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "HEAD", &branch_name])
+        .output()
+        .context("Failed to get merge base")?;
+
+    if !merge_base_output.status.success() {
+        // Branch might not exist or no common ancestor
+        return Ok(status);
+    }
+
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout).trim().to_string();
+
+    // Get diff stats (additions/deletions) from merge base to branch
+    let diff_stat_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--shortstat", &format!("{}..{}", merge_base, branch_name)])
+        .output()
+        .context("Failed to get diff stats")?;
+
+    if diff_stat_output.status.success() {
+        let stat_line = String::from_utf8_lossy(&diff_stat_output.stdout);
+        // Parse output like: " 3 files changed, 45 insertions(+), 12 deletions(-)"
+        for part in stat_line.split(',') {
+            let part = part.trim();
+            if part.contains("file") {
+                if let Some(num) = part.split_whitespace().next() {
+                    status.files_changed = num.parse().unwrap_or(0);
+                }
+            } else if part.contains("insertion") {
+                if let Some(num) = part.split_whitespace().next() {
+                    status.additions = num.parse().unwrap_or(0);
+                }
+            } else if part.contains("deletion") {
+                if let Some(num) = part.split_whitespace().next() {
+                    status.deletions = num.parse().unwrap_or(0);
+                }
+            }
+        }
+    }
+
+    // Get commits ahead (branch commits not in main)
+    let ahead_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-list", "--count", &format!("HEAD..{}", branch_name)])
+        .output()
+        .context("Failed to count commits ahead")?;
+
+    if ahead_output.status.success() {
+        let count = String::from_utf8_lossy(&ahead_output.stdout).trim().to_string();
+        status.commits_ahead = count.parse().unwrap_or(0);
+    }
+
+    // Get commits behind (main commits not in branch)
+    let behind_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-list", "--count", &format!("{}..HEAD", branch_name)])
+        .output()
+        .context("Failed to count commits behind")?;
+
+    if behind_output.status.success() {
+        let count = String::from_utf8_lossy(&behind_output.stdout).trim().to_string();
+        status.commits_behind = count.parse().unwrap_or(0);
+    }
+
+    Ok(status)
+}
+
+/// Update worktree by rebasing onto latest main (without merging back to main).
+/// This preserves the task's changes while getting updates from main.
+/// Returns Ok(true) if rebase succeeded, Ok(false) if conflicts need resolution.
+pub fn update_worktree_to_main(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result<bool> {
+    // Use the same fast rebase logic, but don't proceed to merge
+    try_fast_rebase(worktree_path, project_dir)
+}
+
+/// Information about a changed file in a worktree
+#[derive(Debug, Clone)]
+pub struct ChangedFile {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub is_new: bool,
+    pub is_deleted: bool,
+    pub is_renamed: bool,
+}
+
+/// Get list of changed files with their stats for a worktree
+pub fn get_worktree_changed_files(project_dir: &PathBuf, task_id: Uuid) -> Result<Vec<ChangedFile>> {
+    let branch_name = format!("claude/{}", task_id);
+    let mut files = Vec::new();
+
+    // Get merge base between main and task branch
+    let merge_base_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["merge-base", "HEAD", &branch_name])
+        .output()
+        .context("Failed to get merge base")?;
+
+    if !merge_base_output.status.success() {
+        return Ok(files);
+    }
+
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout).trim().to_string();
+
+    // Get numstat for detailed file changes
+    let numstat_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--numstat", &format!("{}..{}", merge_base, branch_name)])
+        .output()
+        .context("Failed to get diff numstat")?;
+
+    if !numstat_output.status.success() {
+        return Ok(files);
+    }
+
+    // Also get name-status for detecting new/deleted/renamed files
+    let status_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--name-status", &format!("{}..{}", merge_base, branch_name)])
+        .output()
+        .context("Failed to get diff name-status")?;
+
+    // Build a map of file statuses
+    let mut file_statuses: std::collections::HashMap<String, char> = std::collections::HashMap::new();
+    if status_output.status.success() {
+        for line in String::from_utf8_lossy(&status_output.stdout).lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                let status = parts[0].chars().next().unwrap_or('M');
+                let path = parts.last().unwrap_or(&"").to_string();
+                file_statuses.insert(path, status);
+            }
+        }
+    }
+
+    // Parse numstat output: "additions\tdeletions\tfilename"
+    for line in String::from_utf8_lossy(&numstat_output.stdout).lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 3 {
+            let additions = parts[0].parse().unwrap_or(0);
+            let deletions = parts[1].parse().unwrap_or(0);
+            let path = parts[2].to_string();
+
+            let status = file_statuses.get(&path).copied().unwrap_or('M');
+
+            files.push(ChangedFile {
+                path: path.clone(),
+                additions,
+                deletions,
+                is_new: status == 'A',
+                is_deleted: status == 'D',
+                is_renamed: status == 'R',
+            });
+        }
+    }
+
+    // Sort by most changes first
+    files.sort_by(|a, b| {
+        let total_a = a.additions + a.deletions;
+        let total_b = b.additions + b.deletions;
+        total_b.cmp(&total_a)
+    });
+
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
