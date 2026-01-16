@@ -1977,6 +1977,11 @@ impl App {
                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                 project.needs_attention = false;
                                 notify::clear_attention_indicator();
+                                // Track activity for merge feedback
+                                task.last_activity_at = Some(chrono::Utc::now());
+                                if let Some(ref tool_name) = event.tool_name {
+                                    task.last_tool_name = Some(tool_name.clone());
+                                }
                             }
                             SessionEventType::Output => {
                                 // Store output for display (could be used by output panel)
@@ -2166,6 +2171,10 @@ impl App {
                                         task.status = TaskStatus::Accepting;
                                         task.session_state = crate::model::ClaudeSessionState::Working;
                                         task.session_mode = crate::model::SessionMode::SdkManaged;
+                                        // Track when merge started for elapsed time display
+                                        task.accepting_started_at = Some(chrono::Utc::now());
+                                        task.last_activity_at = Some(chrono::Utc::now());
+                                        task.last_tool_name = None;
                                     }
                                 }
                                 commands.push(Message::SetStatusMessage(Some(
@@ -2558,8 +2567,8 @@ impl App {
             }
 
             Message::Error(err) => {
-                // TODO: Display error to user
-                eprintln!("Error: {}", err);
+                // Display error in status bar so user actually sees it
+                self.model.ui_state.status_message = Some(format!("❌ {}", err));
             }
         }
 

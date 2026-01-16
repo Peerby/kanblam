@@ -67,9 +67,31 @@ export class SessionManager {
   async startSession(params: StartSessionParams): Promise<string> {
     const { task_id, worktree_path, prompt, images } = params;
 
-    // Check if session already exists for this task
-    if (this.sessions.has(task_id)) {
-      throw new Error(`Session already exists for task ${task_id}`);
+    // If session already exists for this task, send the new prompt to it
+    const existing = this.sessions.get(task_id);
+    if (existing && existing.isActive) {
+      console.log(`[SessionManager] Active session exists for task ${task_id}, sending prompt to existing session`);
+      // Don't abort - just start a new query on the existing session
+      // The SDK will queue/handle the new prompt appropriately
+      this.processQuery(task_id, prompt, {
+        resume: existing.sessionId,
+        abortController: existing.abortController,
+      }, images).catch((err) => {
+        console.error(`Send to existing session ${task_id} error:`, err);
+        this.onEvent({
+          task_id,
+          event: 'ended',
+          session_id: existing.sessionId,
+          message: err.message,
+        });
+      });
+      return existing.sessionId;
+    }
+
+    // If session exists but is not active, clean it up first
+    if (existing) {
+      console.log(`[SessionManager] Inactive session exists for task ${task_id}, cleaning up`);
+      this.sessions.delete(task_id);
     }
 
     const abortController = new AbortController();

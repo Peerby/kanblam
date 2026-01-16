@@ -367,7 +367,23 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
 
     // Show keyboard hints on the bottom border when column is selected
     if is_selected {
-        let hints = get_column_hints(status);
+        // Check if selected task is actually in Accepting state (for merge feedback)
+        let selected_task = app.model.ui_state.selected_task_idx.and_then(|idx| {
+            app.model.active_project().and_then(|p| {
+                p.tasks_by_status(status).get(idx).cloned()
+            })
+        });
+
+        let hints = if let Some(ref task) = selected_task {
+            if task.status == TaskStatus::Accepting {
+                get_accepting_hints(task)
+            } else {
+                get_column_hints(status)
+            }
+        } else {
+            get_column_hints(status)
+        };
+
         // Calculate the width of hints text
         let hints_text: String = hints.iter().map(|s| s.content.as_ref()).collect();
         let hints_width = hints_text.chars().count() as u16;
@@ -610,6 +626,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("eset", desc_style),
         ],
         TaskStatus::Accepting => vec![
+            // This case is handled by get_accepting_hints when a task is selected
+            // Fallback text if no task is selected
             Span::styled("merging...", desc_style),
         ],
         TaskStatus::Done => vec![
@@ -621,4 +639,44 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("eview", desc_style),
         ],
     }
+}
+
+/// Get hints for a task in Accepting state (merge/rebase in progress)
+/// Shows elapsed time and last activity for better feedback
+fn get_accepting_hints(task: &crate::model::Task) -> Vec<Span<'static>> {
+    use chrono::Utc;
+
+    let desc_style = Style::default().fg(Color::DarkGray);
+    let activity_style = Style::default().fg(Color::Yellow);
+    let warning_style = Style::default().fg(Color::Red);
+
+    let mut parts = vec![Span::styled("rebasing", desc_style)];
+
+    // Show last tool used if available
+    if let Some(ref tool_name) = task.last_tool_name {
+        parts.push(Span::styled(" (", desc_style));
+        parts.push(Span::styled(tool_name.clone(), activity_style));
+        parts.push(Span::styled(")", desc_style));
+    }
+
+    // Calculate and show elapsed time
+    if let Some(started_at) = task.accepting_started_at {
+        let elapsed = Utc::now().signed_duration_since(started_at);
+        let secs = elapsed.num_seconds();
+
+        // Check for staleness (no activity in 30+ seconds)
+        let is_stalled = task.last_activity_at
+            .map(|last| Utc::now().signed_duration_since(last).num_seconds() > 30)
+            .unwrap_or(false);
+
+        if is_stalled && task.last_tool_name.is_none() {
+            parts.push(Span::styled(" (stalled?)", warning_style));
+        }
+
+        parts.push(Span::styled(format!(" {}s", secs), desc_style));
+    } else {
+        parts.push(Span::styled("...", desc_style));
+    }
+
+    parts
 }

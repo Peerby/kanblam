@@ -243,6 +243,18 @@ pub struct Task {
     /// (in the same Claude session/worktree)
     #[serde(default)]
     pub queued_for_session: Option<Uuid>,
+
+    // === Activity tracking (for merge/rebase feedback) ===
+
+    /// When the task entered Accepting state (for elapsed time display)
+    #[serde(default)]
+    pub accepting_started_at: Option<DateTime<Utc>>,
+    /// Last time we received activity (Working/ToolUse event)
+    #[serde(default)]
+    pub last_activity_at: Option<DateTime<Utc>>,
+    /// Name of the last tool used (for activity display)
+    #[serde(default)]
+    pub last_tool_name: Option<String>,
 }
 
 impl Task {
@@ -269,6 +281,10 @@ impl Task {
             session_mode: SessionMode::SdkManaged,
             // Queueing
             queued_for_session: None,
+            // Activity tracking
+            accepting_started_at: None,
+            last_activity_at: None,
+            last_tool_name: None,
         }
     }
 
