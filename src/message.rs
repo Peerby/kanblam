@@ -46,8 +46,12 @@ pub enum Message {
     SwitchToTaskWindow(Uuid),
     /// Open combined session in detached mode (don't switch to it)
     OpenInteractiveDetached(Uuid),
-    /// Apply task's changes to main worktree (for testing)
-    ApplyTaskChanges(Uuid),
+    /// Apply task's changes to main worktree (for testing) - tries fast apply, falls back to Claude
+    SmartApplyTask(Uuid),
+    /// Start SDK apply session for conflict resolution (internal)
+    StartApplySession { task_id: Uuid },
+    /// Complete apply after Claude generates clean patch (internal)
+    CompleteApplyTask(Uuid),
     /// Unapply/revert previously applied task changes
     UnapplyTaskChanges,
     /// Update worktree to latest main (rebase without merging)
