@@ -188,7 +188,7 @@ fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
     );
 
     // Build the hint text with character-by-character styling for the light effect
-    let hint_text = " ↑↓←→ navigate   enter select   esc back   ctrl-c exit   ? help ";
+    let hint_text = " ↑↓←→ navigate   enter select   esc back   ^s settings   ? help ";
     let hint_chars: Vec<char> = hint_text.chars().collect();
 
     // Center the hint text
@@ -204,8 +204,8 @@ fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
         (1, 5),   // ↑↓←→
         (17, 22), // enter
         (32, 35), // esc
-        (43, 49), // ctrl-c
-        (57, 58), // ?
+        (43, 45), // ^s
+        (56, 57), // ?
     ];
 
     let is_bold = |pos: usize| -> bool {

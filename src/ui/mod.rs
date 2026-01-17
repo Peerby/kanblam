@@ -104,6 +104,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_open_project_dialog(frame, app);
     }
 
+    // Render configuration modal if active
+    if app.model.ui_state.is_config_modal_open() {
+        render_config_modal(frame, app);
+    }
+
     // Render confirmation modal if pending confirmation has multiline message
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         if confirmation.message.contains('\n') {
@@ -1184,6 +1189,11 @@ fn render_help(frame: &mut Frame) {
         Line::from("  o/O        Open Claude modal (O: detached)"),
         Line::from("  t/T        Open test shell (T: detached)"),
         Line::from("  q          Queue task (Planned) / Quit"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
+        ]),
+        Line::from("  Ctrl-S     Settings (editor, commands)"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(
@@ -1457,6 +1467,178 @@ fn render_confirmation_modal(frame: &mut Frame, message: &str) {
         )
         .wrap(ratatui::widgets::Wrap { trim: false });
 
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(modal, area);
+}
+
+/// Render the configuration modal
+fn render_config_modal(frame: &mut Frame, app: &App) {
+    use crate::model::{ConfigField, Editor};
+
+    let area = centered_rect(65, 70, frame.area());
+
+    let Some(ref config) = app.model.ui_state.config_modal else {
+        return;
+    };
+
+    let project_name = app.model.active_project()
+        .map(|p| p.name.as_str())
+        .unwrap_or("No Project");
+
+    // Build the modal content
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Configuration",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    // Section: Global Settings
+    lines.push(Line::from(vec![
+        Span::styled("Global Settings", Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Default Editor field
+    let is_selected = config.selected_field == ConfigField::DefaultEditor;
+    let is_editing = is_selected && config.editing;
+
+    let editor_value = if is_editing {
+        // Show all editors with current selection highlighted
+        let editors: Vec<String> = Editor::all().iter().map(|e| {
+            if *e == config.temp_editor {
+                format!("[{}]", e.name())
+            } else {
+                e.name().to_string()
+            }
+        }).collect();
+        editors.join("  ")
+    } else {
+        config.temp_editor.name().to_string()
+    };
+
+    let (prefix, style, value_style) = if is_selected {
+        (
+            "► ",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            if is_editing {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            }
+        )
+    } else {
+        ("  ", Style::default(), Style::default().fg(Color::DarkGray))
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled("Default Editor: ", style),
+        Span::styled(editor_value, value_style),
+    ]));
+    if is_selected {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(ConfigField::DefaultEditor.hint(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Section: Project Commands
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("Project: {}", project_name),
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::UNDERLINED)
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Command fields
+    let command_fields = [
+        (ConfigField::CheckCommand, &config.temp_commands.check),
+        (ConfigField::RunCommand, &config.temp_commands.run),
+        (ConfigField::TestCommand, &config.temp_commands.test),
+        (ConfigField::FormatCommand, &config.temp_commands.format),
+        (ConfigField::LintCommand, &config.temp_commands.lint),
+    ];
+
+    for (field, value) in command_fields {
+        let is_selected = config.selected_field == field;
+        let is_editing = is_selected && config.editing;
+
+        let display_value = if is_editing {
+            if config.edit_buffer.is_empty() {
+                "_".to_string()
+            } else {
+                format!("{}_", config.edit_buffer)
+            }
+        } else {
+            value.clone().unwrap_or_else(|| "(auto-detect)".to_string())
+        };
+
+        let (prefix, style, value_style) = if is_selected {
+            (
+                "► ",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                if is_editing {
+                    Style::default().fg(Color::Green)
+                } else if value.is_some() {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                }
+            )
+        } else {
+            (
+                "  ",
+                Style::default(),
+                if value.is_some() {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::Rgb(80, 80, 80))
+                }
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", field.label()), style),
+            Span::styled(display_value, value_style),
+        ]));
+
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(field.hint(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
+
+    // Footer with keybindings
+    let editing_hints = if config.editing {
+        "Enter confirm  Esc cancel"
+    } else {
+        "j/k navigate  Enter/l edit  r reset to defaults  Esc close  s save"
+    };
+    lines.push(Line::from(Span::styled(
+        editing_hints,
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let modal = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Settings ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(modal, area);
 }

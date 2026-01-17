@@ -778,6 +778,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return handle_queue_dialog_key(key, app);
     }
 
+    // Handle config modal if open
+    if app.model.ui_state.is_config_modal_open() {
+        return handle_config_modal_key(key, app);
+    }
+
     // Normal mode keybindings
     match key.code {
         // Queue task / Quit
@@ -815,6 +820,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // Help
         KeyCode::Char('?') => vec![Message::ToggleHelp],
+
+        // Settings/Config (Ctrl-S)
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
 
         // Navigation
         KeyCode::Char('h') | KeyCode::Left => vec![Message::NavigateLeft],
@@ -1245,7 +1253,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 }
 
 /// Handle key events when the queue dialog is open
-fn handle_queue_dialog_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
+fn handle_queue_dialog_key(key: event::KeyEvent, _app: &App) -> Vec<Message> {
     match key.code {
         // Close dialog
         KeyCode::Esc | KeyCode::Char('q') => {
@@ -1278,6 +1286,83 @@ fn handle_queue_dialog_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
         }
 
         _ => vec![],
+    }
+}
+
+/// Handle key events when the config modal is open
+fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
+    let Some(ref config) = app.model.ui_state.config_modal else {
+        return vec![Message::CloseConfigModal];
+    };
+
+    if config.editing {
+        // Editing mode: capture text input or handle special keys
+        if config.selected_field == model::ConfigField::DefaultEditor {
+            // Editor field: arrow keys and h/l cycle through options
+            match key.code {
+                KeyCode::Esc => vec![Message::ConfigCancelEdit],
+                KeyCode::Enter => vec![Message::ConfigConfirmEdit],
+                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
+                    vec![Message::ConfigEditFieldPrev]
+                }
+                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Char(' ') => {
+                    vec![Message::ConfigEditField]
+                }
+                _ => vec![],
+            }
+        } else {
+            // Command fields: text input
+            match key.code {
+                KeyCode::Esc => vec![Message::ConfigCancelEdit],
+                KeyCode::Enter => vec![Message::ConfigConfirmEdit],
+                KeyCode::Backspace => {
+                    let mut new_buf = config.edit_buffer.clone();
+                    new_buf.pop();
+                    vec![Message::ConfigUpdateBuffer(new_buf)]
+                }
+                KeyCode::Char(c) => {
+                    let mut new_buf = config.edit_buffer.clone();
+                    new_buf.push(c);
+                    vec![Message::ConfigUpdateBuffer(new_buf)]
+                }
+                _ => vec![],
+            }
+        }
+    } else {
+        // Navigation mode
+        match key.code {
+            // Close modal
+            KeyCode::Esc | KeyCode::Char('q') => {
+                vec![Message::CloseConfigModal]
+            }
+
+            // Navigate up
+            KeyCode::Up | KeyCode::Char('k') => {
+                vec![Message::ConfigNavigateUp]
+            }
+
+            // Navigate down
+            KeyCode::Down | KeyCode::Char('j') => {
+                vec![Message::ConfigNavigateDown]
+            }
+
+            // Enter edit mode
+            KeyCode::Enter | KeyCode::Char('l') => {
+                vec![Message::ConfigEditField]
+            }
+
+            // Save and close
+            KeyCode::Char('s') => {
+                vec![Message::ConfigSave]
+            }
+
+            // Reset to defaults
+            KeyCode::Char('r') => {
+                vec![Message::ConfigResetToDefaults]
+            }
+
+            _ => vec![],
+        }
     }
 }
 

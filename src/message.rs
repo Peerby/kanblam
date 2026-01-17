@@ -172,4 +172,28 @@ pub enum Message {
     Quit,
     QuitAndSwitchPane(String), // Quit and switch to this pane ID
     Error(String),
+
+    // Configuration modal
+    /// Open the configuration modal
+    ShowConfigModal,
+    /// Close the configuration modal without saving
+    CloseConfigModal,
+    /// Navigate to next field in config modal
+    ConfigNavigateDown,
+    /// Navigate to previous field in config modal
+    ConfigNavigateUp,
+    /// Enter edit mode for current field / cycle editor choice forward
+    ConfigEditField,
+    /// Cycle editor choice backward (for h/Left key)
+    ConfigEditFieldPrev,
+    /// Update the edit buffer while typing
+    ConfigUpdateBuffer(String),
+    /// Confirm the current edit and move to next field
+    ConfigConfirmEdit,
+    /// Cancel the current edit
+    ConfigCancelEdit,
+    /// Save all config changes and close modal
+    ConfigSave,
+    /// Reset project commands to auto-detected defaults
+    ConfigResetToDefaults,
 }

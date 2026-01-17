@@ -3970,6 +3970,164 @@ impl App {
                 }
             }
 
+            // === Configuration Modal ===
+
+            Message::ShowConfigModal => {
+                use crate::model::{ConfigModalState, ConfigField};
+
+                // Get current project commands (or defaults)
+                let temp_commands = self.model.active_project()
+                    .map(|p| p.commands.clone())
+                    .unwrap_or_default();
+                let temp_editor = self.model.global_settings.default_editor;
+
+                self.model.ui_state.config_modal = Some(ConfigModalState {
+                    selected_field: ConfigField::default(),
+                    editing: false,
+                    edit_buffer: String::new(),
+                    temp_commands,
+                    temp_editor,
+                });
+            }
+
+            Message::CloseConfigModal => {
+                self.model.ui_state.config_modal = None;
+            }
+
+            Message::ConfigNavigateDown => {
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    config.selected_field = config.selected_field.next();
+                }
+            }
+
+            Message::ConfigNavigateUp => {
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    config.selected_field = config.selected_field.prev();
+                }
+            }
+
+            Message::ConfigEditField => {
+                use crate::model::{ConfigField, Editor};
+
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    if config.selected_field == ConfigField::DefaultEditor {
+                        if config.editing {
+                            // Cycle to next editor
+                            let editors = Editor::all();
+                            let idx = editors.iter().position(|e| *e == config.temp_editor).unwrap_or(0);
+                            config.temp_editor = editors[(idx + 1) % editors.len()];
+                        } else {
+                            // Enter edit mode
+                            config.editing = true;
+                        }
+                    } else {
+                        // Command field - enter text edit mode
+                        if !config.editing {
+                            // Set edit buffer to current value
+                            config.edit_buffer = match config.selected_field {
+                                ConfigField::CheckCommand => config.temp_commands.check.clone().unwrap_or_default(),
+                                ConfigField::RunCommand => config.temp_commands.run.clone().unwrap_or_default(),
+                                ConfigField::TestCommand => config.temp_commands.test.clone().unwrap_or_default(),
+                                ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
+                                ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
+                                ConfigField::DefaultEditor => String::new(),
+                            };
+                            config.editing = true;
+                        }
+                    }
+                }
+            }
+
+            Message::ConfigEditFieldPrev => {
+                use crate::model::{ConfigField, Editor};
+
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    if config.selected_field == ConfigField::DefaultEditor && config.editing {
+                        // Cycle to previous editor
+                        let editors = Editor::all();
+                        let idx = editors.iter().position(|e| *e == config.temp_editor).unwrap_or(0);
+                        config.temp_editor = editors[(idx + editors.len() - 1) % editors.len()];
+                    }
+                }
+            }
+
+            Message::ConfigUpdateBuffer(new_buffer) => {
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    config.edit_buffer = new_buffer;
+                }
+            }
+
+            Message::ConfigConfirmEdit => {
+                use crate::model::ConfigField;
+
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    if config.selected_field == ConfigField::DefaultEditor {
+                        // Editor field - just exit edit mode (cycling is done via h/l)
+                        config.editing = false;
+                    } else {
+                        // Command field - save buffer to temp_commands
+                        let value = if config.edit_buffer.is_empty() {
+                            None
+                        } else {
+                            Some(config.edit_buffer.clone())
+                        };
+
+                        match config.selected_field {
+                            ConfigField::CheckCommand => config.temp_commands.check = value,
+                            ConfigField::RunCommand => config.temp_commands.run = value,
+                            ConfigField::TestCommand => config.temp_commands.test = value,
+                            ConfigField::FormatCommand => config.temp_commands.format = value,
+                            ConfigField::LintCommand => config.temp_commands.lint = value,
+                            ConfigField::DefaultEditor => {}
+                        }
+
+                        config.editing = false;
+                        config.edit_buffer.clear();
+                    }
+                }
+            }
+
+            Message::ConfigCancelEdit => {
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    config.editing = false;
+                    config.edit_buffer.clear();
+                }
+            }
+
+            Message::ConfigSave => {
+                // Extract values before borrowing mutably
+                let (temp_editor, temp_commands) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_commands.clone())
+                } else {
+                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default())
+                };
+
+                // Save global settings
+                self.model.global_settings.default_editor = temp_editor;
+
+                // Save project commands
+                if let Some(project) = self.model.active_project_mut() {
+                    project.commands = temp_commands;
+                }
+
+                self.model.ui_state.config_modal = None;
+                commands.push(Message::SetStatusMessage(Some("Configuration saved".to_string())));
+            }
+
+            Message::ConfigResetToDefaults => {
+                use crate::model::ProjectCommands;
+
+                // Get the project working dir first
+                let detected = self.model.active_project()
+                    .map(|p| ProjectCommands::detect(&p.working_dir))
+                    .unwrap_or_default();
+
+                if let Some(ref mut config) = self.model.ui_state.config_modal {
+                    config.temp_commands = detected;
+                    commands.push(Message::SetStatusMessage(Some("Reset to auto-detected defaults".to_string())));
+                }
+            }
+
             Message::Quit => {
                 self.should_quit = true;
             }

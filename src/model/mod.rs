@@ -9,6 +9,76 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Available editors for external editing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Editor {
+    #[default]
+    Vim,
+    Neovim,
+    Nano,
+    Emacs,
+    Vscode,
+    Zed,
+    Helix,
+}
+
+impl Editor {
+    /// Get all available editors
+    pub fn all() -> &'static [Editor] {
+        &[
+            Editor::Vim,
+            Editor::Neovim,
+            Editor::Nano,
+            Editor::Emacs,
+            Editor::Vscode,
+            Editor::Zed,
+            Editor::Helix,
+        ]
+    }
+
+    /// Get the display name for the editor
+    pub fn name(&self) -> &'static str {
+        match self {
+            Editor::Vim => "Vim",
+            Editor::Neovim => "Neovim",
+            Editor::Nano => "Nano",
+            Editor::Emacs => "Emacs",
+            Editor::Vscode => "VS Code",
+            Editor::Zed => "Zed",
+            Editor::Helix => "Helix",
+        }
+    }
+
+    /// Get the command to launch the editor
+    pub fn command(&self) -> &'static str {
+        match self {
+            Editor::Vim => "vim",
+            Editor::Neovim => "nvim",
+            Editor::Nano => "nano",
+            Editor::Emacs => "emacs",
+            Editor::Vscode => "code --wait",
+            Editor::Zed => "zed --wait",
+            Editor::Helix => "hx",
+        }
+    }
+}
+
+/// Global settings (shared across all projects)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalSettings {
+    /// Preferred editor for external editing (Ctrl-G in input mode)
+    #[serde(default)]
+    pub default_editor: Editor,
+}
+
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        Self {
+            default_editor: Editor::Vim,
+        }
+    }
+}
+
 /// Simple directory browser for project selection
 #[derive(Debug, Clone)]
 pub struct DirectoryBrowser {
@@ -155,6 +225,9 @@ impl DirectoryBrowser {
 pub struct AppModel {
     pub projects: Vec<Project>,
     pub active_project_idx: usize,
+    /// Global settings (shared across all projects)
+    #[serde(default)]
+    pub global_settings: GlobalSettings,
     #[serde(skip)]
     pub ui_state: UiState,
 }
@@ -164,6 +237,7 @@ impl Default for AppModel {
         Self {
             projects: Vec::new(),
             active_project_idx: 0,
+            global_settings: GlobalSettings::default(),
             ui_state: UiState::default(),
         }
     }
@@ -890,6 +964,10 @@ pub struct UiState {
     /// Counter for consecutive ESC key presses (resets on other keys)
     /// When this reaches 2, the startup hints are shown again
     pub consecutive_esc_count: u8,
+
+    // Configuration modal
+    /// If set, the configuration modal is open
+    pub config_modal: Option<ConfigModalState>,
 }
 
 /// State for the interactive Claude terminal modal
@@ -903,6 +981,90 @@ pub struct InteractiveModal {
     pub terminal_buffer: String,
     /// Scroll offset in the terminal output
     pub scroll_offset: usize,
+}
+
+/// Which field is selected in the config modal
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigField {
+    #[default]
+    DefaultEditor,
+    CheckCommand,
+    RunCommand,
+    TestCommand,
+    FormatCommand,
+    LintCommand,
+}
+
+impl ConfigField {
+    /// Get all config fields in display order
+    pub fn all() -> &'static [ConfigField] {
+        &[
+            ConfigField::DefaultEditor,
+            ConfigField::CheckCommand,
+            ConfigField::RunCommand,
+            ConfigField::TestCommand,
+            ConfigField::FormatCommand,
+            ConfigField::LintCommand,
+        ]
+    }
+
+    /// Get the display label for this field
+    pub fn label(&self) -> &'static str {
+        match self {
+            ConfigField::DefaultEditor => "Default Editor",
+            ConfigField::CheckCommand => "Check Command",
+            ConfigField::RunCommand => "Run Command",
+            ConfigField::TestCommand => "Test Command",
+            ConfigField::FormatCommand => "Format Command",
+            ConfigField::LintCommand => "Lint Command",
+        }
+    }
+
+    /// Get the hint/description for this field
+    pub fn hint(&self) -> &'static str {
+        match self {
+            ConfigField::DefaultEditor => "External editor for Ctrl-G (global setting)",
+            ConfigField::CheckCommand => "e.g. cargo check, npm run build, tsc --noEmit",
+            ConfigField::RunCommand => "e.g. cargo run, npm start, python main.py",
+            ConfigField::TestCommand => "e.g. cargo test, npm test, pytest",
+            ConfigField::FormatCommand => "e.g. cargo fmt, npm run format, black .",
+            ConfigField::LintCommand => "e.g. cargo clippy, npm run lint, ruff check .",
+        }
+    }
+
+    /// Whether this field is a global setting (vs project-specific)
+    pub fn is_global(&self) -> bool {
+        matches!(self, ConfigField::DefaultEditor)
+    }
+
+    /// Get the next field (wrapping)
+    pub fn next(&self) -> ConfigField {
+        let all = Self::all();
+        let idx = all.iter().position(|f| f == self).unwrap_or(0);
+        all[(idx + 1) % all.len()]
+    }
+
+    /// Get the previous field (wrapping)
+    pub fn prev(&self) -> ConfigField {
+        let all = Self::all();
+        let idx = all.iter().position(|f| f == self).unwrap_or(0);
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
+/// State for the configuration modal
+#[derive(Debug, Clone)]
+pub struct ConfigModalState {
+    /// Currently selected field
+    pub selected_field: ConfigField,
+    /// Whether we're in edit mode for the selected field
+    pub editing: bool,
+    /// Temporary value being edited (for text fields)
+    pub edit_buffer: String,
+    /// Temporary project commands (edited before save)
+    pub temp_commands: ProjectCommands,
+    /// Temporary global settings (edited before save)
+    pub temp_editor: Editor,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -966,7 +1128,15 @@ impl Default for UiState {
             startup_hint_until_tick: Some(100),
             selected_project_tab_idx: 0,
             consecutive_esc_count: 0,
+            config_modal: None,
         }
+    }
+}
+
+impl UiState {
+    /// Check if the configuration modal is open
+    pub fn is_config_modal_open(&self) -> bool {
+        self.config_modal.is_some()
     }
 }
 
