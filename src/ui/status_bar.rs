@@ -118,7 +118,7 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(
             format!("{} [{}] {}", op_text, short_id, truncated_title),
             Style::default()
-                .fg(Color::Black)
+                .fg(Color::Rgb(0, 0, 100))  // Dark blue for better contrast on yellow
                 .bg(Color::Yellow),
         ));
     }
@@ -236,7 +236,8 @@ fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
             Color::Yellow // Base yellow
         };
 
-        let mut style = Style::default().fg(Color::Black).bg(bg);
+        // Dark blue provides better contrast on yellow than black
+        let mut style = Style::default().fg(Color::Rgb(0, 0, 100)).bg(bg);
         if is_bold(i) {
             style = style.add_modifier(Modifier::BOLD);
         }
@@ -312,8 +313,9 @@ fn render_confirmation_prompt(frame: &mut Frame, area: Rect, message: &str, anim
             Color::Yellow // Base yellow
         };
 
+        // Dark blue provides better contrast on yellow than black
         let style = Style::default()
-            .fg(Color::Black)
+            .fg(Color::Rgb(0, 0, 100))
             .bg(bg)
             .add_modifier(Modifier::BOLD);
 
