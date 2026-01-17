@@ -229,16 +229,16 @@ pub fn render_mascot_feet(frame: &mut Frame, area: Rect, shimmer_frame: u8, logo
         }
         LogoSize::Medium => {
             // Medium logo: shorter border line to match KB text width
-            // Feet pattern: "───▀▀─▀▀──" = 10 chars (matches mascot width)
-            // Then gap (2) + KB text width (7) + trailing (1) = 10 more
-            // Total: 10 + 10 = 20 chars to match medium logo
+            // Feet pattern: "───▀▀─▀▀───" = 11 chars (one extra dash shifts feet left to align)
+            // Then gap (2) + KB text width (7) + trailing (1) - 1 = 9 more
+            // Total: 11 + 9 = 20 chars to match medium logo
             Line::from(vec![
                 Span::styled("───", border_style),        // Leading border (was spaces)
                 Span::styled("▀▀", feet_style),           // Left foot
                 Span::styled("─", border_style),          // Gap between feet
                 Span::styled("▀▀", feet_style),           // Right foot
-                Span::styled("──", border_style),         // Trailing border (was spaces)
-                Span::styled("────────", border_style),   // 8 chars of line (2 gap + 7 text - 1 corner)
+                Span::styled("───", border_style),        // Trailing border (one extra dash to shift feet left)
+                Span::styled("────────", border_style),   // 8 chars of line
                 Span::styled("┐", border_style),          // Top-right corner
             ])
         }
