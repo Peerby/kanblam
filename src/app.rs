@@ -2,6 +2,7 @@ use crate::message::Message;
 use crate::model::{AppModel, FocusArea, MainWorktreeOperation, PendingAction, PendingConfirmation, Project, Task, TaskStatus, SessionMode};
 use crate::notify;
 use crate::sidecar::SidecarClient;
+use crate::ui::logo::EyeAnimation;
 use anyhow::Result;
 use chrono::Utc;
 use std::path::PathBuf;
@@ -3868,6 +3869,31 @@ impl App {
                     if self.model.ui_state.logo_shimmer_frame > 4 {
                         self.model.ui_state.logo_shimmer_frame = 0; // Animation complete
                     }
+                }
+
+                // Handle mascot eye animation timing
+                if self.model.ui_state.eye_animation_ticks_remaining > 0 {
+                    // Animation is playing, count down
+                    self.model.ui_state.eye_animation_ticks_remaining -= 1;
+                    if self.model.ui_state.eye_animation_ticks_remaining == 0 {
+                        // Animation done, revert to normal eyes
+                        self.model.ui_state.eye_animation = EyeAnimation::Normal;
+                    }
+                } else if self.model.ui_state.eye_animation_cooldown > 0 {
+                    // Waiting for next animation
+                    self.model.ui_state.eye_animation_cooldown -= 1;
+                } else {
+                    // Cooldown expired, trigger a random eye animation
+                    self.model.ui_state.eye_animation = EyeAnimation::random();
+                    // Animation lasts 2-3 ticks (200-300ms) for a quick, subtle effect
+                    self.model.ui_state.eye_animation_ticks_remaining = 2;
+                    // Next animation in 45-75 seconds (450-750 ticks at 100ms each)
+                    // Use current time for randomness
+                    let random_offset = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| (d.as_millis() % 300) as u16)
+                        .unwrap_or(0);
+                    self.model.ui_state.eye_animation_cooldown = 450 + random_offset;
                 }
 
                 // Decay startup navigation hints after ~10 seconds

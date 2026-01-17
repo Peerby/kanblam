@@ -6,6 +6,55 @@ use ratatui::{
     Frame,
 };
 
+/// Eye animation states for the mascot
+/// These create brief, playful eye animations
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum EyeAnimation {
+    /// Normal eyes (▪ ▪)
+    #[default]
+    Normal,
+    /// Blink - both eyes closed (─ ─)
+    Blink,
+    /// Wink left - left eye closed (─ ▪)
+    WinkLeft,
+    /// Wink right - right eye closed (▪ ─)
+    WinkRight,
+    /// Look down - eyes looking downward (. .)
+    LookDown,
+    /// Look up - eyes looking upward (᛫ ᛫)
+    LookUp,
+}
+
+impl EyeAnimation {
+    /// Get the left and right eye characters for this animation state
+    pub fn eye_chars(&self) -> (&'static str, &'static str) {
+        match self {
+            EyeAnimation::Normal => ("▪", "▪"),
+            EyeAnimation::Blink => ("─", "─"),
+            EyeAnimation::WinkLeft => ("─", "▪"),
+            EyeAnimation::WinkRight => ("▪", "─"),
+            EyeAnimation::LookDown => (".", "."),
+            EyeAnimation::LookUp => ("'", "'"),
+        }
+    }
+
+    /// Get a random animation (excluding Normal)
+    pub fn random() -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as usize)
+            .unwrap_or(0);
+        match seed % 5 {
+            0 => EyeAnimation::Blink,
+            1 => EyeAnimation::WinkLeft,
+            2 => EyeAnimation::WinkRight,
+            3 => EyeAnimation::LookDown,
+            _ => EyeAnimation::LookUp,
+        }
+    }
+}
+
 /// The full ASCII art logo width (mascot + KANBLAM text)
 pub const FULL_LOGO_WIDTH: u16 = 58;
 
@@ -61,18 +110,18 @@ pub enum LogoSize {
 
 /// Render the logo/branding in the given area
 /// shimmer_frame: 0 = no animation, 1-4 = beam traveling up (row 4 to row 1), 5-7 = fade out
-pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
-    render_logo_size(frame, area, shimmer_frame, LogoSize::Full)
+pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
+    render_logo_size(frame, area, shimmer_frame, LogoSize::Full, eye_animation)
 }
 
 /// Render the logo at a specific size
-pub fn render_logo_size(frame: &mut Frame, area: Rect, shimmer_frame: u8, size: LogoSize) {
+pub fn render_logo_size(frame: &mut Frame, area: Rect, shimmer_frame: u8, size: LogoSize, eye_animation: EyeAnimation) {
     match size {
         LogoSize::Full if area.width >= FULL_LOGO_WIDTH && area.height >= 3 => {
-            render_full_logo(frame, area, shimmer_frame);
+            render_full_logo(frame, area, shimmer_frame, eye_animation);
         }
         LogoSize::Medium if area.width >= MEDIUM_LOGO_WIDTH && area.height >= 3 => {
-            render_medium_logo(frame, area, shimmer_frame);
+            render_medium_logo(frame, area, shimmer_frame, eye_animation);
         }
         LogoSize::Compact | LogoSize::Full | LogoSize::Medium if area.width >= COMPACT_LOGO_WIDTH => {
             render_compact_logo(frame, area);
@@ -113,7 +162,7 @@ fn get_mascot_color(row: usize, shimmer_frame: u8) -> Color {
 }
 
 /// Render the full ASCII art logo with mascot (head, face, body in header area)
-fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
+fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
     // Get colors for each row based on shimmer state
     let mascot_styles = [
         Style::default().fg(get_mascot_color(0, shimmer_frame)),
@@ -128,6 +177,9 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
     // Eye style - same green as KANBLAM text
     let eye_style = Style::default().fg(green);
 
+    // Get eye characters based on animation state
+    let (left_eye, right_eye) = eye_animation.eye_chars();
+
     let lines = vec![
         Line::from(vec![
             Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
@@ -138,9 +190,9 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
         // Face row with green eyes in the negative space
         Line::from(vec![
             Span::styled("  ▓", mascot_styles[1]),      // Left edge
-            Span::styled("▪", eye_style),               // Left eye (small square)
+            Span::styled(left_eye, eye_style),          // Left eye (animated)
             Span::styled("▀▀", mascot_styles[1]),       // Nose/brow
-            Span::styled("▪", eye_style),               // Right eye (small square)
+            Span::styled(right_eye, eye_style),         // Right eye (animated)
             Span::styled("▓▒▒", mascot_styles[1]),      // Right edge + shadow
             Span::styled("    ", Style::default()),
             Span::styled("█▀▄ █▀█ █ ▀█ █▀▄ █   █▀█ █ ▀ █", text_style),
@@ -159,7 +211,7 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
 }
 
 /// Render the medium ASCII art logo with mascot + abbreviated KB text
-fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
+fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
     // Get colors for each row based on shimmer state
     let mascot_styles = [
         Style::default().fg(get_mascot_color(0, shimmer_frame)),
@@ -174,6 +226,9 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
     // Eye style - same green as KB text
     let eye_style = Style::default().fg(green);
 
+    // Get eye characters based on animation state
+    let (left_eye, right_eye) = eye_animation.eye_chars();
+
     // KB wordmark (just K and B from KANBLAM)
     // K: █ █ / █▀▄ / █ █
     // B: ██▄ / █▀▄ / ██▀
@@ -187,9 +242,9 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
         // Face row with green eyes in the negative space
         Line::from(vec![
             Span::styled("  ▓", mascot_styles[1]),      // Left edge
-            Span::styled("▪", eye_style),               // Left eye (small square)
+            Span::styled(left_eye, eye_style),          // Left eye (animated)
             Span::styled("▀▀", mascot_styles[1]),       // Nose/brow
-            Span::styled("▪", eye_style),               // Right eye (small square)
+            Span::styled(right_eye, eye_style),         // Right eye (animated)
             Span::styled("▓▒▒", mascot_styles[1]),      // Right edge + shadow
             Span::styled("  ", Style::default()),
             Span::styled("█▀▄ █▀▄", text_style),

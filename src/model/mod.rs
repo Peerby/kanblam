@@ -1,3 +1,4 @@
+use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, Lines,
@@ -855,6 +856,14 @@ pub struct UiState {
     /// The beam travels from bottom to top, lighting up each row with saturated colors
     pub logo_shimmer_frame: u8,
 
+    // Mascot eye animation
+    /// Current eye animation state (blink, wink, look around, etc.)
+    pub eye_animation: EyeAnimation,
+    /// Remaining ticks for the current eye animation (0 = animation done, revert to normal)
+    pub eye_animation_ticks_remaining: u8,
+    /// Ticks until the next random eye animation is triggered
+    pub eye_animation_cooldown: u16,
+
     // Startup hint decay
     /// Tick count when the app started (used to decay the navigation hints after ~10 seconds)
     /// None means hints have already decayed or should not be shown
@@ -934,6 +943,13 @@ impl Default for UiState {
             directory_browser: None,
             feedback_task_id: None,
             logo_shimmer_frame: 0,
+            // Mascot eye animation: start with normal eyes, trigger first animation in ~30-90 seconds
+            eye_animation: EyeAnimation::Normal,
+            eye_animation_ticks_remaining: 0,
+            eye_animation_cooldown: 300 + (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| (d.as_millis() % 600) as u16)
+                .unwrap_or(0)), // 30-90 seconds (300-900 ticks at 100ms each)
             // Show startup hints for first ~10 seconds (100 ticks at 100ms each)
             startup_hint_until_tick: Some(100),
             selected_project_tab_idx: 0,

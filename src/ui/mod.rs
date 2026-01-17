@@ -159,7 +159,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::Logo
             render_project_bar(frame, project_bar_area, app);
 
             // Render full logo using full area - it will right-align itself
-            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size);
+            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation);
         }
         logo::LogoSize::Medium => {
             // Render project bar on top-left (just first line) with more space
@@ -172,7 +172,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::Logo
             render_project_bar(frame, project_bar_area, app);
 
             // Render medium logo using full area - it will right-align itself
-            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size);
+            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation);
         }
         _ => {
             // Compact mode: project bar with inline branding
