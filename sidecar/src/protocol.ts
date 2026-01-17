@@ -54,6 +54,11 @@ export interface StopSessionParams {
   task_id: string;
 }
 
+export interface SummarizeTitleParams {
+  task_id: string;
+  title: string;
+}
+
 // Response types
 export interface StartSessionResult {
   session_id: string;
@@ -61,6 +66,10 @@ export interface StartSessionResult {
 
 export interface ResumeSessionResult {
   session_id: string; // New session ID (may differ from input)
+}
+
+export interface SummarizeTitleResult {
+  short_title: string;
 }
 
 // Notification types to Rust

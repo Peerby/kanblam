@@ -127,12 +127,17 @@ impl App {
             Message::CreateTask(title) => {
                 // Take pending images before borrowing project
                 let pending_images = std::mem::take(&mut self.model.ui_state.pending_images);
+                let task_id;
+                let title_len = title.len();
                 if let Some(project) = self.model.active_project_mut() {
                     let mut task = Task::new(title);
+                    task_id = task.id;
                     // Attach pending images
                     task.images = pending_images;
                     // Insert at beginning so newest tasks appear first in Planned
                     project.tasks.insert(0, task);
+                } else {
+                    task_id = uuid::Uuid::nil();
                 }
                 // Clear editor after creating task
                 self.model.ui_state.clear_input();
@@ -143,6 +148,11 @@ impl App {
                 self.model.ui_state.selected_task_idx = Some(0);
                 self.model.ui_state.title_scroll_offset = 0;
                 self.model.ui_state.title_scroll_delay = 0;
+
+                // Request title summarization if title is long (> 40 chars)
+                if title_len > 40 && !task_id.is_nil() {
+                    commands.push(Message::RequestTitleSummary { task_id });
+                }
             }
 
             Message::EditTask(task_id) => {
@@ -161,15 +171,23 @@ impl App {
             }
 
             Message::UpdateTask { task_id, title } => {
+                let title_len = title.len();
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.title = title;
+                        // Clear short_title when title changes (will be regenerated if needed)
+                        task.short_title = None;
                     }
                 }
                 // Clear editing state and editor
                 self.model.ui_state.editing_task_id = None;
                 self.model.ui_state.clear_input();
                 self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                // Request title summarization if title is long (> 40 chars)
+                if title_len > 40 {
+                    commands.push(Message::RequestTitleSummary { task_id });
+                }
             }
 
             Message::CancelEdit => {
@@ -2859,6 +2877,52 @@ impl App {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         // Append to captured output
                         project.captured_output.push_str(&output);
+                        break;
+                    }
+                }
+            }
+
+            Message::RequestTitleSummary { task_id } => {
+                // Get the task title for summarization
+                let title = self.model.active_project()
+                    .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+                    .map(|t| t.title.clone());
+
+                if let Some(title) = title {
+                    // Spawn the summarization request in background
+                    if let Some(sender) = self.async_sender.clone() {
+                        tokio::spawn(async move {
+                            // Run blocking sidecar call in a separate thread
+                            let result = tokio::task::spawn_blocking(move || {
+                                crate::sidecar::SidecarClient::summarize_title_standalone(task_id, title)
+                            }).await;
+
+                            let msg = match result {
+                                Ok(Ok(short_title)) => {
+                                    Message::TitleSummaryReceived { task_id, short_title }
+                                }
+                                Ok(Err(e)) => {
+                                    // Log error but don't show to user - summarization is optional
+                                    eprintln!("[Summarization] Failed for task {}: {}", task_id, e);
+                                    return; // Don't send a message
+                                }
+                                Err(e) => {
+                                    eprintln!("[Summarization] Task panicked for {}: {}", task_id, e);
+                                    return;
+                                }
+                            };
+
+                            let _ = sender.send(msg);
+                        });
+                    }
+                }
+            }
+
+            Message::TitleSummaryReceived { task_id, short_title } => {
+                // Update the task with the short title
+                for project in &mut self.model.projects {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.short_title = Some(short_title);
                         break;
                     }
                 }

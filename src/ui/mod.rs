@@ -498,13 +498,25 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
     let dim_style = Style::default().fg(Color::DarkGray);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // HEADER: Title and phase badge
+    // HEADER: Title (short_title if available, otherwise title) and phase badge
     // ═══════════════════════════════════════════════════════════════════════
+    let header_title = task.short_title.as_ref().unwrap_or(&task.title);
     lines.push(Line::from(vec![
-        Span::styled(&task.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(header_title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(format!("[{}]", phase_label), Style::default().fg(column_color).add_modifier(Modifier::BOLD)),
     ]));
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FULL TITLE (if short_title exists, show the original title)
+    // ═══════════════════════════════════════════════════════════════════════
+    if task.short_title.is_some() {
+        lines.push(Line::from(""));
+        // Show full title in a slightly different style
+        for title_line in task.title.lines() {
+            lines.push(Line::from(Span::styled(title_line, Style::default().fg(Color::White))));
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // DESCRIPTION (if any)

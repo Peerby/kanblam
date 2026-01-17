@@ -191,7 +191,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // Handle long titles - marquee scroll for selected, truncate for others
                     // Reserve space for id prefix + some margin
                     let max_title_len = (inner.width as usize).saturating_sub(4 + id_prefix_len);
-                    let title_chars: Vec<char> = task.title.chars().collect();
+                    // Use short_title if available, otherwise use full title
+                    let display_source = task.short_title.as_ref().unwrap_or(&task.title);
+                    let title_chars: Vec<char> = display_source.chars().collect();
                     let title_len = title_chars.len();
 
                     let display_title = if title_len > max_title_len {
@@ -216,7 +218,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             format!("{}...", truncated)
                         }
                     } else {
-                        task.title.clone()
+                        display_source.clone()
                     };
 
                     // Add spinner for in-progress tasks, pulsing indicator for needs-input,

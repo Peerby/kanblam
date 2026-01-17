@@ -181,6 +181,32 @@ impl SidecarClient {
         Ok(Some(result))
     }
 
+    /// Request a short title summary for a task description
+    pub fn summarize_title(&self, task_id: uuid::Uuid, title: &str) -> Result<String> {
+        let params = SummarizeTitleParams {
+            task_id: task_id.to_string(),
+            title: title.to_string(),
+        };
+
+        let response = self.send_request("summarize_title", Some(serde_json::to_value(params)?))?;
+
+        if let Some(error) = response.error {
+            return Err(anyhow!("Sidecar error: {} (code {})", error.message, error.code));
+        }
+
+        let result: SummarizeTitleResult = serde_json::from_value(
+            response.result.ok_or_else(|| anyhow!("No result in response"))?,
+        )?;
+
+        Ok(result.short_title)
+    }
+
+    /// Request a short title summary using a standalone connection (for background threads)
+    pub fn summarize_title_standalone(task_id: uuid::Uuid, title: String) -> Result<String> {
+        let client = Self::connect()?;
+        client.summarize_title(task_id, &title)
+    }
+
     /// Send a request and wait for response
     fn send_request(
         &self,

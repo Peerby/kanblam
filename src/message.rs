@@ -98,6 +98,12 @@ pub enum Message {
     /// Worktree creation failed (from background task)
     WorktreeCreationFailed { task_id: Uuid, error: String },
 
+    // Title summarization
+    /// Request a short title summary for a task (sent to sidecar)
+    RequestTitleSummary { task_id: Uuid },
+    /// Short title summary received from sidecar
+    TitleSummaryReceived { task_id: Uuid, short_title: String },
+
     // Sidecar/SDK events
     /// Event received from the SDK sidecar
     SidecarEvent(crate::sidecar::SidecarEvent),

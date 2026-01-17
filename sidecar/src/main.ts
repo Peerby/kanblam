@@ -18,6 +18,7 @@ import {
   type ResumeSessionParams,
   type SendPromptParams,
   type StopSessionParams,
+  type SummarizeTitleParams,
   createResponse,
   createSessionEvent,
   ErrorCodes,
@@ -176,6 +177,19 @@ class SidecarServer {
         case 'list_sessions': {
           const sessions = this.sessionManager.listSessions();
           return createResponse(id, { sessions });
+        }
+
+        case 'summarize_title': {
+          const p = params as SummarizeTitleParams;
+          // Validate required params
+          if (!p?.task_id || !p?.title) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required params: task_id, title',
+            });
+          }
+          const result = await this.sessionManager.summarizeTitle(p);
+          return createResponse(id, result);
         }
 
         case 'stop_all_sessions': {

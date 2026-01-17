@@ -8,6 +8,8 @@ import {
   type StartSessionParams,
   type ResumeSessionParams,
   type SendPromptParams,
+  type SummarizeTitleParams,
+  type SummarizeTitleResult,
 } from './protocol.js';
 
 export interface Session {
@@ -186,8 +188,71 @@ export class SessionManager {
     await this.resumeSession({
       task_id,
       session_id: session.sessionId,
+      worktree_path: session.worktreePath,
       prompt,
     });
+  }
+
+  /**
+   * Summarize a long task title into a short, clear summary for display in the kanban board.
+   * Uses a one-shot SDK query to generate the summary.
+   */
+  async summarizeTitle(params: SummarizeTitleParams): Promise<SummarizeTitleResult> {
+    const { task_id, title } = params;
+
+    const prompt = `Summarize this task description into a brief, clear title (max 30 chars) for a kanban board card. Return ONLY the summary, nothing else.
+
+Task: ${title}`;
+
+    const claudePath = process.env.CLAUDE_PATH || (await this.findClaudePath());
+    const abortController = new AbortController();
+
+    const options: Options = {
+      abortController,
+      pathToClaudeCodeExecutable: claudePath,
+      maxTurns: 1, // Single-turn query for summarization
+    };
+
+    let shortTitle = '';
+
+    try {
+      const response = query({ prompt, options });
+
+      for await (const message of response) {
+        if (message.type === 'assistant') {
+          // Content is in message.message.content
+          const apiMessage = message.message;
+          if (apiMessage && apiMessage.content) {
+            for (const block of apiMessage.content) {
+              if (block.type === 'text' && 'text' in block) {
+                shortTitle += (block as { type: 'text'; text: string }).text;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[SessionManager] Error summarizing title for task ${task_id}:`, err);
+      // Fall back to truncating the original title
+      shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
+    } finally {
+      abortController.abort();
+    }
+
+    // Clean up the response - remove quotes, extra whitespace, and limit length
+    shortTitle = shortTitle.trim().replace(/^["']|["']$/g, '').trim();
+    if (shortTitle.length > 30) {
+      shortTitle = shortTitle.slice(0, 27) + '...';
+    }
+
+    // If we didn't get a meaningful response, fall back to truncation
+    if (!shortTitle || shortTitle.length < 3) {
+      shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
+    }
+
+    console.log(`[SessionManager] Summarized title for task ${task_id}: "${shortTitle}"`);
+
+    return { short_title: shortTitle };
   }
 
   stopSession(taskId: string): void {
@@ -289,32 +354,44 @@ export class SessionManager {
 
         // Handle different message types
         if (message.type === 'assistant') {
-          // Claude is responding
-          if (message.content) {
-            this.onEvent({
-              task_id: taskId,
-              event: 'output',
-              session_id: sessionId,
-              output: typeof message.content === 'string'
-                ? message.content
-                : JSON.stringify(message.content),
-            });
+          // Claude is responding - content is in message.message.content
+          const apiMessage = message.message;
+          if (apiMessage && apiMessage.content) {
+            // Extract text from content blocks
+            let textContent = '';
+            for (const block of apiMessage.content) {
+              if (block.type === 'text' && 'text' in block) {
+                textContent += (block as { type: 'text'; text: string }).text;
+              }
+            }
+
+            if (textContent) {
+              this.onEvent({
+                task_id: taskId,
+                event: 'output',
+                session_id: sessionId,
+                output: textContent,
+              });
+            }
+
+            // Check for tool_use blocks in the content
+            for (const block of apiMessage.content) {
+              if (block.type === 'tool_use' && 'name' in block) {
+                this.onEvent({
+                  task_id: taskId,
+                  event: 'tool_use',
+                  session_id: sessionId,
+                  tool_name: (block as { type: 'tool_use'; name: string }).name,
+                });
+
+                this.onEvent({
+                  task_id: taskId,
+                  event: 'working',
+                  session_id: sessionId,
+                });
+              }
+            }
           }
-        }
-
-        if (message.type === 'tool_use') {
-          this.onEvent({
-            task_id: taskId,
-            event: 'tool_use',
-            session_id: sessionId,
-            tool_name: message.name,
-          });
-
-          this.onEvent({
-            task_id: taskId,
-            event: 'working',
-            session_id: sessionId,
-          });
         }
 
         if (message.type === 'result') {

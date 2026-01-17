@@ -92,6 +92,12 @@ pub struct GetSessionParams {
     pub task_id: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SummarizeTitleParams {
+    pub task_id: String,
+    pub title: String,
+}
+
 // Response result types
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +114,11 @@ pub struct ResumeSessionResult {
 pub struct GetSessionResult {
     pub session_id: String,
     pub is_active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SummarizeTitleResult {
+    pub short_title: String,
 }
 
 // Session event types (notifications from sidecar)
