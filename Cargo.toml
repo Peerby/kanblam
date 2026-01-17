@@ -2,9 +2,13 @@
 name = "kanclaude"
 version = "0.1.0"
 edition = "2021"
-description = "CLI Kanban task manager for Claude Code sessions"
-authors = ["Daan"]
+description = "TUI Kanban board for orchestrating parallel Claude Code sessions"
+authors = ["Peerby <dev@peerby.com>"]
 license = "MIT"
+repository = "https://github.com/Peerby/kanblam"
+homepage = "https://github.com/Peerby/kanblam"
+keywords = ["kanban", "claude", "ai", "tui", "productivity"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 # TUI Framework

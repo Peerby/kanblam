@@ -7,6 +7,8 @@
    ▀▀ ▀▀
 ```
 
+> **Open source by [Peerby](https://www.peerby.com)** — We're building the future of sharing. [Join us!](https://www.peerby.com/careers)
+
 **A TUI Kanban board for orchestrating parallel Claude Code sessions**
 
 KanBlam! is a terminal-based task manager that lets you run multiple Claude Code AI coding sessions simultaneously, each in complete isolation through git worktrees. Plan your tasks, queue them up, and watch Claude work on them in parallel—then review, accept, or discard the results. It's vibe coding at the speed of sound.
@@ -71,7 +73,7 @@ Because KanBlam is a TUI (terminal user interface), it scales perfectly to any s
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/kanblam.git
+git clone https://github.com/Peerby/kanblam.git
 cd kanblam
 
 # Build the Rust TUI
@@ -205,10 +207,12 @@ Meet **Blam**, our mascot: a friendly little block character who represents the 
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
 
 ---
 
 <p align="center">
-<i>Built for developers who want to harness the full power of vibe coding with AI coding assistants</i>
+<b>Built with ❤️ by <a href="https://www.peerby.com">Peerby</a></b><br>
+<i>We're on a mission to build the future of sharing. Interested in AI-powered development?</i><br>
+<a href="https://www.peerby.com/careers">We're hiring!</a>
 </p>
