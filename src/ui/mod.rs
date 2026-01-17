@@ -46,7 +46,8 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     // Determine header height based on available space
     // Show full 3-line logo header when terminal is wide enough and tall enough
     // (mascot overlays the project bar line to save vertical space)
-    let show_full_header = logo::should_show_full_logo(frame.area().width, frame.area().height);
+    let logo_size = logo::get_logo_size(frame.area().width, frame.area().height);
+    let show_full_header = matches!(logo_size, logo::LogoSize::Full | logo::LogoSize::Medium);
     let header_height = if show_full_header { 3 } else { 1 };
 
     let chunks = Layout::default()
@@ -60,12 +61,12 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         .split(frame.area());
 
     // Render header area (project bar + logo)
-    render_header(frame, chunks[0], app, show_full_header);
+    render_header(frame, chunks[0], app, logo_size);
 
     // Render kanban board (full width - tmux handles the split)
     render_kanban(frame, chunks[1], app);
 
-    // Render mascot feet overlapping the kanban border (only when full logo is shown)
+    // Render mascot feet overlapping the kanban border (only when full/medium logo is shown)
     if show_full_header {
         // The feet should be rendered at the top row of the kanban area, right-aligned
         let feet_area = Rect {
@@ -74,7 +75,7 @@ pub fn view(frame: &mut Frame, app: &mut App) {
             width: chunks[1].width,
             height: 1,
         };
-        logo::render_mascot_feet(frame, feet_area, app.model.ui_state.logo_shimmer_frame);
+        logo::render_mascot_feet(frame, feet_area, app.model.ui_state.logo_shimmer_frame, logo_size);
     }
 
     // Render task input area
@@ -145,22 +146,38 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
 }
 
 /// Render the header area (project bar + optional logo)
-fn render_header(frame: &mut Frame, area: Rect, app: &App, show_full_logo: bool) {
-    if show_full_logo {
-        // Render project bar on top-left (just first line)
-        let project_bar_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width.saturating_sub(logo::FULL_LOGO_WIDTH + 2),
-            height: 1,
-        };
-        render_project_bar(frame, project_bar_area, app);
+fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::LogoSize) {
+    match logo_size {
+        logo::LogoSize::Full => {
+            // Render project bar on top-left (just first line)
+            let project_bar_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width.saturating_sub(logo::FULL_LOGO_WIDTH + 2),
+                height: 1,
+            };
+            render_project_bar(frame, project_bar_area, app);
 
-        // Render logo using full area - it will right-align itself
-        logo::render_logo(frame, area, app.model.ui_state.logo_shimmer_frame);
-    } else {
-        // Compact mode: project bar with inline branding
-        render_project_bar_with_branding(frame, area, app);
+            // Render full logo using full area - it will right-align itself
+            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size);
+        }
+        logo::LogoSize::Medium => {
+            // Render project bar on top-left (just first line) with more space
+            let project_bar_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width.saturating_sub(logo::MEDIUM_LOGO_WIDTH + 2),
+                height: 1,
+            };
+            render_project_bar(frame, project_bar_area, app);
+
+            // Render medium logo using full area - it will right-align itself
+            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size);
+        }
+        _ => {
+            // Compact mode: project bar with inline branding
+            render_project_bar_with_branding(frame, area, app);
+        }
     }
 }
 

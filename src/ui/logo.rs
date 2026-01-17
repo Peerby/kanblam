@@ -6,8 +6,12 @@ use ratatui::{
     Frame,
 };
 
-/// The full ASCII art logo width (mascot + text)
+/// The full ASCII art logo width (mascot + KANBLAM text)
 pub const FULL_LOGO_WIDTH: u16 = 58;
+
+/// The medium ASCII art logo width (mascot + KB text)
+/// Mascot (10) + gap (2) + "KB" text (7) + trailing space (1) = 20
+pub const MEDIUM_LOGO_WIDTH: u16 = 20;
 
 /// The compact text-only width
 pub const COMPACT_LOGO_WIDTH: u16 = 7;
@@ -40,19 +44,46 @@ const MASCOT_MAGENTA_SAT: Color = Color::Rgb(255, 50, 150);  // Electric magenta
 const FEET_MAGENTA: Color = Color::Rgb(166, 64, 110);        // Dimmed normal magenta
 const FEET_MAGENTA_SAT: Color = Color::Rgb(235, 46, 138);    // Dimmed saturated magenta
 
+/// Logo size variants for responsive design
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LogoSize {
+    /// Full mascot + KANBLAM wordmark (58 chars wide)
+    Full,
+    /// Medium mascot + KB wordmark (24 chars wide)
+    Medium,
+    /// Compact text-only "KANBLAM"
+    Compact,
+    /// Minimal branding
+    Minimal,
+    /// No branding (too small)
+    None,
+}
+
 /// Render the logo/branding in the given area
 /// shimmer_frame: 0 = no animation, 1-4 = beam traveling up (row 4 to row 1), 5-7 = fade out
 pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
-    let width = area.width;
+    render_logo_size(frame, area, shimmer_frame, LogoSize::Full)
+}
 
-    if width >= FULL_LOGO_WIDTH && area.height >= 3 {
-        render_full_logo(frame, area, shimmer_frame);
-    } else if width >= COMPACT_LOGO_WIDTH {
-        render_compact_logo(frame, area);
-    } else if width >= MIN_BRANDING_WIDTH {
-        render_minimal_logo(frame, area);
+/// Render the logo at a specific size
+pub fn render_logo_size(frame: &mut Frame, area: Rect, shimmer_frame: u8, size: LogoSize) {
+    match size {
+        LogoSize::Full if area.width >= FULL_LOGO_WIDTH && area.height >= 3 => {
+            render_full_logo(frame, area, shimmer_frame);
+        }
+        LogoSize::Medium if area.width >= MEDIUM_LOGO_WIDTH && area.height >= 3 => {
+            render_medium_logo(frame, area, shimmer_frame);
+        }
+        LogoSize::Compact | LogoSize::Full | LogoSize::Medium if area.width >= COMPACT_LOGO_WIDTH => {
+            render_compact_logo(frame, area);
+        }
+        LogoSize::Minimal if area.width >= MIN_BRANDING_WIDTH => {
+            render_minimal_logo(frame, area);
+        }
+        _ => {
+            // Nothing to render
+        }
     }
-    // If width < MIN_BRANDING_WIDTH, render nothing
 }
 
 /// Get the mascot color for a row, considering highlight animation
@@ -127,23 +158,92 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
     frame.render_widget(paragraph, area);
 }
 
+/// Render the medium ASCII art logo with mascot + abbreviated KB text
+fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
+    // Get colors for each row based on shimmer state
+    let mascot_styles = [
+        Style::default().fg(get_mascot_color(0, shimmer_frame)),
+        Style::default().fg(get_mascot_color(1, shimmer_frame)),
+        Style::default().fg(get_mascot_color(2, shimmer_frame)),
+    ];
+
+    // KB text stays green (same as full KANBLAM)
+    let green = Color::Rgb(80, 200, 120);
+    let text_style = Style::default().fg(green);
+
+    // Eye style - same green as KB text
+    let eye_style = Style::default().fg(green);
+
+    // KB wordmark (just K and B from KANBLAM)
+    // K: █ █ / █▀▄ / █ █
+    // B: ██▄ / █▀▄ / ██▀
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
+            Span::styled("  ", Style::default()),
+            Span::styled("█ █ ██▄", text_style),
+            Span::styled(" ", Style::default()),
+        ]),
+        // Face row with green eyes in the negative space
+        Line::from(vec![
+            Span::styled("  ▓", mascot_styles[1]),      // Left edge
+            Span::styled("▪", eye_style),               // Left eye (small square)
+            Span::styled("▀▀", mascot_styles[1]),       // Nose/brow
+            Span::styled("▪", eye_style),               // Right eye (small square)
+            Span::styled("▓▒▒", mascot_styles[1]),      // Right edge + shadow
+            Span::styled("  ", Style::default()),
+            Span::styled("█▀▄ █▀▄", text_style),
+            Span::styled(" ", Style::default()),
+        ]),
+        Line::from(vec![
+            Span::styled(LOGO_MASCOT[2], mascot_styles[2]),
+            Span::styled("  ", Style::default()),
+            Span::styled("█ █ ██▀", text_style),
+            Span::styled(" ", Style::default()),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Right);
+    frame.render_widget(paragraph, area);
+}
+
 /// Render just the mascot feet - call this AFTER rendering kanban to overlap the border
-pub fn render_mascot_feet(frame: &mut Frame, area: Rect, shimmer_frame: u8) {
+pub fn render_mascot_feet(frame: &mut Frame, area: Rect, shimmer_frame: u8, logo_size: LogoSize) {
     let feet_style = Style::default().fg(get_mascot_color(3, shimmer_frame));
     let border_style = Style::default().fg(Color::Cyan);
 
     // Feet characters with border line filling the gaps for seamless appearance
     // Original feet: "   ▀▀ ▀▀  " - replace spaces with ─ in border color
-    // Then add 35 chars of border line + corner to align with mascot body above (shifted left by 1)
-    let feet_line = Line::from(vec![
-        Span::styled("───", border_style),        // Leading border (was spaces)
-        Span::styled("▀▀", feet_style),           // Left foot
-        Span::styled("─", border_style),          // Gap between feet
-        Span::styled("▀▀", feet_style),           // Right foot
-        Span::styled("──", border_style),         // Trailing border (was spaces)
-        Span::styled("──────────────────────────────────", border_style),  // 34 chars of line
-        Span::styled("┐", border_style),          // Top-right corner
-    ]);
+    let feet_line = match logo_size {
+        LogoSize::Full => {
+            // Full logo: 35 chars of border line + corner to align with mascot body above
+            Line::from(vec![
+                Span::styled("───", border_style),        // Leading border (was spaces)
+                Span::styled("▀▀", feet_style),           // Left foot
+                Span::styled("─", border_style),          // Gap between feet
+                Span::styled("▀▀", feet_style),           // Right foot
+                Span::styled("──", border_style),         // Trailing border (was spaces)
+                Span::styled("──────────────────────────────────", border_style),  // 34 chars of line
+                Span::styled("┐", border_style),          // Top-right corner
+            ])
+        }
+        LogoSize::Medium => {
+            // Medium logo: shorter border line to match KB text width
+            // Feet pattern: "───▀▀─▀▀──" = 10 chars (matches mascot width)
+            // Then gap (2) + KB text width (7) + trailing (1) = 10 more
+            // Total: 10 + 10 = 20 chars to match medium logo
+            Line::from(vec![
+                Span::styled("───", border_style),        // Leading border (was spaces)
+                Span::styled("▀▀", feet_style),           // Left foot
+                Span::styled("─", border_style),          // Gap between feet
+                Span::styled("▀▀", feet_style),           // Right foot
+                Span::styled("──", border_style),         // Trailing border (was spaces)
+                Span::styled("────────", border_style),   // 8 chars of line (2 gap + 7 text - 1 corner)
+                Span::styled("┐", border_style),          // Top-right corner
+            ])
+        }
+        _ => return, // No feet for compact/minimal/none
+    };
 
     let paragraph = Paragraph::new(feet_line).alignment(Alignment::Right);
     frame.render_widget(paragraph, area);
@@ -178,29 +278,47 @@ pub fn logo_width_needed(available_width: u16, available_height: u16) -> u16 {
     }
 }
 
-/// Mascot visual width in characters
-const MASCOT_WIDTH: u16 = 10;
+/// Maximum percentage of screen width the full logo (mascot + KANBLAM) should occupy
+/// When exceeded, fall back to medium logo (mascot + KB)
+const MAX_FULL_LOGO_WIDTH_PERCENT: f32 = 0.60;
 
-/// Maximum percentage of screen width the mascot should occupy
+/// Maximum percentage of screen width the medium logo (mascot + KB) should occupy
 /// When exceeded, fall back to text-only "KANBLAM"
-const MAX_MASCOT_WIDTH_PERCENT: f32 = 0.70;
+const MAX_MEDIUM_LOGO_WIDTH_PERCENT: f32 = 0.70;
 
 /// Minimum terminal height (in lines) to show the full mascot logo
 /// Below this threshold, show text-only "KANBLAM" to preserve vertical space
 pub const MIN_HEIGHT_FOR_FULL_LOGO: u16 = 30;
 
-/// Check if we should show the full 4-line logo with mascot
-/// Shows mascot only when:
-/// - Terminal height is at least 30 lines
-/// - Mascot would take up at most 70% of terminal width
-/// Otherwise falls back to text-only "KANBLAM"
-pub fn should_show_full_logo(terminal_width: u16, terminal_height: u16) -> bool {
-    // Height check: need at least 30 lines
+/// Determine which logo size to show based on terminal dimensions
+/// Returns:
+/// - Full: when terminal is tall enough (>=30 lines) and full logo takes <= 60% width
+/// - Medium: when terminal is tall enough and full logo would exceed 60% but medium is <= 70%
+/// - Compact: otherwise (text-only "KANBLAM")
+pub fn get_logo_size(terminal_width: u16, terminal_height: u16) -> LogoSize {
+    // Height check: need at least 30 lines for mascot
     if terminal_height < MIN_HEIGHT_FOR_FULL_LOGO {
-        return false;
+        return LogoSize::Compact;
     }
 
-    // Width check: mascot should not exceed 70% of terminal width
-    let mascot_percent = MASCOT_WIDTH as f32 / terminal_width as f32;
-    mascot_percent <= MAX_MASCOT_WIDTH_PERCENT
+    // Width check for full logo (mascot + KANBLAM): should not exceed 60% of terminal width
+    let full_logo_percent = FULL_LOGO_WIDTH as f32 / terminal_width as f32;
+    if full_logo_percent <= MAX_FULL_LOGO_WIDTH_PERCENT {
+        return LogoSize::Full;
+    }
+
+    // Width check for medium logo (mascot + KB): should not exceed 70% of terminal width
+    let medium_logo_percent = MEDIUM_LOGO_WIDTH as f32 / terminal_width as f32;
+    if medium_logo_percent <= MAX_MEDIUM_LOGO_WIDTH_PERCENT {
+        return LogoSize::Medium;
+    }
+
+    // Fall back to compact text-only
+    LogoSize::Compact
+}
+
+/// Check if we should show the full 4-line logo with mascot (any size - full or medium)
+/// This is used to determine header height
+pub fn should_show_full_logo(terminal_width: u16, terminal_height: u16) -> bool {
+    matches!(get_logo_size(terminal_width, terminal_height), LogoSize::Full | LogoSize::Medium)
 }
