@@ -2276,6 +2276,9 @@ impl App {
             Message::TriggerLogoShimmer => {
                 // Start the shimmer animation (frame 1 = bottom row lit)
                 self.model.ui_state.logo_shimmer_frame = 1;
+                // Also trigger a random eye animation for extra playfulness
+                self.model.ui_state.eye_animation = EyeAnimation::random();
+                self.model.ui_state.eye_animation_ticks_remaining = 2;
             }
 
             Message::ShowStartupHints => {
@@ -3835,11 +3838,12 @@ impl App {
                 // Increment animation frame for spinners
                 self.model.ui_state.animation_frame = self.model.ui_state.animation_frame.wrapping_add(1);
 
-                // Advance logo highlight animation if active (frames 1-4, then back to 0)
-                // Frame 1 = lead-in (absorbs timing variance), frames 2-4 = highlight glides up
+                // Advance logo highlight animation if active (frames 1-5, then back to 0)
+                // Frame 1 = lead-in (absorbs timing variance), frames 2-5 = highlight glides up
+                // (frame 2 = feet, frame 3 = body, frame 4 = face, frame 5 = head)
                 if self.model.ui_state.logo_shimmer_frame > 0 {
                     self.model.ui_state.logo_shimmer_frame += 1;
-                    if self.model.ui_state.logo_shimmer_frame > 4 {
+                    if self.model.ui_state.logo_shimmer_frame > 5 {
                         self.model.ui_state.logo_shimmer_frame = 0; // Animation complete
                     }
                 }
