@@ -9,6 +9,8 @@
 
 > **Open source by [Peerby](https://www.peerby.com)** — We're building the future of sharing. [Join us!](https://www.peerby.com/careers)
 
+> **WARNING: This project is highly experimental and may destroy your code and repository. Use at your own risk. Always have backups and handle with care.**
+
 **A TUI Kanban board for orchestrating parallel Claude Code sessions**
 
 KanBlam! is a terminal-based task manager that lets you run multiple Claude Code AI coding sessions simultaneously, each in complete isolation through git worktrees. Plan your tasks, queue them up, and watch Claude work on them in parallel—then review, accept, or discard the results. It's vibe coding at the speed of sound.
