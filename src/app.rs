@@ -2359,6 +2359,14 @@ impl App {
                 }
             }
 
+            Message::RestartConfirmationAnimation => {
+                // Restart the highlight sweep animation when user presses an unrecognized key
+                // This signals that they need to respond to the prompt first
+                if let Some(ref mut confirmation) = self.model.ui_state.pending_confirmation {
+                    confirmation.animation_tick = 20;
+                }
+            }
+
             Message::SetStatusMessage(msg) => {
                 self.model.ui_state.status_message = msg;
             }

@@ -161,6 +161,7 @@ pub enum Message {
     ShowConfirmation { message: String, action: PendingAction },
     ConfirmAction,  // User pressed 'y'
     CancelAction,   // User pressed 'n' or Esc
+    RestartConfirmationAnimation, // User pressed an unrecognized key - highlight the prompt
     SetStatusMessage(Option<String>),
 
     // System

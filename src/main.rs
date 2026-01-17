@@ -772,7 +772,7 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
 }
 
 fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
-    // Handle confirmation dialogs first
+    // Handle confirmation dialogs first - ignore all other input except expected keys
     if app.model.ui_state.pending_confirmation.is_some() {
         return match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => vec![Message::ConfirmAction],
@@ -783,10 +783,12 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 if project_idx < app.model.projects.len() {
                     vec![Message::CancelAction, Message::SwitchProject(project_idx)]
                 } else {
-                    vec![]
+                    // Invalid project number - restart animation to signal prompt is active
+                    vec![Message::RestartConfirmationAnimation]
                 }
             }
-            _ => vec![],
+            // Any other key: restart the highlight animation to signal the prompt is active
+            _ => vec![Message::RestartConfirmationAnimation],
         };
     }
 
