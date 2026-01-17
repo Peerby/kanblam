@@ -941,6 +941,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 Span::styled(" u ", key_style), Span::styled(" Unapply: remove applied changes", label_style),
             ]));
             lines.push(Line::from(vec![
+                Span::styled(" r ", key_style), Span::styled(" Rebase: update worktree to latest main", label_style),
+            ]));
+            lines.push(Line::from(vec![
                 Span::styled(" m ", key_style), Span::styled(" Merge: finalize changes and mark done", label_style),
             ]));
             lines.push(Line::from(vec![

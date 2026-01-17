@@ -1459,12 +1459,17 @@ impl App {
 
                     // STEP 1: Try fast apply first
                     match crate::worktree::apply_task_changes(&project_dir, task_id) {
-                        Ok(stash_ref) => {
-                            // Fast apply succeeded - now verify build
-                            let stash_ref_clone = stash_ref.clone();
+                        Ok(stash_warning) => {
+                            // Fast apply succeeded - stash was immediately popped
+                            // stash_warning contains message if there were stash conflicts
+                            if let Some(ref warning) = stash_warning {
+                                if warning.starts_with("STASH_") {
+                                    commands.push(Message::SetStatusMessage(Some(warning.clone())));
+                                }
+                            }
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = Some(task_id);
-                                project.applied_stash_ref = stash_ref;
+                                project.applied_stash_ref = None; // No longer tracked - stash already popped
                             }
 
                             // Run build check
@@ -1485,7 +1490,7 @@ impl App {
                                 }
                                 Err(e) => {
                                     // Build check failed - try surgical unapply
-                                    match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref_clone.as_deref()) {
+                                    match crate::worktree::unapply_task_changes(&project_dir, task_id) {
                                         Ok(crate::worktree::UnapplyResult::Success) => {
                                             if let Some(project) = self.model.active_project_mut() {
                                                 project.applied_task_id = None;
@@ -1595,8 +1600,8 @@ impl App {
                         )));
                         return commands;
                     }
-                    Some((project_dir, Some(task_id), stash_ref)) => {
-                        match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref.as_deref()) {
+                    Some((project_dir, Some(task_id), _stash_ref)) => {
+                        match crate::worktree::unapply_task_changes(&project_dir, task_id) {
                             Ok(crate::worktree::UnapplyResult::Success) => {
                                 if let Some(project) = self.model.active_project_mut() {
                                     project.applied_task_id = None;
@@ -1623,11 +1628,11 @@ impl App {
             }
 
             Message::ForceUnapplyTaskChanges(task_id) => {
-                let project_info = self.model.active_project()
-                    .map(|p| (p.working_dir.clone(), p.applied_stash_ref.clone()));
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
 
-                if let Some((project_dir, stash_ref)) = project_info {
-                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id, stash_ref.as_deref()) {
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id) {
                         Ok(()) => {
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = None;
@@ -1665,49 +1670,92 @@ impl App {
                         return commands;
                     }
 
-                    if let Some(ref wt_path) = worktree_path {
-                        // First commit any uncommitted changes
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                commands.push(Message::Error(format!(
-                                    "Failed to commit changes before update: {}", e
-                                )));
-                                return commands;
+                    if let Some(wt_path) = worktree_path {
+                        // Set task to Updating status IMMEDIATELY for UI feedback (shows animation)
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Updating;
+                                task.last_activity_at = Some(chrono::Utc::now());
                             }
                         }
 
-                        // Try fast rebase (update only - no merge, no status change)
-                        match crate::worktree::update_worktree_to_main(wt_path, &project_dir) {
-                            Ok(true) => {
-                                commands.push(Message::SetStatusMessage(Some(
-                                    "✓ Updated to latest main successfully.".to_string()
-                                )));
-                                // Refresh git status to update the UI
-                                commands.push(Message::RefreshGitStatus);
-                            }
-                            Ok(false) => {
-                                // Conflicts detected - start Claude to resolve them
-                                // Uses Updating status (not Accepting) so it doesn't merge after
-                                commands.push(Message::SetStatusMessage(Some(
-                                    "Conflicts detected, starting smart update...".to_string()
-                                )));
-                                commands.push(Message::StartUpdateRebaseSession { task_id });
-                            }
-                            Err(e) => {
-                                // Error during rebase attempt - also try Claude
-                                commands.push(Message::SetStatusMessage(Some(
-                                    format!("Fast rebase failed ({}), trying smart update...", e)
-                                )));
-                                commands.push(Message::StartUpdateRebaseSession { task_id });
-                            }
-                        }
+                        // Defer ALL git operations (commit + rebase) to run async
+                        commands.push(Message::StartFastRebase {
+                            task_id,
+                            worktree_path: wt_path,
+                            project_dir
+                        });
                     } else {
                         commands.push(Message::SetStatusMessage(Some(
                             "No worktree found for this task.".to_string()
                         )));
                     }
                 }
+            }
+
+            Message::StartFastRebase { task_id, worktree_path, project_dir } => {
+                // Require async sender - fail explicitly if missing
+                let sender = match self.async_sender.clone() {
+                    Some(s) => s,
+                    None => {
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Review;
+                            }
+                        }
+                        commands.push(Message::Error(
+                            "Internal error: async_sender not configured.".to_string()
+                        ));
+                        return commands;
+                    }
+                };
+
+                // Spawn ALL git operations in background to keep UI responsive
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        // First commit any uncommitted changes
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                            return Err(e);
+                        }
+                        // Then do the rebase
+                        crate::worktree::update_worktree_to_main(&worktree_path, &project_dir)
+                    }).await;
+
+                    let msg = match result {
+                        Ok(Ok(true)) => Message::FastRebaseCompleted { task_id },
+                        Ok(Ok(false)) => Message::FastRebaseNeedsSmartRebase { task_id },
+                        Ok(Err(e)) => Message::FastRebaseFailed { task_id, error: e.to_string() },
+                        Err(e) => Message::FastRebaseFailed { task_id, error: format!("Task panicked: {}", e) },
+                    };
+
+                    let _ = sender.send(msg);
+                });
+            }
+
+            Message::FastRebaseCompleted { task_id } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.status = TaskStatus::Review;
+                    }
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    "✓ Updated to latest main successfully.".to_string()
+                )));
+                commands.push(Message::RefreshGitStatus);
+            }
+
+            Message::FastRebaseNeedsSmartRebase { task_id } => {
+                commands.push(Message::SetStatusMessage(Some(
+                    "Conflicts detected, starting smart update...".to_string()
+                )));
+                commands.push(Message::StartUpdateRebaseSession { task_id });
+            }
+
+            Message::FastRebaseFailed { task_id, error } => {
+                commands.push(Message::SetStatusMessage(Some(
+                    format!("Fast rebase failed ({}), trying smart update...", error)
+                )));
+                commands.push(Message::StartUpdateRebaseSession { task_id });
             }
 
             Message::RefreshGitStatus => {
@@ -2257,6 +2305,9 @@ impl App {
                                 // Commit the applied changes to main
                                 match crate::worktree::commit_applied_changes(&project_dir, &task_title, task_id) {
                                     Ok(_) => {
+                                        // Clean up patch file (stash was already popped during apply)
+                                        crate::worktree::cleanup_applied_state(task_id);
+
                                         // Clear applied state
                                         if let Some(project) = self.model.active_project_mut() {
                                             project.applied_task_id = None;
@@ -3272,12 +3323,16 @@ impl App {
                         Ok(true) => {
                             // Rebase successful, now do the apply
                             match crate::worktree::apply_task_changes(&project_dir, task_id) {
-                                Ok(stash_ref) => {
-                                    // Apply succeeded - now verify build
-                                    let stash_ref_clone = stash_ref.clone();
+                                Ok(stash_warning) => {
+                                    // Apply succeeded - stash was immediately popped
+                                    if let Some(ref warning) = stash_warning {
+                                        if warning.starts_with("STASH_") {
+                                            commands.push(Message::SetStatusMessage(Some(warning.clone())));
+                                        }
+                                    }
                                     if let Some(project) = self.model.active_project_mut() {
                                         project.applied_task_id = Some(task_id);
-                                        project.applied_stash_ref = stash_ref;
+                                        project.applied_stash_ref = None; // No longer tracked
 
                                         // Return task to Review status
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -3306,7 +3361,7 @@ impl App {
                                         }
                                         Err(e) => {
                                             // Build check failed - try surgical unapply
-                                            match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref_clone.as_deref()) {
+                                            match crate::worktree::unapply_task_changes(&project_dir, task_id) {
                                                 Ok(crate::worktree::UnapplyResult::Success) => {
                                                     if let Some(project) = self.model.active_project_mut() {
                                                         project.applied_task_id = None;

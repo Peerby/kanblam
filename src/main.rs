@@ -981,6 +981,21 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // Rebase selected task's worktree to latest main (Review only)
+        KeyCode::Char('r') if app.model.ui_state.selected_column == TaskStatus::Review => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(TaskStatus::Review);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        if task.worktree_path.is_some() {
+                            return vec![Message::UpdateWorktreeToMain(task.id)];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
         // Enter input mode
         KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
 
@@ -1599,6 +1614,14 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 .unwrap_or(false);
             if has_applied {
                 return vec![Message::ToggleTaskPreview, Message::UnapplyTaskChanges];
+            }
+            vec![]
+        }
+
+        // Rebase worktree to latest main (Review only)
+        KeyCode::Char('r') => {
+            if task.worktree_path.is_some() && task.status == TaskStatus::Review {
+                return vec![Message::ToggleTaskPreview, Message::UpdateWorktreeToMain(task.id)];
             }
             vec![]
         }

@@ -400,6 +400,90 @@ pub fn delete_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// Safely restore a stash by commit SHA - uses apply+drop instead of pop for reliability.
+/// The SHA is stable even if other stashes are created, unlike stash@{N} indices.
+/// Returns error if restore fails so we don't silently lose data.
+fn safe_stash_restore(project_dir: &PathBuf, stash_sha: &Option<String>) -> Result<()> {
+    if let Some(ref sha) = stash_sha {
+        // First, verify the stash exists
+        let verify = Command::new("git")
+            .current_dir(project_dir)
+            .args(["rev-parse", "--verify", &format!("{}^{{commit}}", sha)])
+            .output();
+
+        match verify {
+            Ok(output) if !output.status.success() => {
+                return Err(anyhow!(
+                    "Stash {} no longer exists. Your uncommitted changes may have been lost.",
+                    sha
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Could not verify stash {}: {}. Your changes may still be in the stash - run 'git stash list' to check.",
+                    sha, e
+                ));
+            }
+            Ok(_) => {} // Stash exists, continue
+        }
+
+        // Apply the stash (doesn't remove it)
+        let apply_result = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "apply", sha])
+            .output();
+
+        match apply_result {
+            Ok(output) if output.status.success() => {
+                // Successfully applied, now drop it
+                let drop_result = Command::new("git")
+                    .current_dir(project_dir)
+                    .args(["stash", "drop", sha])
+                    .output();
+
+                // Even if drop fails, the changes are restored - just warn
+                if let Ok(drop_output) = drop_result {
+                    if !drop_output.status.success() {
+                        // Changes restored but stash not dropped - not critical
+                        // User can manually drop it with 'git stash drop'
+                        eprintln!("Warning: Stash applied but could not be dropped. Run 'git stash drop {}' manually.", sha);
+                    }
+                }
+                Ok(())
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow!(
+                    "Could not restore uncommitted changes from stash '{}': {}. Run 'git stash apply {}' manually to recover.",
+                    sha, stderr.trim(), sha
+                ))
+            }
+            Err(e) => {
+                Err(anyhow!(
+                    "Could not run stash apply for '{}': {}. Your changes may still be in the stash.",
+                    sha, e
+                ))
+            }
+        }
+    } else {
+        Ok(())
+    }
+}
+
+/// Get the commit SHA for a stash (stable identifier unlike stash@{N} indices)
+fn get_stash_sha(project_dir: &PathBuf) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "stash@{0}"])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(anyhow!("No stash found"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Get the path where we save the applied patch for surgical reversal
 fn get_patch_file_path(task_id: Uuid) -> PathBuf {
     let kanclaude_dir = dirs::home_dir()
@@ -407,6 +491,13 @@ fn get_patch_file_path(task_id: Uuid) -> PathBuf {
         .join(".kanclaude")
         .join("patches");
     kanclaude_dir.join(format!("{}.patch", task_id))
+}
+
+/// Clean up after accepting an applied task.
+/// Just removes the patch file - stash was already popped immediately after apply.
+pub fn cleanup_applied_state(task_id: Uuid) {
+    let patch_path = get_patch_file_path(task_id);
+    let _ = std::fs::remove_file(&patch_path);
 }
 
 /// Apply a task's changes to the main worktree (for testing)
@@ -449,19 +540,19 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
             return Err(anyhow!("Failed to stash local changes: {}", stderr));
         }
 
-        // Get the stash ref
-        let stash_list = Command::new("git")
-            .current_dir(project_dir)
-            .args(["stash", "list", "-1"])
-            .output()?;
-
-        if stash_list.status.success() {
-            let output = String::from_utf8_lossy(&stash_list.stdout);
-            if let Some(ref_part) = output.split(':').next() {
-                stash_ref = Some(ref_part.trim().to_string());
+        // Get the stash SHA (stable identifier unlike stash@{N} indices)
+        // This ensures we can restore the right stash even if other stashes are created later
+        match get_stash_sha(project_dir) {
+            Ok(sha) => {
+                stash_ref = Some(sha);
+                log(&format!("stashed changes, stash_sha={:?}", stash_ref));
+            }
+            Err(e) => {
+                log(&format!("WARNING: Could not get stash SHA: {}", e));
+                // Fall back to stash@{0} but this is less reliable
+                stash_ref = Some("stash@{0}".to_string());
             }
         }
-        log(&format!("stashed changes, stash_ref={:?}", stash_ref));
     }
 
     // Find the merge-base (common ancestor) between HEAD and the task branch
@@ -472,13 +563,8 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         .output()?;
 
     if !merge_base_output.status.success() {
-        // Restore stash if we made one
-        if stash_ref.is_some() {
-            let _ = Command::new("git")
-                .current_dir(project_dir)
-                .args(["stash", "pop"])
-                .output();
-        }
+        // Restore stash if we made one - fail if we can't restore
+        safe_stash_restore(project_dir, &stash_ref)?;
         let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
         return Err(anyhow!("Failed to find merge-base: {}", stderr));
     }
@@ -493,13 +579,8 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         .output()?;
 
     if !diff_output.status.success() {
-        // Restore stash if we made one
-        if stash_ref.is_some() {
-            let _ = Command::new("git")
-                .current_dir(project_dir)
-                .args(["stash", "pop"])
-                .output();
-        }
+        // Restore stash if we made one - fail if we can't restore
+        safe_stash_restore(project_dir, &stash_ref)?;
         let stderr = String::from_utf8_lossy(&diff_output.stderr);
         return Err(anyhow!("Failed to get diff: {}", stderr));
     }
@@ -507,13 +588,8 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("diff size={} bytes", diff_output.stdout.len()));
     if diff_output.stdout.is_empty() {
         log("WARNING: diff is empty! Nothing to apply.");
-        // Restore stash if we made one
-        if stash_ref.is_some() {
-            let _ = Command::new("git")
-                .current_dir(project_dir)
-                .args(["stash", "pop"])
-                .output();
-        }
+        // Restore stash if we made one - fail if we can't restore
+        safe_stash_restore(project_dir, &stash_ref)?;
         return Err(anyhow!("Nothing to apply - task changes are already in main."));
     }
 
@@ -564,18 +640,52 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
             .args(["reset", "--hard", "HEAD"])
             .output();
 
-        // Restore stash if we made one
+        // Restore stash if we made one - use SHA-based restore for reliability
+        if let Err(e) = safe_stash_restore(project_dir, &stash_ref) {
+            log(&format!("CRITICAL: Failed to restore stash: {}", e));
+            return Err(anyhow!(
+                "Apply failed AND could not restore your uncommitted changes! {}",
+                e
+            ));
+        }
         if stash_ref.is_some() {
-            let _ = Command::new("git")
-                .current_dir(project_dir)
-                .args(["stash", "pop"])
-                .output();
+            log("Restored stashed changes successfully");
         }
         return Err(anyhow!("Failed to apply changes. There may be conflicts."));
     }
 
+    // Immediately restore stashed changes - no deferred tracking needed
+    // If this conflicts, user deals with it now (better than later)
+    if let Some(ref sha) = stash_ref {
+        let pop_result = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "pop"])
+            .output();
+
+        match pop_result {
+            Ok(output) if output.status.success() => {
+                log("Restored stashed changes on top of applied patch");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log(&format!("Stash pop had conflicts: {}", stderr));
+                // Don't fail - changes are applied, user just needs to resolve stash conflicts
+                // Their stash is still there, they can manually handle it
+                return Ok(Some(format!(
+                    "STASH_CONFLICT: Your uncommitted changes conflicted with the applied patch. \
+                    Run 'git stash pop' to resolve, or 'git stash drop' to discard your changes. \
+                    Stash: {}", sha
+                )));
+            }
+            Err(e) => {
+                log(&format!("Stash pop command failed: {}", e));
+                return Ok(Some(format!("STASH_ERROR: {}", e)));
+            }
+        }
+    }
+
     log("SUCCESS - changes applied");
-    Ok(stash_ref)
+    Ok(None) // No stash tracking needed - already popped
 }
 
 /// Result of attempting to unapply task changes
@@ -587,9 +697,10 @@ pub enum UnapplyResult {
     NeedsConfirmation(String),
 }
 
-/// Unapply task changes from the main worktree using surgical patch reversal
-/// Returns Success if the patch was cleanly reversed, NeedsConfirmation if destructive reset is needed
-pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Option<&str>) -> Result<UnapplyResult> {
+/// Unapply task changes from the main worktree using surgical patch reversal.
+/// No stash handling needed - stash was already popped immediately after apply.
+/// Returns Success if the patch was cleanly reversed, NeedsConfirmation if destructive reset is needed.
+pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<UnapplyResult> {
     let patch_path = get_patch_file_path(task_id);
 
     // If we have a saved patch, try surgical reversal
@@ -618,20 +729,6 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Opt
         if output.status.success() {
             // Clean up the patch file
             let _ = std::fs::remove_file(&patch_path);
-
-            // Restore the stash if we have one
-            if let Some(_ref) = stash_ref {
-                let pop_output = Command::new("git")
-                    .current_dir(project_dir)
-                    .args(["stash", "pop"])
-                    .output()?;
-
-                if !pop_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&pop_output.stderr);
-                    return Err(anyhow!("Patch reversed but failed to restore stashed changes: {}", stderr));
-                }
-            }
-
             return Ok(UnapplyResult::Success);
         }
 
@@ -649,8 +746,9 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Opt
     ))
 }
 
-/// Force unapply using destructive reset (only call after user confirmation!)
-pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Option<&str>) -> Result<()> {
+/// Force unapply using destructive reset (only call after user confirmation!).
+/// No stash handling needed - stash was already popped immediately after apply.
+pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
     // Discard all changes (staged and unstaged) by restoring from HEAD
     let reset_output = Command::new("git")
         .current_dir(project_dir)
@@ -665,19 +763,6 @@ pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_re
     // Clean up the patch file if it exists
     let patch_path = get_patch_file_path(task_id);
     let _ = std::fs::remove_file(&patch_path);
-
-    // Restore the stash if we have one
-    if let Some(_ref) = stash_ref {
-        let pop_output = Command::new("git")
-            .current_dir(project_dir)
-            .args(["stash", "pop"])
-            .output()?;
-
-        if !pop_output.status.success() {
-            let stderr = String::from_utf8_lossy(&pop_output.stderr);
-            return Err(anyhow!("Failed to restore stashed changes: {}", stderr));
-        }
-    }
 
     Ok(())
 }

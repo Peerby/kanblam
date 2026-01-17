@@ -247,7 +247,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             let frame = app.model.ui_state.animation_frame % pulse_frames.len();
                             format!("{} ", pulse_frames[frame])
                         }
-                        TaskStatus::Accepting => {
+                        TaskStatus::Accepting | TaskStatus::Updating => {
                             let frame = app.model.ui_state.animation_frame % merge_frames.len();
                             format!("{} ", merge_frames[frame])
                         }
@@ -581,6 +581,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("pply ", desc_style),
             Span::styled("u", key_style),
             Span::styled("napply ", desc_style),
+            Span::styled("r", key_style),
+            Span::styled("ebase ", desc_style),
             Span::styled("m", key_style),
             Span::styled("erge ", desc_style),
             Span::styled("d", key_style),
@@ -639,6 +641,10 @@ fn get_review_hints(has_applied: bool, is_this_task_applied: bool, is_blocked: b
         hints.push(Span::styled("u", key_style));
         hints.push(Span::styled("napply ", desc_style));
     }
+
+    // Always show rebase
+    hints.push(Span::styled("r", key_style));
+    hints.push(Span::styled("ebase ", desc_style));
 
     // Show merge only if not blocked
     if !is_blocked {

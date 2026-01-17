@@ -11,7 +11,7 @@ pub use git::{
     create_worktree, remove_worktree, merge_branch, delete_branch,
     get_worktree_path, list_worktrees, WorktreeInfo, is_git_repo,
     get_task_diff, apply_task_changes, unapply_task_changes, force_unapply_task_changes,
-    UnapplyResult,
+    UnapplyResult, cleanup_applied_state,
     needs_rebase, verify_rebase_success, generate_rebase_prompt,
     generate_apply_prompt, is_rebase_in_progress, abort_rebase, try_fast_rebase,
     commit_worktree_changes, has_changes_to_merge, commit_main_changes, commit_applied_changes,

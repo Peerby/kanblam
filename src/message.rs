@@ -103,6 +103,16 @@ pub enum Message {
     /// Worktree creation failed (from background task)
     WorktreeCreationFailed { task_id: Uuid, error: String },
 
+    // Async fast rebase
+    /// Start fast rebase in background (deferred to allow UI render first)
+    StartFastRebase { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    /// Fast rebase completed successfully (from background task)
+    FastRebaseCompleted { task_id: Uuid },
+    /// Fast rebase failed - conflicts detected, needs smart rebase (from background task)
+    FastRebaseNeedsSmartRebase { task_id: Uuid },
+    /// Fast rebase failed with error (from background task)
+    FastRebaseFailed { task_id: Uuid, error: String },
+
     // Title summarization
     /// Request a short title summary for a task (sent to sidecar)
     RequestTitleSummary { task_id: Uuid },
