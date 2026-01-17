@@ -181,7 +181,9 @@ pub enum Message {
     NavigateToStart, // Home key - jump to first item in list
     NavigateToEnd,   // End key - jump to last item in list
     ToggleHelp,
-    ToggleTaskPreview, // Show/hide task preview modal (v/space)
+    ScrollHelpUp(usize),   // Scroll help modal up by N lines
+    ScrollHelpDown(usize), // Scroll help modal down by N lines
+    ToggleTaskPreview,     // Show/hide task preview modal (v/space)
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

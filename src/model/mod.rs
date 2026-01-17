@@ -957,6 +957,8 @@ pub struct UiState {
     pub selected_task_id: Option<Uuid>,
     pub selected_column: TaskStatus,
     pub show_help: bool,
+    /// Scroll offset for the help modal (lines scrolled from top)
+    pub help_scroll_offset: usize,
     pub pending_confirmation: Option<PendingConfirmation>,
     pub status_message: Option<String>,
     /// If set, we're editing an existing task instead of creating a new one
@@ -1192,6 +1194,7 @@ impl Default for UiState {
             selected_task_id: None,
             selected_column: TaskStatus::default(),
             show_help: false,
+            help_scroll_offset: 0,
             pending_confirmation: None,
             status_message: None,
             editing_task_id: None,

@@ -803,9 +803,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
     // Note: Status messages are cleared via tick, not by consuming keypresses
 
-    // Handle help overlay
+    // Handle help overlay - scroll keys navigate, others close
     if app.model.ui_state.show_help {
-        return vec![Message::ToggleHelp];
+        return handle_help_modal_key(key);
     }
 
     // Handle task preview modal - allow action keys to work, only close on Esc/Enter/Space/?
@@ -1434,6 +1434,24 @@ fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
             _ => vec![],
         }
+    }
+}
+
+/// Handle key events when the help modal is open
+/// j/k/Up/Down scroll by 1 line, PageUp/PageDown scroll by 10 lines
+/// Any other key closes the modal
+fn handle_help_modal_key(key: event::KeyEvent) -> Vec<Message> {
+    match key.code {
+        // Scroll down
+        KeyCode::Char('j') | KeyCode::Down => vec![Message::ScrollHelpDown(1)],
+        // Scroll up
+        KeyCode::Char('k') | KeyCode::Up => vec![Message::ScrollHelpUp(1)],
+        // Page down
+        KeyCode::PageDown => vec![Message::ScrollHelpDown(10)],
+        // Page up
+        KeyCode::PageUp => vec![Message::ScrollHelpUp(10)],
+        // Any other key closes the modal
+        _ => vec![Message::ToggleHelp],
     }
 }
 

@@ -86,7 +86,7 @@ pub fn view(frame: &mut Frame, app: &mut App) {
 
     // Render help overlay if active
     if app.model.ui_state.show_help {
-        render_help(frame);
+        render_help(frame, app.model.ui_state.help_scroll_offset);
     }
 
     // Render queue dialog if active
@@ -1136,8 +1136,8 @@ fn format_duration(duration: chrono::Duration) -> String {
     }
 }
 
-/// Render help overlay
-fn render_help(frame: &mut Frame) {
+/// Render help overlay with scrolling support
+fn render_help(frame: &mut Frame, scroll_offset: usize) {
     let area = centered_rect(60, 80, frame.area());
 
     let help_text = vec![
@@ -1208,19 +1208,40 @@ fn render_help(frame: &mut Frame) {
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(
-            "Press any key to close",
+            "j/k to scroll, any other key to close",
             Style::default().fg(Color::DarkGray),
         )),
     ];
 
+    // Calculate if scrolling is needed and show indicator
+    let content_height = help_text.len();
+    // Account for border (2 lines: top + bottom)
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let can_scroll = content_height > visible_height;
+    let at_bottom = scroll_offset + visible_height >= content_height;
+
+    // Build title with scroll indicator
+    let title = if can_scroll {
+        if scroll_offset > 0 && !at_bottom {
+            " Help [↑↓] "
+        } else if scroll_offset > 0 {
+            " Help [↑] "
+        } else {
+            " Help [↓] "
+        }
+    } else {
+        " Help "
+    };
+
     let help = Paragraph::new(help_text)
         .block(
             Block::default()
-                .title(" Help ")
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White))
+        .scroll((scroll_offset as u16, 0));
 
     // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);

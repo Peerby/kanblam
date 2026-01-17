@@ -4173,6 +4173,28 @@ impl App {
 
             Message::ToggleHelp => {
                 self.model.ui_state.show_help = !self.model.ui_state.show_help;
+                // Reset scroll to top when opening help
+                if self.model.ui_state.show_help {
+                    self.model.ui_state.help_scroll_offset = 0;
+                }
+            }
+
+            Message::ScrollHelpUp(lines) => {
+                self.model.ui_state.help_scroll_offset =
+                    self.model.ui_state.help_scroll_offset.saturating_sub(lines);
+            }
+
+            Message::ScrollHelpDown(lines) => {
+                // Cap scroll so we can't scroll past the content
+                // Help content is 36 lines; allow scrolling until last line is visible
+                const HELP_CONTENT_LINES: usize = 36;
+                let max_scroll = HELP_CONTENT_LINES.saturating_sub(1);
+                self.model.ui_state.help_scroll_offset = self
+                    .model
+                    .ui_state
+                    .help_scroll_offset
+                    .saturating_add(lines)
+                    .min(max_scroll);
             }
 
             Message::ToggleTaskPreview => {
