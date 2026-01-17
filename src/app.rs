@@ -2322,6 +2322,14 @@ impl App {
                 self.model.ui_state.logo_shimmer_frame = 1;
             }
 
+            Message::ShowStartupHints => {
+                // Show the startup hints bar again (triggered by pressing ESC multiple times)
+                // Reset to 100 ticks (10 seconds) to match initial display
+                self.model.ui_state.startup_hint_until_tick = Some(100);
+                // Reset the ESC counter so they need to press ESC twice again
+                self.model.ui_state.consecutive_esc_count = 0;
+            }
+
             Message::HookSignalReceived(signal) => {
                 // Try to find task by task_id first (worktree-based tasks use task UUID as session_id)
                 let task_uuid = uuid::Uuid::parse_str(&signal.session_id).ok();

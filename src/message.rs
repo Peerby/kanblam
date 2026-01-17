@@ -150,6 +150,8 @@ pub enum Message {
     Tick,
     /// Trigger the logo shimmer animation (called on successful merge)
     TriggerLogoShimmer,
+    /// Show the startup hints bar again (triggered by pressing ESC multiple times)
+    ShowStartupHints,
     Quit,
     QuitAndSwitchPane(String), // Quit and switch to this pane ID
     Error(String),

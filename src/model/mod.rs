@@ -860,6 +860,11 @@ pub struct UiState {
     /// Selected index in project tabs when focus is ProjectTabs
     /// 0 = "+project" button, 1+ = project indices
     pub selected_project_tab_idx: usize,
+
+    // ESC key tracking for showing help
+    /// Counter for consecutive ESC key presses (resets on other keys)
+    /// When this reaches 2, the startup hints are shown again
+    pub consecutive_esc_count: u8,
 }
 
 /// State for the interactive Claude terminal modal
@@ -928,6 +933,7 @@ impl Default for UiState {
             // Show startup hints for first ~10 seconds (100 ticks at 100ms each)
             startup_hint_until_tick: Some(100),
             selected_project_tab_idx: 0,
+            consecutive_esc_count: 0,
         }
     }
 }

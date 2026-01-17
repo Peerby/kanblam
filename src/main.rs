@@ -206,6 +206,15 @@ where
                         continue;
                     }
 
+                    // Track consecutive ESC presses for showing help hints
+                    // ESC increments counter, any other key resets it
+                    if key.code == KeyCode::Esc {
+                        app.model.ui_state.consecutive_esc_count =
+                            app.model.ui_state.consecutive_esc_count.saturating_add(1);
+                    } else {
+                        app.model.ui_state.consecutive_esc_count = 0;
+                    }
+
                     // Check if interactive modal is active
                     if app.model.ui_state.interactive_modal.is_some() {
                         let messages = handle_interactive_modal_input(key, app);
@@ -1123,6 +1132,19 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             if app.model.ui_state.selected_task_idx.is_some() {
                 vec![Message::ToggleTaskPreview]
             } else {
+                vec![]
+            }
+        }
+
+        // ESC pressed multiple times shows the startup help bar
+        KeyCode::Esc => {
+            // Track consecutive ESC presses - when count reaches 2, show hints
+            let current_count = app.model.ui_state.consecutive_esc_count;
+            if current_count >= 1 {
+                // Second+ ESC - show the hints
+                vec![Message::ShowStartupHints]
+            } else {
+                // First ESC - just increment the counter (handled by the match below)
                 vec![]
             }
         }
