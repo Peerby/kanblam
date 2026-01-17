@@ -310,8 +310,8 @@ fn handle_restart() -> anyhow::Result<()> {
     Err(anyhow::anyhow!("Failed to restart: {}", err))
 }
 
-/// Open the current input text in an external editor (vim), returning the edited text.
-/// Suspends the terminal, runs vim on a temp file, then resumes.
+/// Open the current input text in the configured external editor, returning the edited text.
+/// Suspends the terminal, runs the editor on a temp file, then resumes.
 /// Returns Some(text) if user saved and exited, None if user cancelled.
 fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
@@ -342,11 +342,20 @@ fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
     );
     let _ = terminal.show_cursor();
 
-    // Run vim (or $EDITOR if set)
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-    let status = Command::new(&editor)
-        .arg(&temp_file)
-        .status();
+    // Run the configured editor from settings
+    let editor_cmd = app.model.global_settings.default_editor.command();
+    // Split command in case it has arguments (e.g., "code --wait")
+    let parts: Vec<&str> = editor_cmd.split_whitespace().collect();
+    let status = if parts.len() > 1 {
+        Command::new(parts[0])
+            .args(&parts[1..])
+            .arg(&temp_file)
+            .status()
+    } else {
+        Command::new(editor_cmd)
+            .arg(&temp_file)
+            .status()
+    };
 
     // Resume terminal - re-enter alternate screen and enable raw mode
     let _ = enable_raw_mode();
@@ -1377,9 +1386,9 @@ fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
     } else {
         // Navigation mode
         match key.code {
-            // Close modal
-            KeyCode::Esc | KeyCode::Char('q') => {
-                vec![Message::CloseConfigModal]
+            // Save and close modal
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
+                vec![Message::ConfigSave]
             }
 
             // Navigate up
@@ -1395,11 +1404,6 @@ fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
             // Enter edit mode
             KeyCode::Enter | KeyCode::Char('l') => {
                 vec![Message::ConfigEditField]
-            }
-
-            // Save and close
-            KeyCode::Char('s') => {
-                vec![Message::ConfigSave]
             }
 
             // Reset to defaults

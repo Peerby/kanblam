@@ -4316,13 +4316,21 @@ impl App {
 
                 let current_dir = std::env::current_dir().unwrap_or_default();
 
+                // Detect if we're running debug or release build
+                // Check the current executable path for "debug" or "release"
+                let is_release = std::env::current_exe()
+                    .map(|p| p.to_string_lossy().contains("/release/"))
+                    .unwrap_or(true); // Default to release if we can't determine
+
                 // Spawn build in background to keep UI responsive
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        std::process::Command::new("cargo")
-                            .args(["build", "--release"])
-                            .current_dir(&current_dir)
-                            .output()
+                        let mut cmd = std::process::Command::new("cargo");
+                        cmd.arg("build");
+                        if is_release {
+                            cmd.arg("--release");
+                        }
+                        cmd.current_dir(&current_dir).output()
                     }).await;
 
                     let msg = match result {
