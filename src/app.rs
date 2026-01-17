@@ -2277,8 +2277,8 @@ impl App {
             Message::TriggerLogoShimmer => {
                 // Start the shimmer animation (frame 1 = bottom row lit)
                 self.model.ui_state.logo_shimmer_frame = 1;
-                // Also trigger a random eye animation for extra playfulness
-                self.model.ui_state.eye_animation = EyeAnimation::random();
+                // Use star eyes for commit/merge celebrations
+                self.model.ui_state.eye_animation = EyeAnimation::StarEyes;
                 self.model.ui_state.eye_animation_ticks_remaining = 2;
             }
 

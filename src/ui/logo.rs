@@ -23,6 +23,8 @@ pub enum EyeAnimation {
     LookDown,
     /// Look up - eyes looking upward (᛫ ᛫)
     LookUp,
+    /// Star eyes - celebratory (★ ★) - used for commits/merges
+    StarEyes,
 }
 
 impl EyeAnimation {
@@ -35,6 +37,7 @@ impl EyeAnimation {
             EyeAnimation::WinkRight => ("▪", "─"),
             EyeAnimation::LookDown => (".", "."),
             EyeAnimation::LookUp => ("'", "'"),
+            EyeAnimation::StarEyes => ("★", "★"),
         }
     }
 
