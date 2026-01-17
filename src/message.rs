@@ -163,8 +163,10 @@ pub enum Message {
 
     // System
     Tick,
-    /// Trigger the logo shimmer animation (called on successful merge)
+    /// Trigger the logo shimmer animation with star eyes (called on successful merge/commit)
     TriggerLogoShimmer,
+    /// Trigger a blink animation (called when clicking the mascot)
+    TriggerMascotBlink,
     /// Show the startup hints bar again (triggered by pressing ESC multiple times)
     ShowStartupHints,
     Quit,

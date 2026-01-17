@@ -479,8 +479,8 @@ fn handle_mouse_event(
         if show_full_logo {
             let logo_start_x = size.width.saturating_sub(crate::ui::logo::FULL_LOGO_WIDTH);
             if x >= logo_start_x && y < 4 {
-                // Click on the mascot/logo - trigger shimmer animation
-                return Some(Message::TriggerLogoShimmer);
+                // Click on the mascot/logo - trigger blink animation
+                return Some(Message::TriggerMascotBlink);
             }
         }
 

@@ -27,6 +27,10 @@ pub enum EyeAnimation {
     StarEyes,
 }
 
+/// Animated star eye frames for celebratory animations
+/// Cycles through: ✦ → ✧ → ★ → ✧ → ✦ → · (sparkle effect)
+pub const STAR_EYE_FRAMES: [&str; 6] = ["✦", "✧", "★", "✧", "✦", "·"];
+
 impl EyeAnimation {
     /// Get the left and right eye characters for this animation state
     pub fn eye_chars(&self) -> (&'static str, &'static str) {
@@ -39,6 +43,14 @@ impl EyeAnimation {
             EyeAnimation::LookUp => ("'", "'"),
             EyeAnimation::StarEyes => ("★", "★"),
         }
+    }
+
+    /// Get animated star eye characters based on animation frame
+    /// Returns (left_eye, right_eye) cycling through sparkle frames
+    pub fn star_eyes_animated(animation_frame: usize) -> (&'static str, &'static str) {
+        let frame = animation_frame % STAR_EYE_FRAMES.len();
+        let char = STAR_EYE_FRAMES[frame];
+        (char, char)
     }
 
     /// Get a random animation (excluding Normal)
@@ -113,18 +125,19 @@ pub enum LogoSize {
 
 /// Render the logo/branding in the given area
 /// shimmer_frame: 0 = no animation, 1-4 = beam traveling up (row 4 to row 1), 5-7 = fade out
-pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
-    render_logo_size(frame, area, shimmer_frame, LogoSize::Full, eye_animation)
+/// animation_frame: global animation frame counter for animated star eyes
+pub fn render_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation, animation_frame: usize) {
+    render_logo_size(frame, area, shimmer_frame, LogoSize::Full, eye_animation, animation_frame)
 }
 
 /// Render the logo at a specific size
-pub fn render_logo_size(frame: &mut Frame, area: Rect, shimmer_frame: u8, size: LogoSize, eye_animation: EyeAnimation) {
+pub fn render_logo_size(frame: &mut Frame, area: Rect, shimmer_frame: u8, size: LogoSize, eye_animation: EyeAnimation, animation_frame: usize) {
     match size {
         LogoSize::Full if area.width >= FULL_LOGO_WIDTH && area.height >= 3 => {
-            render_full_logo(frame, area, shimmer_frame, eye_animation);
+            render_full_logo(frame, area, shimmer_frame, eye_animation, animation_frame);
         }
         LogoSize::Medium if area.width >= MEDIUM_LOGO_WIDTH && area.height >= 3 => {
-            render_medium_logo(frame, area, shimmer_frame, eye_animation);
+            render_medium_logo(frame, area, shimmer_frame, eye_animation, animation_frame);
         }
         LogoSize::Compact | LogoSize::Full | LogoSize::Medium if area.width >= COMPACT_LOGO_WIDTH => {
             render_compact_logo(frame, area);
@@ -165,7 +178,7 @@ fn get_mascot_color(row: usize, shimmer_frame: u8) -> Color {
 }
 
 /// Render the full ASCII art logo with mascot (head, face, body in header area)
-fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
+fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation, animation_frame: usize) {
     // Get colors for each row based on shimmer state
     let mascot_styles = [
         Style::default().fg(get_mascot_color(0, shimmer_frame)),
@@ -181,7 +194,12 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animat
     let eye_style = Style::default().fg(green);
 
     // Get eye characters based on animation state
-    let (left_eye, right_eye) = eye_animation.eye_chars();
+    // StarEyes uses animated frames, others use static chars
+    let (left_eye, right_eye) = if eye_animation == EyeAnimation::StarEyes {
+        EyeAnimation::star_eyes_animated(animation_frame)
+    } else {
+        eye_animation.eye_chars()
+    };
 
     let lines = vec![
         Line::from(vec![
@@ -214,7 +232,7 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animat
 }
 
 /// Render the medium ASCII art logo with mascot + abbreviated KB text
-fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation) {
+fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animation: EyeAnimation, animation_frame: usize) {
     // Get colors for each row based on shimmer state
     let mascot_styles = [
         Style::default().fg(get_mascot_color(0, shimmer_frame)),
@@ -230,7 +248,12 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_anim
     let eye_style = Style::default().fg(green);
 
     // Get eye characters based on animation state
-    let (left_eye, right_eye) = eye_animation.eye_chars();
+    // StarEyes uses animated frames, others use static chars
+    let (left_eye, right_eye) = if eye_animation == EyeAnimation::StarEyes {
+        EyeAnimation::star_eyes_animated(animation_frame)
+    } else {
+        eye_animation.eye_chars()
+    };
 
     // KB wordmark (just K and B from KANBLAM)
     // K: █ █ / █▀▄ / █ █

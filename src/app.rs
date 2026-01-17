@@ -2277,8 +2277,15 @@ impl App {
             Message::TriggerLogoShimmer => {
                 // Start the shimmer animation (frame 1 = bottom row lit)
                 self.model.ui_state.logo_shimmer_frame = 1;
-                // Use star eyes for commit/merge celebrations
+                // Use animated star eyes for commit/merge celebrations
+                // Longer duration (10 ticks = ~1 second) to show the sparkle animation
                 self.model.ui_state.eye_animation = EyeAnimation::StarEyes;
+                self.model.ui_state.eye_animation_ticks_remaining = 10;
+            }
+
+            Message::TriggerMascotBlink => {
+                // Trigger a blink animation when clicking the mascot
+                self.model.ui_state.eye_animation = EyeAnimation::Blink;
                 self.model.ui_state.eye_animation_ticks_remaining = 2;
             }
 
