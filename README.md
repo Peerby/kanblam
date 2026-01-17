@@ -25,12 +25,13 @@ KanBlam keeps you sane. It gives you a single dashboard to see all your Claude s
 
 ### Work From Anywhere
 
-Because KanBlam is a TUI (terminal user interface), it scales perfectly to any screen size—including your phone. Fire up a terminal client like Termius, SSH into your dev machine, and manage your Claude sessions from the coffee shop, the couch, or the commute. Queue up tasks, check on progress, review and merge completed work—all from your pocket.
+Because KanBlam is a TUI (terminal user interface), it scales perfectly to any screen size—including your phone. Fire up a terminal client like [Termius](https://termius.com/index.html), connect to your home network with [Tailscale](https://tailscale.com/), and SSH into your dev machine, and manage your Claude sessions from the coffee shop, the couch, or the commute. Queue up tasks, check on progress, review and merge completed work—all from your pocket.
 
 ## Features
 
 - **Parallel AI Sessions** — Run multiple Claude Code instances simultaneously, each working on different tasks
 - **Git Worktree Isolation** — Each task gets its own worktree and branch, preventing conflicts between parallel sessions
+- **Smart merges** - Let Claude figure out resolve conflicts and to stitch the different worktrees back together
 - **Kanban Workflow** — Visual board with columns: Planned → Queued → In Progress → Review → Done
 - **SDK Integration** — Deep integration with Claude Code Agent SDK for programmatic session control
 - **Interactive Handoff** — Seamlessly switch between automated and interactive Claude sessions
