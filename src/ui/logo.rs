@@ -21,10 +21,20 @@ pub enum EyeAnimation {
     WinkRight,
     /// Look down - eyes looking downward (. .)
     LookDown,
-    /// Look up - eyes looking upward (᛫ ᛫)
+    /// Look up - eyes looking upward (' ')
     LookUp,
     /// Star eyes - celebratory (★ ★) - used for commits/merges
     StarEyes,
+    /// Squint - both eyes squinted (- -)
+    Squint,
+    /// Wide - wide eyes (● ●)
+    Wide,
+    /// Heart - heart eyes (♥ ♥)
+    Heart,
+    /// Dizzy - dizzy eyes (@ @)
+    Dizzy,
+    /// Sleepy - half-closed eyes (˘ ˘)
+    Sleepy,
 }
 
 /// Animated star eye frames for celebratory animations
@@ -42,6 +52,11 @@ impl EyeAnimation {
             EyeAnimation::LookDown => (".", "."),
             EyeAnimation::LookUp => ("'", "'"),
             EyeAnimation::StarEyes => ("★", "★"),
+            EyeAnimation::Squint => ("-", "-"),
+            EyeAnimation::Wide => ("●", "●"),
+            EyeAnimation::Heart => ("♥", "♥"),
+            EyeAnimation::Dizzy => ("@", "@"),
+            EyeAnimation::Sleepy => ("˘", "˘"),
         }
     }
 
@@ -53,19 +68,33 @@ impl EyeAnimation {
         (char, char)
     }
 
-    /// Get a random animation (excluding Normal)
+    /// Get a random animation (excluding Normal and StarEyes)
+    /// Uses a simple hash to ensure good distribution
     pub fn random() -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
+        let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as usize)
+            .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        match seed % 5 {
+
+        // Simple hash function for better distribution
+        // Mix the bits to avoid patterns from regular time intervals
+        let hash = nanos
+            .wrapping_mul(0x517cc1b727220a95)
+            .wrapping_add(0x9e3779b97f4a7c15);
+        let index = (hash >> 32) as usize % 10;
+
+        match index {
             0 => EyeAnimation::Blink,
             1 => EyeAnimation::WinkLeft,
             2 => EyeAnimation::WinkRight,
             3 => EyeAnimation::LookDown,
-            _ => EyeAnimation::LookUp,
+            4 => EyeAnimation::LookUp,
+            5 => EyeAnimation::Squint,
+            6 => EyeAnimation::Wide,
+            7 => EyeAnimation::Heart,
+            8 => EyeAnimation::Dizzy,
+            _ => EyeAnimation::Sleepy,
         }
     }
 }
