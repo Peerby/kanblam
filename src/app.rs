@@ -981,6 +981,136 @@ impl App {
                 }
             }
 
+            Message::MergeOnlyTask(task_id) => {
+                // Merge changes to main but keep worktree and task in Review
+                let task_info = self.model.active_project().and_then(|p| {
+                    p.tasks.iter()
+                        .find(|t| t.id == task_id)
+                        .map(|t| (
+                            p.working_dir.clone(),
+                            t.worktree_path.clone(),
+                            t.status,
+                        ))
+                });
+
+                if let Some((project_dir, worktree_path, current_status)) = task_info {
+                    // Don't process if already accepting
+                    if current_status == TaskStatus::Accepting {
+                        return commands;
+                    }
+
+                    // Try to acquire exclusive lock on main worktree
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Err(reason) = project.try_lock_main_worktree(task_id, MainWorktreeOperation::Accepting) {
+                            commands.push(Message::Error(reason));
+                            return commands;
+                        }
+                    }
+
+                    // Commit any uncommitted changes in the worktree FIRST
+                    if let Some(ref wt_path) = worktree_path {
+                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                            Ok(_) => {
+                                // Changes committed (or nothing to commit)
+                            }
+                            Err(e) => {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
+                                commands.push(Message::Error(format!(
+                                    "Failed to commit worktree changes: {}. Changes preserved in worktree.",
+                                    e
+                                )));
+                                return commands;
+                            }
+                        }
+                    }
+
+                    // Commit any uncommitted changes on main BEFORE checking rebase
+                    match crate::worktree::commit_main_changes(&project_dir) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
+                            commands.push(Message::Error(format!(
+                                "Failed to commit main changes: {}",
+                                e
+                            )));
+                            return commands;
+                        }
+                    }
+
+                    // Check if rebase is needed
+                    let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+
+                    if needs_rebase {
+                        // Try fast rebase first
+                        if let Some(ref wt_path) = worktree_path {
+                            match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
+                                Ok(true) => {
+                                    // Fast rebase succeeded
+                                }
+                                Ok(false) | Err(_) => {
+                                    // Conflicts or error - cannot auto-merge
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        project.release_main_worktree_lock(task_id);
+                                    }
+                                    commands.push(Message::Error(
+                                        "Rebase conflicts detected. Use 'm' to merge with conflict resolution.".to_string()
+                                    ));
+                                    return commands;
+                                }
+                            }
+                        }
+                    }
+
+                    // Verify there are changes to merge
+                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                        Ok(true) => {
+                            // Good, there are changes
+                        }
+                        Ok(false) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Nothing to merge - worktree is up to date with main.".to_string()
+                            )));
+                            return commands;
+                        }
+                        Err(e) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
+                            commands.push(Message::Error(format!("Failed to check for changes: {}", e)));
+                            return commands;
+                        }
+                    }
+
+                    // Merge branch to main (should be fast-forward now)
+                    if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.release_main_worktree_lock(task_id);
+                        }
+                        commands.push(Message::Error(format!(
+                            "Merge failed: {}. Try 'm' to merge with conflict resolution.",
+                            e
+                        )));
+                        return commands;
+                    }
+
+                    // Release the lock - merge completed successfully
+                    if let Some(project) = self.model.active_project_mut() {
+                        project.release_main_worktree_lock(task_id);
+                    }
+
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Changes merged to main. Worktree preserved for continued work.".to_string()
+                    )));
+                }
+            }
+
             Message::DiscardTask(task_id) => {
                 // Stop SDK session first (if running)
                 if let Some(ref client) = self.sidecar_client {
@@ -2164,6 +2294,10 @@ impl App {
                             // This reuses the SmartAcceptTask logic
                             commands.push(Message::SmartAcceptTask(task_id));
                         }
+                        PendingAction::MergeOnlyTask(task_id) => {
+                            // Merge only: merge changes but keep worktree and task in Review
+                            commands.push(Message::MergeOnlyTask(task_id));
+                        }
                         PendingAction::DeclineTask(task_id) => {
                             // Decline task: discard all changes and mark as done
                             // Get task info needed for cleanup
@@ -2396,7 +2530,7 @@ impl App {
                         PendingAction::CloseProject(_) => {
                             // User cancelled closing project, no message needed
                         }
-                        PendingAction::AcceptTask(_) | PendingAction::DeclineTask(_) | PendingAction::CommitAppliedChanges(_) => {
+                        PendingAction::AcceptTask(_) | PendingAction::DeclineTask(_) | PendingAction::CommitAppliedChanges(_) | PendingAction::MergeOnlyTask(_) => {
                             // User cancelled, task stays in Review
                             commands.push(Message::SetStatusMessage(Some(
                                 "Cancelled. Task left in Review.".to_string()

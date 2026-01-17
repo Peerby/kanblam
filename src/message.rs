@@ -32,6 +32,8 @@ pub enum Message {
     SmartAcceptTask(Uuid),
     /// Complete accept after rebase verification (internal)
     CompleteAcceptTask(Uuid),
+    /// Merge only - merge changes to main but keep worktree and task in Review
+    MergeOnlyTask(Uuid),
     /// Discard a task - delete worktree and branch without merging
     DiscardTask(Uuid),
     /// Reset a task - discard all changes and start fresh (moved to top of Planned)

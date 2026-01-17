@@ -1306,6 +1306,8 @@ pub enum PendingAction {
     ResetTask(Uuid),
     /// Force unapply using destructive reset (after surgical reversal failed)
     ForceUnapply(Uuid),
+    /// Merge only: merge changes to main but keep worktree and task in Review
+    MergeOnlyTask(Uuid),
 }
 
 /// Which UI element has focus

@@ -427,12 +427,6 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     // Only show full hints when focused; when unfocused show insert hint + ^V
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
-
-    // Get the configured editor name for the hint
-    let editor_name = app.model.global_settings.default_editor.name().to_lowercase();
-    let editor_hint = format!(" {} ", editor_name);
-    let editor_hint_len = editor_hint.len() as u16;
-
     let (hints, hints_width) = if !is_focused {
         // When unfocused, show insert hint and paste image hint
         (
@@ -446,7 +440,6 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         )
     } else if pending_count > 0 {
         // Show image management hints when images are pending
-        // Base width: "^V+img ^X-1 ^Uclr ^G ⏎ submit" = 31 + editor_hint_len
         (
             Line::from(vec![
                 Span::styled("^V", key_style),
@@ -456,26 +449,25 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 Span::styled("^U", key_style),
                 Span::styled("clr ", desc_style),
                 Span::styled("^G", key_style),
-                Span::styled(editor_hint.clone(), desc_style),
+                Span::styled(" vim ", desc_style),
                 Span::styled("⏎", key_style),
                 Span::styled(" submit", desc_style),
             ]),
-            31 + editor_hint_len,
+            38u16,
         )
     } else {
-        // Base width: "^V img ^G ^C cancel ⏎ submit" = 32 + editor_hint_len
         (
             Line::from(vec![
                 Span::styled("^V", key_style),
                 Span::styled(" img ", desc_style),
                 Span::styled("^G", key_style),
-                Span::styled(editor_hint, desc_style),
+                Span::styled(" vim ", desc_style),
                 Span::styled("^C", key_style),
                 Span::styled(" cancel ", desc_style),
                 Span::styled("⏎", key_style),
                 Span::styled(" submit", desc_style),
             ]),
-            32 + editor_hint_len,
+            38u16,
         )
     };
     let hints_area = Rect {
@@ -1671,7 +1663,7 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
     let editing_hints = if config.editing {
         "Enter confirm  Esc cancel"
     } else {
-        "j/k navigate  Enter/l edit  r reset to defaults  Esc/q save & close"
+        "j/k navigate  Enter/l edit  r reset to defaults  Esc close  s save"
     };
     lines.push(Line::from(Span::styled(
         editing_hints,

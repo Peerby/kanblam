@@ -310,8 +310,8 @@ fn handle_restart() -> anyhow::Result<()> {
     Err(anyhow::anyhow!("Failed to restart: {}", err))
 }
 
-/// Open the current input text in the configured external editor, returning the edited text.
-/// Suspends the terminal, runs the editor on a temp file, then resumes.
+/// Open the current input text in an external editor (vim), returning the edited text.
+/// Suspends the terminal, runs vim on a temp file, then resumes.
 /// Returns Some(text) if user saved and exited, None if user cancelled.
 fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
@@ -342,20 +342,11 @@ fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
     );
     let _ = terminal.show_cursor();
 
-    // Run the configured editor from settings
-    let editor_cmd = app.model.global_settings.default_editor.command();
-    // Split command in case it has arguments (e.g., "code --wait")
-    let parts: Vec<&str> = editor_cmd.split_whitespace().collect();
-    let status = if parts.len() > 1 {
-        Command::new(parts[0])
-            .args(&parts[1..])
-            .arg(&temp_file)
-            .status()
-    } else {
-        Command::new(editor_cmd)
-            .arg(&temp_file)
-            .status()
-    };
+    // Run vim (or $EDITOR if set)
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let status = Command::new(&editor)
+        .arg(&temp_file)
+        .status();
 
     // Resume terminal - re-enter alternate screen and enable raw mode
     let _ = enable_raw_mode();
@@ -978,6 +969,27 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // Merge only (keep worktree and task in Review) - Shift+M in Review column
+        KeyCode::Char('M') if app.model.ui_state.selected_column == TaskStatus::Review => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(TaskStatus::Review);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // Don't merge tasks that are already being merged
+                        if task.status == TaskStatus::Accepting {
+                            return vec![];
+                        }
+
+                        return vec![Message::ShowConfirmation {
+                            message: "Merge changes to main? (keeps worktree) (y/n)".to_string(),
+                            action: model::PendingAction::MergeOnlyTask(task.id),
+                        }];
+                    }
+                }
+            }
+            vec![]
+        }
+
         // Unapply task changes (remove applied changes from main worktree)
         KeyCode::Char('u') => {
             // If there's an applied task, unapply it
@@ -1386,9 +1398,9 @@ fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
     } else {
         // Navigation mode
         match key.code {
-            // Save and close modal
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
-                vec![Message::ConfigSave]
+            // Close modal
+            KeyCode::Esc | KeyCode::Char('q') => {
+                vec![Message::CloseConfigModal]
             }
 
             // Navigate up
@@ -1404,6 +1416,11 @@ fn handle_config_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
             // Enter edit mode
             KeyCode::Enter | KeyCode::Char('l') => {
                 vec![Message::ConfigEditField]
+            }
+
+            // Save and close
+            KeyCode::Char('s') => {
+                vec![Message::ConfigSave]
             }
 
             // Reset to defaults
@@ -1509,6 +1526,25 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                     Message::ShowConfirmation {
                         message: "Merge all changes and mark done? (y/n)".to_string(),
                         action: model::PendingAction::AcceptTask(task.id),
+                    },
+                ]
+            } else {
+                vec![]
+            }
+        }
+
+        // Merge only (keep worktree and task in Review) - Shift+M in Review
+        KeyCode::Char('M') => {
+            if task.status == TaskStatus::Review {
+                // Don't merge tasks that are already being merged
+                if task.status == TaskStatus::Accepting {
+                    return vec![];
+                }
+                vec![
+                    Message::ToggleTaskPreview,
+                    Message::ShowConfirmation {
+                        message: "Merge changes to main? (keeps worktree) (y/n)".to_string(),
+                        action: model::PendingAction::MergeOnlyTask(task.id),
                     },
                 ]
             } else {
