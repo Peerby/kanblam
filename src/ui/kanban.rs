@@ -261,24 +261,38 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // Build spans with different styles: brackets very dim, code dim, title prominent
                     let mut spans = Vec::new();
                     if !prefix.is_empty() {
-                        spans.push(Span::styled(prefix, title_style));
+                        spans.push(Span::styled(prefix.clone(), title_style));
                     }
                     spans.push(Span::styled("[", bracket_style));
                     spans.push(Span::styled(task_id_short.to_string(), code_style));
                     spans.push(Span::styled("] ", bracket_style));
-                    spans.push(Span::styled(display_title, title_style));
+                    spans.push(Span::styled(display_title.clone(), title_style));
                     if !task.images.is_empty() {
                         spans.push(Span::styled(" [img]", bracket_style));
                     }
 
-                    // Show behind indicator if task's worktree is behind main
+                    // Show behind indicator if task's worktree is behind main, right-aligned
                     if task.worktree_path.is_some() && task.git_commits_behind > 0 {
                         let behind_style = if is_task_selected {
-                            Style::default().fg(contrast_fg).bg(color).add_modifier(Modifier::BOLD)
+                            Style::default().fg(contrast_fg).bg(color)
                         } else {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                            Style::default().fg(Color::DarkGray)
                         };
-                        spans.push(Span::styled(format!(" ↓{}", task.git_commits_behind), behind_style));
+                        let behind_text = format!("↓{}", task.git_commits_behind);
+                        let behind_len = behind_text.chars().count();
+
+                        // Calculate current content width to determine padding needed
+                        let prefix_len = prefix.chars().count();
+                        let img_len = if !task.images.is_empty() { 6 } else { 0 }; // " [img]"
+                        let current_width = prefix_len + id_prefix_len + display_title.chars().count() + img_len;
+                        let available_width = inner.width as usize;
+
+                        // Add padding to push indicator to the right (with 1 space before it)
+                        let padding_needed = available_width.saturating_sub(current_width + behind_len + 1);
+                        if padding_needed > 0 {
+                            spans.push(Span::styled(" ".repeat(padding_needed), title_style));
+                        }
+                        spans.push(Span::styled(behind_text, behind_style));
                     }
 
                     ListItem::new(Line::from(spans))
