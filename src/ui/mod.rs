@@ -1305,20 +1305,34 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
     let area = centered_rect(70, 70, frame.area());
 
     let slot = app.model.ui_state.open_project_dialog_slot.unwrap_or(0);
+    let is_creating = app.model.ui_state.create_folder_input.is_some();
 
     // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    // Split the area: title at top, current path, directory list in middle, hints at bottom
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),  // Title
-            Constraint::Length(2),  // Current path
-            Constraint::Min(10),    // Directory list
-            Constraint::Length(3),  // Hints
-        ])
-        .split(area);
+    // Split the area: title at top, current path, directory list in middle, create input (optional), hints at bottom
+    let chunks = if is_creating {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),  // Title
+                Constraint::Length(2),  // Current path
+                Constraint::Min(8),     // Directory list
+                Constraint::Length(3),  // Create folder input
+                Constraint::Length(2),  // Hints
+            ])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),  // Title
+                Constraint::Length(2),  // Current path
+                Constraint::Min(10),    // Directory list
+                Constraint::Length(3),  // Hints
+            ])
+            .split(area)
+    };
 
     // Render title
     let title = Paragraph::new(Line::from(vec![
@@ -1375,18 +1389,42 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
         frame.render_stateful_widget(list, chunks[2], &mut list_state);
     }
 
-    // Render hints
-    let hints = Paragraph::new(vec![
-        Line::from(Span::styled(
-            "↑↓/jk: Navigate  Space/Enter/l: Open dir  Backspace/h: Parent  Esc: Cancel",
+    // Render create folder input if in create mode
+    if let Some(ref input) = app.model.ui_state.create_folder_input {
+        let input_area = chunks[3];
+        let input_widget = Paragraph::new(Line::from(vec![
+            Span::styled(" New folder: ", Style::default().fg(Color::Cyan)),
+            Span::styled(input.as_str(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled("█", Style::default().fg(Color::White)), // Cursor
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(" Create New Project Folder (git init) "),
+        );
+        frame.render_widget(input_widget, input_area);
+
+        // Render hints for create mode
+        let hints = Paragraph::new(Line::from(Span::styled(
+            "Enter: Create folder  Esc: Cancel",
             Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(Span::styled(
-            "o: Open selected directory as project",
-            Style::default().fg(Color::Yellow),
-        )),
-    ]);
-    frame.render_widget(hints, chunks[3]);
+        )));
+        frame.render_widget(hints, chunks[4]);
+    } else {
+        // Render normal hints
+        let hints = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "↑↓/jk: Navigate  Space/Enter/l: Open dir  Backspace/h: Parent  Esc: Cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(vec![
+                Span::styled("o: Open as project  ", Style::default().fg(Color::Yellow)),
+                Span::styled("c: Create new folder", Style::default().fg(Color::Green)),
+            ]),
+        ]);
+        frame.render_widget(hints, chunks[3]);
+    }
 }
 
 /// Helper function to create a centered rect

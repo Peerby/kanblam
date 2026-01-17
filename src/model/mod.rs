@@ -218,6 +218,67 @@ impl DirectoryBrowser {
     pub fn cwd(&self) -> &PathBuf {
         &self.current_dir
     }
+
+    /// Create a new folder in the current directory and initialize it with git.
+    /// Returns the path to the created folder on success.
+    pub fn create_folder(&mut self, name: &str) -> std::io::Result<PathBuf> {
+        // Validate folder name
+        if name.is_empty() || name == "." || name == ".." {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid folder name",
+            ));
+        }
+
+        // Check for invalid characters
+        if name.contains('/') || name.contains('\\') || name.contains('\0') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Folder name contains invalid characters",
+            ));
+        }
+
+        let folder_path = self.current_dir.join(name);
+
+        // Check if folder already exists
+        if folder_path.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "Folder already exists",
+            ));
+        }
+
+        // Create the folder
+        std::fs::create_dir(&folder_path)?;
+
+        // Initialize git repository
+        let output = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&folder_path)
+            .output()?;
+
+        if !output.status.success() {
+            // Clean up the folder if git init fails
+            let _ = std::fs::remove_dir(&folder_path);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "Failed to initialize git repository: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+
+        // Refresh the directory listing to show the new folder
+        self.refresh()?;
+
+        // Select the newly created folder
+        if let Some(idx) = self.entries.iter().position(|e| e.path == folder_path) {
+            self.selected_idx = idx;
+        }
+
+        Ok(folder_path)
+    }
 }
 
 /// Application state following The Elm Architecture
@@ -931,6 +992,8 @@ pub struct UiState {
     pub open_project_dialog_slot: Option<usize>,
     /// Directory browser for the open project dialog
     pub directory_browser: Option<DirectoryBrowser>,
+    /// If Some, we're in create folder mode with the current input text
+    pub create_folder_input: Option<String>,
 
     // Feedback mode
     /// If set, we're entering feedback for this task (task must be in Review status)
@@ -1143,6 +1206,7 @@ impl Default for UiState {
             interactive_modal: None,
             open_project_dialog_slot: None,
             directory_browser: None,
+            create_folder_input: None,
             feedback_task_id: None,
             logo_shimmer_frame: 0,
             // Mascot eye animation: start with normal eyes, trigger first animation in ~30-90 seconds

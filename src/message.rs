@@ -90,6 +90,12 @@ pub enum Message {
     ConfirmOpenProject,
     /// Close a project (with confirmation if it has active tasks)
     CloseProject(usize),
+    /// Enter create folder mode in the open project dialog
+    EnterCreateFolderMode,
+    /// Cancel create folder mode
+    CancelCreateFolderMode,
+    /// Create a new folder with the given name and initialize git
+    CreateFolder { name: String },
 
     // Claude/Hook events
     HookSignalReceived(HookSignal),
@@ -112,6 +118,14 @@ pub enum Message {
     FastRebaseNeedsSmartRebase { task_id: Uuid },
     /// Fast rebase failed with error (from background task)
     FastRebaseFailed { task_id: Uuid, error: String },
+
+    // Async build before restart
+    /// Start build in background before restarting
+    StartBuildForRestart,
+    /// Build completed successfully - proceed with restart
+    BuildCompleted,
+    /// Build failed with error
+    BuildFailed { error: String },
 
     // Title summarization
     /// Request a short title summary for a task (sent to sidecar)

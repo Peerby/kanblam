@@ -1633,6 +1633,11 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
 /// Handle key events when the open project dialog is open
 fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
+    // Check if we're in create folder mode
+    if let Some(ref input) = app.model.ui_state.create_folder_input {
+        return handle_create_folder_input(key, input.clone(), app);
+    }
+
     match key.code {
         // Close dialog
         KeyCode::Esc => {
@@ -1690,6 +1695,48 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
         // Select current directory as project ('o' to open as project)
         KeyCode::Char('o') => {
             vec![Message::ConfirmOpenProject]
+        }
+
+        // Create new folder ('c' to create)
+        KeyCode::Char('c') => {
+            vec![Message::EnterCreateFolderMode]
+        }
+
+        _ => vec![]
+    }
+}
+
+/// Handle key events when in create folder mode
+fn handle_create_folder_input(key: event::KeyEvent, current_input: String, app: &mut App) -> Vec<Message> {
+    match key.code {
+        // Cancel create folder mode
+        KeyCode::Esc => {
+            vec![Message::CancelCreateFolderMode]
+        }
+
+        // Confirm and create folder
+        KeyCode::Enter => {
+            if !current_input.is_empty() {
+                vec![Message::CreateFolder { name: current_input }]
+            } else {
+                vec![Message::CancelCreateFolderMode]
+            }
+        }
+
+        // Delete last character
+        KeyCode::Backspace => {
+            let mut new_input = current_input;
+            new_input.pop();
+            app.model.ui_state.create_folder_input = Some(new_input);
+            vec![]
+        }
+
+        // Add character to input
+        KeyCode::Char(c) => {
+            let mut new_input = current_input;
+            new_input.push(c);
+            app.model.ui_state.create_folder_input = Some(new_input);
+            vec![]
         }
 
         _ => vec![]

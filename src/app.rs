@@ -1472,53 +1472,16 @@ impl App {
                                 project.applied_stash_ref = None; // No longer tracked - stash already popped
                             }
 
-                            // Run build check
-                            let check_result = self.model.active_project()
-                                .map(|p| crate::app::run_project_check(p))
-                                .unwrap_or(Ok(()));
-
-                            match check_result {
-                                Ok(()) => {
-                                    // Build check passed
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        project.release_main_worktree_lock(task_id);
-                                    }
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "✓ Changes applied and verified. Restarting...".to_string()
-                                    )));
-                                    commands.push(Message::TriggerRestart);
-                                }
-                                Err(e) => {
-                                    // Build check failed - try surgical unapply
-                                    match crate::worktree::unapply_task_changes(&project_dir, task_id) {
-                                        Ok(crate::worktree::UnapplyResult::Success) => {
-                                            if let Some(project) = self.model.active_project_mut() {
-                                                project.applied_task_id = None;
-                                                project.applied_stash_ref = None;
-                                                project.release_main_worktree_lock(task_id);
-                                            }
-                                            commands.push(Message::Error(format!(
-                                                "Applied changes don't compile - auto-reverted. {}",
-                                                e
-                                            )));
-                                        }
-                                        Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
-                                            // Surgical reversal failed - keep applied but warn user
-                                            commands.push(Message::Error(format!(
-                                                "Build failed and auto-revert failed ({}). Use 'u' to manually unapply. Error: {}",
-                                                reason, e
-                                            )));
-                                        }
-                                        Err(unapply_err) => {
-                                            commands.push(Message::Error(format!(
-                                                "Build failed and auto-revert error: {}. Original error: {}",
-                                                unapply_err, e
-                                            )));
-                                        }
-                                    }
-                                    return commands;
-                                }
+                            // Release lock and trigger async build + restart
+                            // Build check happens async in TriggerRestart - if it fails,
+                            // user is prompted to unapply
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
                             }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "✓ Changes applied. Building...".to_string()
+                            )));
+                            commands.push(Message::TriggerRestart);
                         }
                         Err(apply_err) => {
                             let err_msg = apply_err.to_string();
@@ -2000,6 +1963,44 @@ impl App {
             Message::CloseOpenProjectDialog => {
                 self.model.ui_state.open_project_dialog_slot = None;
                 self.model.ui_state.directory_browser = None;
+                self.model.ui_state.create_folder_input = None;
+            }
+
+            Message::EnterCreateFolderMode => {
+                // Enter create folder mode with empty input
+                self.model.ui_state.create_folder_input = Some(String::new());
+            }
+
+            Message::CancelCreateFolderMode => {
+                // Exit create folder mode
+                self.model.ui_state.create_folder_input = None;
+            }
+
+            Message::CreateFolder { name } => {
+                // Create a new folder with git init in the current directory
+                if let Some(ref mut browser) = self.model.ui_state.directory_browser {
+                    match browser.create_folder(&name) {
+                        Ok(path) => {
+                            // Clear create mode
+                            self.model.ui_state.create_folder_input = None;
+
+                            // Show success message
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Created folder '{}' with git init", name)
+                            )));
+
+                            // Optionally, we could auto-open the new folder as a project
+                            // For now, just leave it selected in the browser
+                            let _ = path; // The browser is already updated with the new folder selected
+                        }
+                        Err(e) => {
+                            // Show error message but stay in create mode for retry
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Failed to create folder: {}", e)
+                            )));
+                        }
+                    }
+                }
             }
 
             Message::ConfirmOpenProject => {
@@ -3342,54 +3343,17 @@ impl App {
                                         }
                                     }
 
-                                    // Run build check
-                                    let check_result = self.model.active_project()
-                                        .map(|p| crate::app::run_project_check(p))
-                                        .unwrap_or(Ok(()));
-
-                                    match check_result {
-                                        Ok(()) => {
-                                            // Build check passed
-                                            if let Some(project) = self.model.active_project_mut() {
-                                                project.release_main_worktree_lock(task_id);
-                                            }
-                                            commands.push(Message::SetStatusMessage(Some(
-                                                "✓ Changes applied and verified. Restarting...".to_string()
-                                            )));
-                                            commands.push(Message::RefreshGitStatus);
-                                            commands.push(Message::TriggerRestart);
-                                        }
-                                        Err(e) => {
-                                            // Build check failed - try surgical unapply
-                                            match crate::worktree::unapply_task_changes(&project_dir, task_id) {
-                                                Ok(crate::worktree::UnapplyResult::Success) => {
-                                                    if let Some(project) = self.model.active_project_mut() {
-                                                        project.applied_task_id = None;
-                                                        project.applied_stash_ref = None;
-                                                        project.release_main_worktree_lock(task_id);
-                                                    }
-                                                    commands.push(Message::Error(format!(
-                                                        "Applied changes don't compile - auto-reverted. {}",
-                                                        e
-                                                    )));
-                                                }
-                                                Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
-                                                    // Surgical reversal failed - keep applied but warn user
-                                                    commands.push(Message::Error(format!(
-                                                        "Build failed and auto-revert failed ({}). Use 'u' to manually unapply. Error: {}",
-                                                        reason, e
-                                                    )));
-                                                }
-                                                Err(unapply_err) => {
-                                                    commands.push(Message::Error(format!(
-                                                        "Build failed and auto-revert error: {}. Original error: {}",
-                                                        unapply_err, e
-                                                    )));
-                                                }
-                                            }
-                                            return commands;
-                                        }
+                                    // Release lock and trigger async build + restart
+                                    // Build check happens async in TriggerRestart - if it fails,
+                                    // user is prompted to unapply
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        project.release_main_worktree_lock(task_id);
                                     }
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "✓ Changes applied. Building...".to_string()
+                                    )));
+                                    commands.push(Message::RefreshGitStatus);
+                                    commands.push(Message::TriggerRestart);
                                 }
                                 Err(e) => {
                                     let err_msg = e.to_string();
@@ -4330,7 +4294,81 @@ impl App {
                         "Cannot restart: operations in progress. Wait for them to complete.".to_string()
                     )));
                 } else {
-                    self.should_restart = true;
+                    // Start async build before restarting
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Building...".to_string()
+                    )));
+                    commands.push(Message::StartBuildForRestart);
+                }
+            }
+
+            Message::StartBuildForRestart => {
+                // Require async sender - fail explicitly if missing
+                let sender = match self.async_sender.clone() {
+                    Some(s) => s,
+                    None => {
+                        commands.push(Message::Error(
+                            "Internal error: async_sender not configured.".to_string()
+                        ));
+                        return commands;
+                    }
+                };
+
+                let current_dir = std::env::current_dir().unwrap_or_default();
+
+                // Spawn build in background to keep UI responsive
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        std::process::Command::new("cargo")
+                            .args(["build", "--release"])
+                            .current_dir(&current_dir)
+                            .output()
+                    }).await;
+
+                    let msg = match result {
+                        Ok(Ok(output)) if output.status.success() => {
+                            Message::BuildCompleted
+                        }
+                        Ok(Ok(output)) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let error_preview: String = stderr.lines().take(5).collect::<Vec<_>>().join("\n");
+                            Message::BuildFailed { error: error_preview }
+                        }
+                        Ok(Err(e)) => {
+                            Message::BuildFailed { error: format!("Failed to run cargo: {}", e) }
+                        }
+                        Err(e) => {
+                            Message::BuildFailed { error: format!("Task panicked: {}", e) }
+                        }
+                    };
+
+                    let _ = sender.send(msg);
+                });
+            }
+
+            Message::BuildCompleted => {
+                // Build succeeded, proceed with restart
+                commands.push(Message::SetStatusMessage(Some(
+                    "✓ Build succeeded. Restarting...".to_string()
+                )));
+                self.should_restart = true;
+            }
+
+            Message::BuildFailed { error } => {
+                // Build failed - show error and ask to unapply if we have applied changes
+                if let Some(task_id) = self.model.active_project().and_then(|p| p.applied_task_id) {
+                    self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                        message: format!(
+                            "Build failed:\n{}\n\nUnapply the changes?",
+                            error
+                        ),
+                        action: PendingAction::ForceUnapply(task_id),
+                        animation_tick: 20,
+                    });
+                } else {
+                    commands.push(Message::Error(format!(
+                        "Build failed: {}", error
+                    )));
                 }
             }
 
