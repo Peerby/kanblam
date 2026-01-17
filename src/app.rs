@@ -2153,7 +2153,9 @@ impl App {
                                     .unwrap_or("project")
                                     .to_string();
 
-                                let project = Project::new(name, path);
+                                let mut project = Project::new(name, path);
+                                // Load any existing tasks from the project's .kanblam/tasks.json
+                                project.load_tasks();
                                 self.model.projects.push(project);
                                 self.model.active_project_idx = slot;
                                 self.model.ui_state.selected_task_idx = None;
@@ -2183,6 +2185,10 @@ impl App {
                         });
                     } else {
                         // No active tasks, close directly
+                        // Save tasks before closing
+                        if let Err(e) = self.model.projects[idx].save_tasks() {
+                            eprintln!("Warning: Failed to save tasks before closing: {}", e);
+                        }
                         self.model.projects.remove(idx);
                         // Adjust active project index
                         if self.model.projects.is_empty() {
@@ -2278,6 +2284,10 @@ impl App {
                         PendingAction::CloseProject(idx) => {
                             // Close the project (user confirmed)
                             if idx < self.model.projects.len() {
+                                // Save tasks before closing
+                                if let Err(e) = self.model.projects[idx].save_tasks() {
+                                    eprintln!("Warning: Failed to save tasks before closing: {}", e);
+                                }
                                 self.model.projects.remove(idx);
                                 // Adjust active project index
                                 if self.model.projects.is_empty() {
