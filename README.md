@@ -98,18 +98,53 @@ cargo run --release
 
 ### Keyboard Shortcuts
 
+#### Navigation
 | Key | Action |
 |-----|--------|
 | `h/j/k/l` | Navigate (vim-style) |
-| `Enter` | Select/confirm |
-| `n` | New task |
-| `q` | Queue task for Claude |
-| `s` | Start queued tasks |
-| `a` | Accept completed task (merge to main) |
-| `d` | Discard task |
-| `i` | Enter interactive mode with Claude |
-| `Tab` | Switch focus area |
+| `←/↓/↑/→` | Navigate (arrow keys) |
+| `1-6` | Jump to column (Planned, Queued, InProgress, NeedsInput, Review, Done) |
+| `Tab` | Cycle focus (Board → Input → Projects) |
+| `Enter` / `Space` / `v` | View task details |
 | `?` | Help |
+
+#### Task Actions
+| Key | Action |
+|-----|--------|
+| `i` | Enter input mode (create/edit task) |
+| `e` | Edit selected task |
+| `s` | Start task (Planned/Queued) or continue task (Review/NeedsInput) |
+| `o` | Open terminal view (tmux split with Claude + shell) |
+| `O` | Open terminal in detached tmux (Shift+O) |
+| `d` | Delete task, or Discard changes (in Review) |
+| `+/-` | Move task up/down in list |
+
+#### Review Actions
+| Key | Action |
+|-----|--------|
+| `a` | Apply changes to main (for testing) |
+| `u` | Unapply changes (revert applied changes) |
+| `m` | Merge and mark done |
+| `M` | Merge only (keep worktree) |
+| `r` | Rebase worktree to latest main |
+| `f` | Send feedback to Claude |
+| `c` | Check if already merged (cleanup) |
+| `x` | Reset task (cleanup worktree, move to Planned) |
+
+#### Projects
+| Key | Action |
+|-----|--------|
+| `!` | Open new project |
+| `@#$%^&*(` | Switch to project 1-8 |
+| `Ctrl+D` | Close current project |
+
+#### Other
+| Key | Action |
+|-----|--------|
+| `q` | Quit (or queue task if in Planned with running sessions) |
+| `Ctrl+S` | Open settings |
+| `Ctrl+V` | Paste image from clipboard |
+| `Esc` (2x) | Show help hints |
 
 ### Task Lifecycle
 
