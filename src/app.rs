@@ -2284,8 +2284,8 @@ impl App {
             }
 
             Message::TriggerMascotBlink => {
-                // Trigger a blink animation when clicking the mascot
-                self.model.ui_state.eye_animation = EyeAnimation::Blink;
+                // Trigger a random eye animation when clicking the mascot
+                self.model.ui_state.eye_animation = EyeAnimation::random();
                 self.model.ui_state.eye_animation_ticks_remaining = 2;
             }
 
