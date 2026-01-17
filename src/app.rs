@@ -1678,6 +1678,19 @@ impl App {
                 }
             }
 
+            Message::QueueDialogNavigateToStart => {
+                self.model.ui_state.queue_dialog_selected_idx = 0;
+            }
+
+            Message::QueueDialogNavigateToEnd => {
+                if let Some(project) = self.model.active_project() {
+                    let sessions = project.tasks_with_active_sessions();
+                    if !sessions.is_empty() {
+                        self.model.ui_state.queue_dialog_selected_idx = sessions.len() - 1;
+                    }
+                }
+            }
+
             Message::QueueDialogConfirm => {
                 // Get the task being queued and the session to queue it for
                 if let Some(task_to_queue) = self.model.ui_state.queue_dialog_task_id {
@@ -3847,6 +3860,42 @@ impl App {
                         self.model.ui_state.title_scroll_offset = 0;
                         self.model.ui_state.title_scroll_delay = 0;
                     }
+                }
+            }
+
+            Message::NavigateToStart => {
+                // Handle ProjectTabs navigation - jump to first tab
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    self.model.ui_state.selected_project_tab_idx = 0;
+                    return vec![];
+                }
+
+                // Jump to first task in current column
+                let tasks_len = self.model.active_project()
+                    .map(|p| p.tasks_by_status(self.model.ui_state.selected_column).len())
+                    .unwrap_or(0);
+                if tasks_len > 0 {
+                    self.model.ui_state.selected_task_idx = Some(0);
+                    self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
+                }
+            }
+
+            Message::NavigateToEnd => {
+                // Handle ProjectTabs navigation - jump to last tab
+                if self.model.ui_state.focus == FocusArea::ProjectTabs {
+                    self.model.ui_state.selected_project_tab_idx = self.model.projects.len();
+                    return vec![];
+                }
+
+                // Jump to last task in current column
+                let tasks_len = self.model.active_project()
+                    .map(|p| p.tasks_by_status(self.model.ui_state.selected_column).len())
+                    .unwrap_or(0);
+                if tasks_len > 0 {
+                    self.model.ui_state.selected_task_idx = Some(tasks_len - 1);
+                    self.model.ui_state.title_scroll_offset = 0;
+                    self.model.ui_state.title_scroll_delay = 0;
                 }
             }
 

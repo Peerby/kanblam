@@ -66,6 +66,10 @@ pub enum Message {
     QueueTaskForSession { task_id: Uuid, after_task_id: Uuid },
     /// Navigate up/down in the queue dialog
     QueueDialogNavigate(i32),
+    /// Jump to first item in queue dialog (Home)
+    QueueDialogNavigateToStart,
+    /// Jump to last item in queue dialog (End)
+    QueueDialogNavigateToEnd,
     /// Confirm selection in queue dialog
     QueueDialogConfirm,
     /// Close the queue dialog
@@ -147,6 +151,8 @@ pub enum Message {
     NavigateDown,
     NavigateLeft,
     NavigateRight,
+    NavigateToStart, // Home key - jump to first item in list
+    NavigateToEnd,   // End key - jump to last item in list
     ToggleHelp,
     ToggleTaskPreview, // Show/hide task preview modal (v/space)
 

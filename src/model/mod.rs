@@ -105,6 +105,18 @@ impl DirectoryBrowser {
         }
     }
 
+    /// Jump to first entry
+    pub fn move_to_start(&mut self) {
+        self.selected_idx = 0;
+    }
+
+    /// Jump to last entry
+    pub fn move_to_end(&mut self) {
+        if !self.entries.is_empty() {
+            self.selected_idx = self.entries.len() - 1;
+        }
+    }
+
     /// Enter the selected directory
     pub fn enter_selected(&mut self) -> std::io::Result<bool> {
         if let Some(entry) = self.entries.get(self.selected_idx) {

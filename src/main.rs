@@ -820,6 +820,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('l') | KeyCode::Right => vec![Message::NavigateRight],
         KeyCode::Char('j') | KeyCode::Down => vec![Message::NavigateDown],
         KeyCode::Char('k') | KeyCode::Up => vec![Message::NavigateUp],
+        KeyCode::Home => vec![Message::NavigateToStart],
+        KeyCode::End => vec![Message::NavigateToEnd],
 
         // Focus switching
         KeyCode::Tab => {
@@ -1256,6 +1258,16 @@ fn handle_queue_dialog_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::QueueDialogNavigate(1)]
         }
 
+        // Jump to start
+        KeyCode::Home => {
+            vec![Message::QueueDialogNavigateToStart]
+        }
+
+        // Jump to end
+        KeyCode::End => {
+            vec![Message::QueueDialogNavigateToEnd]
+        }
+
         // Confirm selection
         KeyCode::Enter => {
             vec![Message::QueueDialogConfirm]
@@ -1496,6 +1508,22 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_down();
+            }
+            vec![]
+        }
+
+        // Jump to start
+        KeyCode::Home => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.move_to_start();
+            }
+            vec![]
+        }
+
+        // Jump to end
+        KeyCode::End => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.move_to_end();
             }
             vec![]
         }
