@@ -3529,6 +3529,21 @@ impl App {
                 }
             }
 
+            Message::OpenExternalEditor => {
+                // This is handled specially in main.rs where we have terminal access
+                // If it reaches here, something went wrong - just ignore it
+            }
+
+            Message::ExternalEditorFinished(content) => {
+                // Set the edited content as input and submit
+                let input = content.trim().to_string();
+                if !input.is_empty() {
+                    self.model.ui_state.set_input_text(&input);
+                    commands.push(Message::InputSubmit);
+                }
+                // Focus stays on TaskInput after external editor
+            }
+
             Message::FocusChanged(area) => {
                 self.model.ui_state.focus = area;
             }

@@ -432,10 +432,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 Span::styled("-1 ", desc_style),
                 Span::styled("^U", key_style),
                 Span::styled("clr ", desc_style),
+                Span::styled("^G", key_style),
+                Span::styled(" vim ", desc_style),
                 Span::styled("⏎", key_style),
-                Span::styled(" submit ", desc_style),
-                Span::styled("\\⏎", key_style),
-                Span::styled(" newline ", desc_style),
+                Span::styled(" submit", desc_style),
             ]),
             38u16,
         )
@@ -443,13 +443,13 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         (
             Line::from(vec![
                 Span::styled("^V", key_style),
-                Span::styled(" img  ", desc_style),
+                Span::styled(" img ", desc_style),
+                Span::styled("^G", key_style),
+                Span::styled(" vim ", desc_style),
                 Span::styled("^C", key_style),
-                Span::styled(" cancel  ", desc_style),
+                Span::styled(" cancel ", desc_style),
                 Span::styled("⏎", key_style),
-                Span::styled(" submit ", desc_style),
-                Span::styled("\\⏎", key_style),
-                Span::styled(" newline ", desc_style),
+                Span::styled(" submit", desc_style),
             ]),
             38u16,
         )

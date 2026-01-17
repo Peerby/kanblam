@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run_app<B: ratatui::backend::Backend>(
+fn run_app<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     hook_watcher: Option<HookWatcher>,
@@ -233,8 +233,16 @@ where
                         // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
                         for msg in messages {
-                            let commands = app.update(msg);
-                            process_commands_recursively(app, commands);
+                            // Handle external editor specially - needs terminal access
+                            if matches!(msg, Message::OpenExternalEditor) {
+                                if let Some(result) = open_external_editor(terminal, app) {
+                                    let commands = app.update(Message::ExternalEditorFinished(result));
+                                    process_commands_recursively(app, commands);
+                                }
+                            } else {
+                                let commands = app.update(msg);
+                                process_commands_recursively(app, commands);
+                            }
                         }
                     } else {
                         let messages = handle_key_event(key, app);
@@ -270,6 +278,78 @@ where
     }
 
     Ok(())
+}
+
+/// Open the current input text in an external editor (vim), returning the edited text.
+/// Suspends the terminal, runs vim on a temp file, then resumes.
+/// Returns Some(text) if user saved and exited, None if user cancelled.
+fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+) -> Option<String> {
+    use std::fs;
+    use std::process::Command;
+
+    // Get current input text
+    let current_text = app.model.ui_state.get_input_text();
+
+    // Create temp file with current content
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join(format!("kanclaude_input_{}.txt", std::process::id()));
+
+    // Write current content to temp file
+    if let Err(e) = fs::write(&temp_file, &current_text) {
+        eprintln!("Failed to create temp file: {}", e);
+        return None;
+    }
+
+    // Suspend terminal - leave alternate screen and disable raw mode
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
+    let _ = terminal.show_cursor();
+
+    // Run vim (or $EDITOR if set)
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let status = Command::new(&editor)
+        .arg(&temp_file)
+        .status();
+
+    // Resume terminal - re-enter alternate screen and enable raw mode
+    let _ = enable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    );
+    let _ = terminal.hide_cursor();
+    // Force a full redraw
+    let _ = terminal.clear();
+
+    // Check if vim succeeded and read result
+    match status {
+        Ok(exit_status) if exit_status.success() => {
+            // Read the edited content
+            match fs::read_to_string(&temp_file) {
+                Ok(content) => {
+                    let _ = fs::remove_file(&temp_file);
+                    Some(content)
+                }
+                Err(_) => {
+                    let _ = fs::remove_file(&temp_file);
+                    None
+                }
+            }
+        }
+        _ => {
+            // User cancelled or editor failed
+            let _ = fs::remove_file(&temp_file);
+            None
+        }
+    }
 }
 
 /// Handle keyboard input when the interactive modal is active
@@ -627,6 +707,11 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             } else {
                 vec![Message::SetStatusMessage(Some("No images to remove".to_string()))]
             }
+        }
+
+        // Ctrl+G opens input in external editor (vim)
+        KeyCode::Char('g') if ctrl => {
+            vec![Message::OpenExternalEditor]
         }
 
         // Up arrow at position 0 moves focus to Kanban board (keeps content)

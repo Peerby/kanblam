@@ -132,6 +132,10 @@ pub enum Message {
 
     // UI events
     InputSubmit,
+    /// Open current input in external editor (vim), submit on save
+    OpenExternalEditor,
+    /// External editor finished - set the input text and submit
+    ExternalEditorFinished(String),
     FocusChanged(FocusArea),
     NavigateUp,
     NavigateDown,
