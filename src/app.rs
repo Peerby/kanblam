@@ -2257,6 +2257,10 @@ impl App {
                                 }
                             }
                         }
+                        PendingAction::ResetTask(task_id) => {
+                            // Reset the task (cleanup and move to Planned)
+                            commands.push(Message::ResetTask(task_id));
+                        }
                     }
                 }
             }
@@ -2301,6 +2305,9 @@ impl App {
                         }
                         PendingAction::ViewMergeReport => {
                             // View-only modal dismissed - no message needed
+                        }
+                        PendingAction::ResetTask(_) => {
+                            // User cancelled reset - no message needed
                         }
                     }
                 }

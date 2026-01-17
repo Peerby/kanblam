@@ -1055,7 +1055,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     if let Some(task) = tasks.get(idx) {
                         // Reset works on InProgress, NeedsInput, Review, Done
                         if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
-                            return vec![Message::ResetTask(task.id)];
+                            return vec![Message::ShowConfirmation {
+                                message: format!("Reset '{}'? This will clean up worktree and move to Planned.", task.title),
+                                action: model::PendingAction::ResetTask(task.id),
+                            }];
                         }
                     }
                 }

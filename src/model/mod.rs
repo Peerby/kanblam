@@ -1002,6 +1002,8 @@ pub enum PendingAction {
     ViewMergeReport,
     /// Commit applied changes to main and complete the task
     CommitAppliedChanges(Uuid),
+    /// Reset task: clean up worktree and move back to Planned
+    ResetTask(Uuid),
 }
 
 /// Which UI element has focus
