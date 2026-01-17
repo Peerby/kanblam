@@ -31,11 +31,12 @@ Because KanBlam is a TUI (terminal user interface), it scales perfectly to any s
 
 - **Parallel AI Sessions** — Run multiple Claude Code instances simultaneously, each working on different tasks
 - **Git Worktree Isolation** — Each task gets its own worktree and branch, preventing conflicts between parallel sessions
-- **Smart merges** - Let Claude figure out resolve conflicts and to stitch the different worktrees back together
+- **AI merges** - Let Claude figure out resolve conflicts and to stitch the different worktrees back together
 - **Kanban Workflow** — Visual board with columns: Planned → Queued → In Progress → Review → Done
 - **SDK Integration** — Deep integration with Claude Code Agent SDK for programmatic session control
 - **Interactive Handoff** — Seamlessly switch between automated and interactive Claude sessions
 - **Smart Notifications** — Audio alerts and tmux status updates when tasks need attention
+- **AI task summaries** - Write your messy prompt and Claude will summarize it into a clear task title
 - **Image Attachments** — Paste screenshots directly into task descriptions
 
 ## How It Works
