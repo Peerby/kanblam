@@ -50,6 +50,8 @@ pub enum Message {
     CompleteApplyTask(Uuid),
     /// Unapply/revert previously applied task changes
     UnapplyTaskChanges,
+    /// Force unapply using destructive reset (after user confirms)
+    ForceUnapplyTaskChanges(Uuid),
     /// Update worktree to latest main (rebase without merging)
     UpdateWorktreeToMain(Uuid),
     /// Start SDK update rebase session (internal - smart update with conflict resolution)
@@ -169,6 +171,8 @@ pub enum Message {
     TriggerMascotBlink,
     /// Show the startup hints bar again (triggered by pressing ESC multiple times)
     ShowStartupHints,
+    /// Trigger app restart (for hot reload after apply)
+    TriggerRestart,
     Quit,
     QuitAndSwitchPane(String), // Quit and switch to this pane ID
     Error(String),

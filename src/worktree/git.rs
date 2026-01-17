@@ -400,6 +400,15 @@ pub fn delete_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// Get the path where we save the applied patch for surgical reversal
+fn get_patch_file_path(task_id: Uuid) -> PathBuf {
+    let kanclaude_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".kanclaude")
+        .join("patches");
+    kanclaude_dir.join(format!("{}.patch", task_id))
+}
+
 /// Apply a task's changes to the main worktree (for testing)
 /// This stashes any existing changes, applies the diff, and tracks the stash for unapply
 /// Returns the stash ref if there were local changes that were stashed
@@ -500,6 +509,14 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         log("WARNING: diff is empty! Nothing to apply.");
     }
 
+    // Save the patch file for surgical reversal later
+    let patch_path = get_patch_file_path(task_id);
+    if let Some(parent) = patch_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&patch_path, &diff_output.stdout)?;
+    log(&format!("saved patch to {:?}", patch_path));
+
     // Apply the diff (capture stderr so we can log it)
     let mut apply_cmd = Command::new("git")
         .current_dir(project_dir)
@@ -553,11 +570,80 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     Ok(stash_ref)
 }
 
-/// Unapply task changes from the main worktree
-/// This discards all changes (staged and unstaged) and optionally restores a stash
-pub fn unapply_task_changes(project_dir: &PathBuf, stash_ref: Option<&str>) -> Result<()> {
+/// Result of attempting to unapply task changes
+#[derive(Debug)]
+pub enum UnapplyResult {
+    /// Surgical reversal succeeded
+    Success,
+    /// Surgical reversal failed, user confirmation needed for destructive reset
+    NeedsConfirmation(String),
+}
+
+/// Unapply task changes from the main worktree using surgical patch reversal
+/// Returns Success if the patch was cleanly reversed, NeedsConfirmation if destructive reset is needed
+pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Option<&str>) -> Result<UnapplyResult> {
+    let patch_path = get_patch_file_path(task_id);
+
+    // If we have a saved patch, try surgical reversal
+    if patch_path.exists() {
+        let patch_content = std::fs::read(&patch_path)?;
+
+        // Try to reverse the patch
+        let mut apply_cmd = Command::new("git")
+            .current_dir(project_dir)
+            .args(["apply", "-R", "--3way"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        {
+            use std::io::Write;
+            let stdin = apply_cmd.stdin.take().expect("stdin was piped");
+            let mut stdin = std::io::BufWriter::new(stdin);
+            stdin.write_all(&patch_content)?;
+            stdin.flush()?;
+        }
+
+        let output = apply_cmd.wait_with_output()?;
+
+        if output.status.success() {
+            // Clean up the patch file
+            let _ = std::fs::remove_file(&patch_path);
+
+            // Restore the stash if we have one
+            if let Some(_ref) = stash_ref {
+                let pop_output = Command::new("git")
+                    .current_dir(project_dir)
+                    .args(["stash", "pop"])
+                    .output()?;
+
+                if !pop_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&pop_output.stderr);
+                    return Err(anyhow!("Patch reversed but failed to restore stashed changes: {}", stderr));
+                }
+            }
+
+            return Ok(UnapplyResult::Success);
+        }
+
+        // Surgical reversal failed - need user confirmation for destructive reset
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Ok(UnapplyResult::NeedsConfirmation(format!(
+            "Surgical patch reversal failed: {}. Use destructive reset?",
+            stderr.trim()
+        )));
+    }
+
+    // No patch file - need user confirmation for destructive reset
+    Ok(UnapplyResult::NeedsConfirmation(
+        "No saved patch found. Use destructive reset to unapply?".to_string()
+    ))
+}
+
+/// Force unapply using destructive reset (only call after user confirmation!)
+pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid, stash_ref: Option<&str>) -> Result<()> {
     // Discard all changes (staged and unstaged) by restoring from HEAD
-    // Using "checkout HEAD -- ." bypasses the index and restores directly from HEAD
     let reset_output = Command::new("git")
         .current_dir(project_dir)
         .args(["checkout", "HEAD", "--", "."])
@@ -567,6 +653,10 @@ pub fn unapply_task_changes(project_dir: &PathBuf, stash_ref: Option<&str>) -> R
         let stderr = String::from_utf8_lossy(&reset_output.stderr);
         return Err(anyhow!("Failed to discard changes: {}", stderr));
     }
+
+    // Clean up the patch file if it exists
+    let patch_path = get_patch_file_path(task_id);
+    let _ = std::fs::remove_file(&patch_path);
 
     // Restore the stash if we have one
     if let Some(_ref) = stash_ref {

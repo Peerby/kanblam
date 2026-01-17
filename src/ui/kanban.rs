@@ -271,15 +271,26 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         spans.push(Span::styled(" [img]", bracket_style));
                     }
 
-                    // Show behind indicator if task's worktree is behind main, right-aligned
-                    if task.worktree_path.is_some() && task.git_commits_behind > 0 {
-                        let behind_style = if is_task_selected {
-                            Style::default().fg(contrast_fg).bg(color)
+                    // Show sync status indicator for tasks with worktrees, right-aligned
+                    if task.worktree_path.is_some() {
+                        let (indicator_text, indicator_style) = if task.git_commits_behind > 0 {
+                            // Behind main - show how many commits behind
+                            let style = if is_task_selected {
+                                Style::default().fg(contrast_fg).bg(color)
+                            } else {
+                                Style::default().fg(Color::DarkGray)
+                            };
+                            (format!("↓{}", task.git_commits_behind), style)
                         } else {
-                            Style::default().fg(Color::DarkGray)
+                            // Synced with main - show checkmark (ready to apply)
+                            let style = if is_task_selected {
+                                Style::default().fg(contrast_fg).bg(color)
+                            } else {
+                                Style::default().fg(Color::Green)
+                            };
+                            ("✓".to_string(), style)
                         };
-                        let behind_text = format!("↓{}", task.git_commits_behind);
-                        let behind_len = behind_text.chars().count();
+                        let indicator_len = indicator_text.chars().count();
 
                         // Calculate current content width to determine padding needed
                         let prefix_len = prefix.chars().count();
@@ -288,11 +299,11 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         let available_width = inner.width as usize;
 
                         // Add padding to push indicator to the right (with 1 space before it)
-                        let padding_needed = available_width.saturating_sub(current_width + behind_len + 1);
+                        let padding_needed = available_width.saturating_sub(current_width + indicator_len + 1);
                         if padding_needed > 0 {
                             spans.push(Span::styled(" ".repeat(padding_needed), title_style));
                         }
-                        spans.push(Span::styled(behind_text, behind_style));
+                        spans.push(Span::styled(indicator_text, indicator_style));
                     }
 
                     ListItem::new(Line::from(spans))

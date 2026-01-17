@@ -2,7 +2,7 @@ use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, Lines,
-    actions::{Composed, SelectInnerWord, DeleteSelection},
+    actions::{Composed, SelectInnerWord, DeleteSelection, SwitchMode, MoveWordForwardToEndOfWord, MoveWordBackward, MoveForward},
     events::{KeyEvent, KeyEventHandler, KeyEventRegister},
 };
 use serde::{Deserialize, Serialize};
@@ -1071,13 +1071,41 @@ pub struct ConfigModalState {
 fn create_vim_handler() -> EditorEventHandler {
     let mut key_handler = KeyEventHandler::vim_mode();
 
-    // Add dw (delete word) in normal mode - selects inner word and deletes it
+    // Add dw (delete word) in normal mode - delete word + trailing whitespace
+    // Vim's dw deletes from cursor to start of next word (including whitespace).
+    // We achieve this by:
+    // 1. MoveWordForwardToEndOfWord - get to last char of current word
+    // 2. MoveForward(1) - move one more char to include the trailing space
+    //    (at end of line, MoveForward does nothing, so we just delete the word)
+    // This handles both mid-line (word + space) and end-of-line (just word) cases.
     key_handler.insert(
         KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('w')]),
-        Composed::new(SelectInnerWord).chain(DeleteSelection),
+        Composed::new(SwitchMode(EditorMode::Visual))
+            .chain(MoveWordForwardToEndOfWord(1))
+            .chain(MoveForward(1))
+            .chain(DeleteSelection)
+            .chain(SwitchMode(EditorMode::Normal)),
     );
 
-    // Add diw (delete inner word) explicitly too
+    // Add de (delete to end of word) - delete from cursor to end of current word
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('e')]),
+        Composed::new(SwitchMode(EditorMode::Visual))
+            .chain(MoveWordForwardToEndOfWord(1))
+            .chain(DeleteSelection)
+            .chain(SwitchMode(EditorMode::Normal)),
+    );
+
+    // Add db (delete backward to start of word) - delete from cursor back to start of previous word
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('b')]),
+        Composed::new(SwitchMode(EditorMode::Visual))
+            .chain(MoveWordBackward(1))
+            .chain(DeleteSelection)
+            .chain(SwitchMode(EditorMode::Normal)),
+    );
+
+    // Add diw (delete inner word) - delete just the word, no surrounding whitespace
     key_handler.insert(
         KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('i'), KeyEvent::Char('w')]),
         Composed::new(SelectInnerWord).chain(DeleteSelection),
@@ -1212,6 +1240,8 @@ pub enum PendingAction {
     CommitAppliedChanges(Uuid),
     /// Reset task: clean up worktree and move back to Planned
     ResetTask(Uuid),
+    /// Force unapply using destructive reset (after surgical reversal failed)
+    ForceUnapply(Uuid),
 }
 
 /// Which UI element has focus

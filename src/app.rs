@@ -15,6 +15,8 @@ pub type AsyncTaskSender = mpsc::UnboundedSender<Message>;
 pub struct App {
     pub model: AppModel,
     pub should_quit: bool,
+    /// Whether to restart the app (for hot reload after apply)
+    pub should_restart: bool,
     /// Sidecar client for SDK session management (if available)
     pub sidecar_client: Option<SidecarClient>,
     /// Channel to send results from async background tasks back to the main loop
@@ -26,6 +28,7 @@ impl App {
         Self {
             model: AppModel::default(),
             should_quit: false,
+            should_restart: false,
             sidecar_client: None,
             async_sender: None,
         }
@@ -35,6 +38,7 @@ impl App {
         Self {
             model,
             should_quit: false,
+            should_restart: false,
             sidecar_client: None,
             async_sender: None,
         }
@@ -1380,10 +1384,21 @@ impl App {
                             t.worktree_path.clone(),
                             t.git_branch.clone(),
                             t.status,
+                            t.git_commits_behind,
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, git_branch, current_status)) = task_info {
+                if let Some((project_dir, worktree_path, git_branch, current_status, commits_behind)) = task_info {
+                    // Require rebase before apply - ensures clean patches
+                    if commits_behind > 0 {
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.release_main_worktree_lock(task_id);
+                        }
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Task is {} commits behind main. Press 'r' to rebase first.", commits_behind)
+                        )));
+                        return commands;
+                    }
                     // Don't process if already applying
                     if current_status == TaskStatus::Applying {
                         return commands;
@@ -1464,21 +1479,38 @@ impl App {
                                         project.release_main_worktree_lock(task_id);
                                     }
                                     commands.push(Message::SetStatusMessage(Some(
-                                        "✓ Changes applied and verified. Press 'u' to unapply.".to_string()
+                                        "✓ Changes applied and verified. Restarting...".to_string()
                                     )));
+                                    commands.push(Message::TriggerRestart);
                                 }
                                 Err(e) => {
-                                    // Build check failed - unapply automatically
-                                    let _ = crate::worktree::unapply_task_changes(&project_dir, stash_ref_clone.as_deref());
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        project.applied_task_id = None;
-                                        project.applied_stash_ref = None;
-                                        project.release_main_worktree_lock(task_id);
+                                    // Build check failed - try surgical unapply
+                                    match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref_clone.as_deref()) {
+                                        Ok(crate::worktree::UnapplyResult::Success) => {
+                                            if let Some(project) = self.model.active_project_mut() {
+                                                project.applied_task_id = None;
+                                                project.applied_stash_ref = None;
+                                                project.release_main_worktree_lock(task_id);
+                                            }
+                                            commands.push(Message::Error(format!(
+                                                "Applied changes don't compile - auto-reverted. {}",
+                                                e
+                                            )));
+                                        }
+                                        Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
+                                            // Surgical reversal failed - keep applied but warn user
+                                            commands.push(Message::Error(format!(
+                                                "Build failed and auto-revert failed ({}). Use 'u' to manually unapply. Error: {}",
+                                                reason, e
+                                            )));
+                                        }
+                                        Err(unapply_err) => {
+                                            commands.push(Message::Error(format!(
+                                                "Build failed and auto-revert error: {}. Original error: {}",
+                                                unapply_err, e
+                                            )));
+                                        }
                                     }
-                                    commands.push(Message::Error(format!(
-                                        "Applied changes don't compile - auto-reverted. {}",
-                                        e
-                                    )));
                                     return commands;
                                 }
                             }
@@ -1550,9 +1582,9 @@ impl App {
                         )));
                         return commands;
                     }
-                    Some((project_dir, Some(_), stash_ref)) => {
-                        match crate::worktree::unapply_task_changes(&project_dir, stash_ref.as_deref()) {
-                            Ok(()) => {
+                    Some((project_dir, Some(task_id), stash_ref)) => {
+                        match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref.as_deref()) {
+                            Ok(crate::worktree::UnapplyResult::Success) => {
                                 if let Some(project) = self.model.active_project_mut() {
                                     project.applied_task_id = None;
                                     project.applied_stash_ref = None;
@@ -1561,9 +1593,39 @@ impl App {
                                     "Changes unapplied. Original work restored.".to_string()
                                 )));
                             }
+                            Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
+                                // Surgical reversal failed - ask user for confirmation before destructive reset
+                                self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                                    message: format!("{}\n\nThis will discard ALL uncommitted changes in main worktree.", reason),
+                                    action: PendingAction::ForceUnapply(task_id),
+                                    animation_tick: 20,
+                                });
+                            }
                             Err(e) => {
                                 commands.push(Message::Error(format!("Failed to unapply changes: {}", e)));
                             }
+                        }
+                    }
+                }
+            }
+
+            Message::ForceUnapplyTaskChanges(task_id) => {
+                let project_info = self.model.active_project()
+                    .map(|p| (p.working_dir.clone(), p.applied_stash_ref.clone()));
+
+                if let Some((project_dir, stash_ref)) = project_info {
+                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id, stash_ref.as_deref()) {
+                        Ok(()) => {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.applied_task_id = None;
+                                project.applied_stash_ref = None;
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Changes force-unapplied via destructive reset.".to_string()
+                            )));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to force unapply: {}", e)));
                         }
                     }
                 }
@@ -2245,6 +2307,10 @@ impl App {
                             // Reset the task (cleanup and move to Planned)
                             commands.push(Message::ResetTask(task_id));
                         }
+                        PendingAction::ForceUnapply(task_id) => {
+                            // User confirmed destructive unapply
+                            commands.push(Message::ForceUnapplyTaskChanges(task_id));
+                        }
                     }
                 }
             }
@@ -2282,6 +2348,12 @@ impl App {
                         }
                         PendingAction::ResetTask(_) => {
                             // User cancelled reset - no message needed
+                        }
+                        PendingAction::ForceUnapply(_) => {
+                            // User declined destructive unapply - changes remain applied
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Changes still applied. Use 'u' to try surgical unapply again.".to_string()
+                            )));
                         }
                     }
                 }
@@ -3206,22 +3278,39 @@ impl App {
                                                 project.release_main_worktree_lock(task_id);
                                             }
                                             commands.push(Message::SetStatusMessage(Some(
-                                                "✓ Changes applied and verified. Press 'u' to unapply.".to_string()
+                                                "✓ Changes applied and verified. Restarting...".to_string()
                                             )));
                                             commands.push(Message::RefreshGitStatus);
+                                            commands.push(Message::TriggerRestart);
                                         }
                                         Err(e) => {
-                                            // Build check failed - unapply automatically
-                                            let _ = crate::worktree::unapply_task_changes(&project_dir, stash_ref_clone.as_deref());
-                                            if let Some(project) = self.model.active_project_mut() {
-                                                project.applied_task_id = None;
-                                                project.applied_stash_ref = None;
-                                                project.release_main_worktree_lock(task_id);
+                                            // Build check failed - try surgical unapply
+                                            match crate::worktree::unapply_task_changes(&project_dir, task_id, stash_ref_clone.as_deref()) {
+                                                Ok(crate::worktree::UnapplyResult::Success) => {
+                                                    if let Some(project) = self.model.active_project_mut() {
+                                                        project.applied_task_id = None;
+                                                        project.applied_stash_ref = None;
+                                                        project.release_main_worktree_lock(task_id);
+                                                    }
+                                                    commands.push(Message::Error(format!(
+                                                        "Applied changes don't compile - auto-reverted. {}",
+                                                        e
+                                                    )));
+                                                }
+                                                Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
+                                                    // Surgical reversal failed - keep applied but warn user
+                                                    commands.push(Message::Error(format!(
+                                                        "Build failed and auto-revert failed ({}). Use 'u' to manually unapply. Error: {}",
+                                                        reason, e
+                                                    )));
+                                                }
+                                                Err(unapply_err) => {
+                                                    commands.push(Message::Error(format!(
+                                                        "Build failed and auto-revert error: {}. Original error: {}",
+                                                        unapply_err, e
+                                                    )));
+                                                }
                                             }
-                                            commands.push(Message::Error(format!(
-                                                "Applied changes don't compile - auto-reverted. {}",
-                                                e
-                                            )));
                                             return commands;
                                         }
                                     }
@@ -4141,6 +4230,24 @@ impl App {
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
                     config.temp_commands = detected;
                     commands.push(Message::SetStatusMessage(Some("Reset to auto-detected defaults".to_string())));
+                }
+            }
+
+            Message::TriggerRestart => {
+                // Only restart if there are no pending operations
+                let has_pending = self.model.active_project().map(|p| {
+                    p.tasks.iter().any(|t| matches!(
+                        t.status,
+                        TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying
+                    )) || p.main_worktree_lock.is_some()
+                }).unwrap_or(false);
+
+                if has_pending {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Cannot restart: operations in progress. Wait for them to complete.".to_string()
+                    )));
+                } else {
+                    self.should_restart = true;
                 }
             }
 

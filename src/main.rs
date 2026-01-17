@@ -276,9 +276,38 @@ where
         if app.should_quit {
             break;
         }
+
+        if app.should_restart {
+            // Save state before restart
+            if let Err(e) = save_state(&app.model) {
+                eprintln!("Warning: Failed to save state before restart: {}", e);
+            }
+
+            // Restore terminal before restart
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            terminal.show_cursor()?;
+
+            // Restart the app using exec
+            handle_restart()?;
+        }
     }
 
     Ok(())
+}
+
+/// Handle hot restart by exec-ing the same binary
+fn handle_restart() -> anyhow::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let args: Vec<String> = std::env::args().collect();
+
+    // Use exec to replace current process with new instance
+    let err = exec::Command::new(&current_exe)
+        .args(&args[1..])
+        .exec();
+
+    // exec() only returns if it fails
+    Err(anyhow::anyhow!("Failed to restart: {}", err))
 }
 
 /// Open the current input text in an external editor (vim), returning the edited text.
