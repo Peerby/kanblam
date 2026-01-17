@@ -1329,3 +1329,123 @@ pub struct HookSignal {
     pub timestamp: DateTime<Utc>,
     pub transcript_path: Option<PathBuf>,
 }
+
+// ============================================================================
+// Per-Project Task Storage
+// ============================================================================
+
+/// Data stored in `.kanblam/tasks.json` within each project directory.
+/// This keeps task state with the project, version-controlled and portable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTaskData {
+    /// Version for future migrations
+    #[serde(default = "default_version")]
+    pub version: u32,
+    /// All tasks for this project
+    pub tasks: Vec<Task>,
+    /// Task ID whose changes are currently applied to main worktree
+    #[serde(default)]
+    pub applied_task_id: Option<Uuid>,
+    /// Stash ref for unapply (legacy, kept for compatibility)
+    #[serde(default)]
+    pub applied_stash_ref: Option<String>,
+    /// Custom commands for this project
+    #[serde(default)]
+    pub commands: ProjectCommands,
+}
+
+fn default_version() -> u32 { 1 }
+
+impl Default for ProjectTaskData {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            tasks: Vec::new(),
+            applied_task_id: None,
+            applied_stash_ref: None,
+            commands: ProjectCommands::default(),
+        }
+    }
+}
+
+impl ProjectTaskData {
+    /// Get the path to the tasks file for a project
+    pub fn file_path(project_dir: &PathBuf) -> PathBuf {
+        project_dir.join(".kanblam").join("tasks.json")
+    }
+
+    /// Load task data from a project directory.
+    /// Returns default data if file doesn't exist.
+    pub fn load(project_dir: &PathBuf) -> Self {
+        let path = Self::file_path(project_dir);
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    match serde_json::from_str(&content) {
+                        Ok(data) => return data,
+                        Err(e) => {
+                            eprintln!("Warning: Failed to parse {}: {}", path.display(), e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to read {}: {}", path.display(), e);
+                }
+            }
+        }
+        Self::default()
+    }
+
+    /// Save task data to the project directory.
+    /// Creates the .kanblam directory if it doesn't exist.
+    pub fn save(&self, project_dir: &PathBuf) -> std::io::Result<()> {
+        let kanblam_dir = project_dir.join(".kanblam");
+        std::fs::create_dir_all(&kanblam_dir)?;
+
+        let path = Self::file_path(project_dir);
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(path, content)
+    }
+}
+
+impl Project {
+    /// Load tasks and related data from the project's .kanblam directory.
+    /// Call this when opening or switching to a project.
+    pub fn load_tasks(&mut self) {
+        let data = ProjectTaskData::load(&self.working_dir);
+        self.tasks = data.tasks;
+        self.applied_task_id = data.applied_task_id;
+        self.applied_stash_ref = data.applied_stash_ref;
+        self.commands = data.commands;
+
+        // Regenerate worktree paths (they're not persisted, derived from project_dir + task_id)
+        for task in &mut self.tasks {
+            if task.git_branch.is_some() {
+                let worktree_path = self.working_dir
+                    .join("worktrees")
+                    .join(format!("task-{}", task.id));
+                if worktree_path.exists() {
+                    task.worktree_path = Some(worktree_path);
+                } else {
+                    // Worktree was deleted, clear the reference
+                    task.worktree_path = None;
+                    task.git_branch = None;
+                }
+            }
+        }
+    }
+
+    /// Save tasks and related data to the project's .kanblam directory.
+    /// Call this periodically and when closing a project.
+    pub fn save_tasks(&self) -> std::io::Result<()> {
+        let data = ProjectTaskData {
+            version: 1,
+            tasks: self.tasks.clone(),
+            applied_task_id: self.applied_task_id,
+            applied_stash_ref: self.applied_stash_ref.clone(),
+            commands: self.commands.clone(),
+        };
+        data.save(&self.working_dir)
+    }
+}

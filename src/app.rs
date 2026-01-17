@@ -4546,6 +4546,8 @@ impl App {
 
 /// Load application state from disk
 pub fn load_state() -> Result<AppModel> {
+    use crate::model::ProjectTaskData;
+
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("kanclaude");
@@ -4554,7 +4556,19 @@ pub fn load_state() -> Result<AppModel> {
 
     if state_file.exists() {
         let content = std::fs::read_to_string(&state_file)?;
-        let model: AppModel = serde_json::from_str(&content)?;
+        let mut model: AppModel = serde_json::from_str(&content)?;
+
+        // Load tasks from per-project files (with migration from global state)
+        for project in &mut model.projects {
+            let project_file = ProjectTaskData::file_path(&project.working_dir);
+            if project_file.exists() {
+                // New way: load from project directory
+                project.load_tasks();
+            }
+            // else: keep tasks from global state (migration path)
+            // They'll be saved to project dir on next save
+        }
+
         Ok(model)
     } else {
         Ok(AppModel::default())
@@ -4562,6 +4576,7 @@ pub fn load_state() -> Result<AppModel> {
 }
 
 /// Save application state to disk
+/// Also saves tasks to per-project .kanblam/tasks.json files
 pub fn save_state(model: &AppModel) -> Result<()> {
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -4569,6 +4584,15 @@ pub fn save_state(model: &AppModel) -> Result<()> {
 
     std::fs::create_dir_all(&data_dir)?;
 
+    // Save tasks to each project's .kanblam directory
+    for project in &model.projects {
+        if let Err(e) = project.save_tasks() {
+            eprintln!("Warning: Failed to save tasks for {}: {}", project.name, e);
+        }
+    }
+
+    // Save global state (still includes tasks for backwards compatibility,
+    // but we prefer loading from project dirs)
     let state_file = data_dir.join("state.json");
     let content = serde_json::to_string_pretty(model)?;
     std::fs::write(state_file, content)?;

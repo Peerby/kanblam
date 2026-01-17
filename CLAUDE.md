@@ -74,6 +74,10 @@ Vim-style navigation between: `KanbanBoard` | `TaskInput` | `ProjectTabs` | `Out
 ## Key Patterns
 
 - Task selection tracked by both index and UUID (`selected_task_idx`, `selected_task_id`)
-- State persisted to disk on exit via serde JSON
+- State persisted to `.kanblam/tasks.json` per project
 - Hook signals processed via filesystem watch (`~/.kanclaude/signals/`)
 - Tmux session per project: `kc-{project-slug}`
+
+## Protected Files
+
+**NEVER modify the `.kanblam/` directory or its contents.** This directory stores KanBlam's task state and is managed exclusively by the TUI application. Changes made in worktrees are automatically excluded from merges to prevent stale task data from overwriting current state.

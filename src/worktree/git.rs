@@ -356,6 +356,13 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
         ));
     }
 
+    // Reset .kanblam/ to main's version - never merge task state from worktrees
+    // This prevents stale task data from worktrees overwriting current state
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["checkout", "HEAD", "--", ".kanblam"])
+        .output();
+
     // Check if there are staged changes to commit
     let status_output = Command::new("git")
         .current_dir(project_dir)
@@ -573,9 +580,10 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("merge_base={}", merge_base));
 
     // Get the diff from merge-base to the task branch (only the task's changes)
+    // Exclude .kanblam/ directory to avoid overwriting task state during apply/merge
     let diff_output = Command::new("git")
         .current_dir(project_dir)
-        .args(["diff", &merge_base, &branch_name])
+        .args(["diff", &merge_base, &branch_name, "--", ".", ":!.kanblam"])
         .output()?;
 
     if !diff_output.status.success() {
