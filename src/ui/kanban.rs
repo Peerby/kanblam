@@ -595,6 +595,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("heck ", desc_style),
             Span::styled("f", key_style),
             Span::styled("eedback ", desc_style),
+            Span::styled("o", key_style),
+            Span::styled("pen ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-reset", desc_style),
         ],
@@ -656,13 +658,15 @@ fn get_review_hints(has_applied: bool, is_this_task_applied: bool, is_blocked: b
         hints.push(Span::styled("erge ", desc_style));
     }
 
-    // Always show discard, check, feedback, reset
+    // Always show discard, check, feedback, open, reset
     hints.push(Span::styled("d", key_style));
     hints.push(Span::styled("iscard ", desc_style));
     hints.push(Span::styled("c", key_style));
     hints.push(Span::styled("heck ", desc_style));
     hints.push(Span::styled("f", key_style));
     hints.push(Span::styled("eedback ", desc_style));
+    hints.push(Span::styled("o", key_style));
+    hints.push(Span::styled("pen ", desc_style));
     hints.push(Span::styled("x", key_style));
     hints.push(Span::styled("-reset", desc_style));
 
