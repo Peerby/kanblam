@@ -1168,7 +1168,6 @@ fn render_help(frame: &mut Frame) {
         Line::from("  o/O        Open Claude modal (O: detached)"),
         Line::from("  t/T        Open test shell (T: detached)"),
         Line::from("  q          Queue task (Planned) / Quit"),
-        Line::from("  Ctrl-R     Install/update hooks"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(

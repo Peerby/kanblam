@@ -194,8 +194,6 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     #[serde(skip)]
     pub captured_output: String,
-    #[serde(default)]
-    pub hooks_installed: bool,
 
     // Applied changes state (persisted so unapply works after restart)
     /// Task ID whose changes are currently applied to main worktree (for testing)
@@ -343,7 +341,6 @@ impl Project {
             needs_attention: false,
             created_at: Utc::now(),
             captured_output: String::new(),
-            hooks_installed: false,
             applied_task_id: None,
             applied_stash_ref: None,
             main_worktree_lock: None,
@@ -1024,8 +1021,6 @@ pub struct PendingConfirmation {
 /// Actions that require user confirmation
 #[derive(Debug, Clone)]
 pub enum PendingAction {
-    InstallHooks,
-    ReloadClaude,
     DeleteTask(Uuid),
     /// Mark task as done and clean up worktree (when nothing to merge)
     MarkDoneNoMerge(Uuid),

@@ -88,7 +88,6 @@ pub enum Message {
     ConfirmOpenProject,
     /// Close a project (with confirmation if it has active tasks)
     CloseProject(usize),
-    ReloadClaudeHooks,
 
     // Claude/Hook events
     HookSignalReceived(HookSignal),

@@ -1840,20 +1840,6 @@ impl App {
 
                     // Refresh git status for the new project
                     commands.push(Message::RefreshGitStatus);
-
-                    // Check if this project needs hooks installed
-                    if let Some(project) = self.model.projects.get(idx) {
-                        if !project.hooks_installed {
-                            let name = project.name.clone();
-                            commands.push(Message::ShowConfirmation {
-                                message: format!(
-                                    "Hooks not installed or outdated for '{}'. Install? (y/n/1-9 switch)",
-                                    name
-                                ),
-                                action: PendingAction::InstallHooks,
-                            });
-                        }
-                    }
                 }
             }
 
@@ -1905,20 +1891,6 @@ impl App {
                                 // Close the dialog
                                 self.model.ui_state.open_project_dialog_slot = None;
                                 self.model.ui_state.directory_browser = None;
-
-                                // Check if hooks need to be installed
-                                if let Some(project) = self.model.projects.get(slot) {
-                                    if !project.hooks_installed {
-                                        let name = project.name.clone();
-                                        commands.push(Message::ShowConfirmation {
-                                            message: format!(
-                                                "Hooks not installed for '{}'. Install? (y/n)",
-                                                name
-                                            ),
-                                            action: PendingAction::InstallHooks,
-                                        });
-                                    }
-                                }
                             }
                         }
                     }
@@ -1953,29 +1925,6 @@ impl App {
                 }
             }
 
-            Message::ReloadClaudeHooks => {
-                if let Some(project) = self.model.active_project() {
-                    let name = project.name.clone();
-                    let needs_hooks = !project.hooks_installed;
-
-                    if needs_hooks {
-                        // Install hooks first, then ask to reload
-                        commands.push(Message::ShowConfirmation {
-                            message: format!(
-                                "Hooks not installed or outdated for '{}'. Install? (y/n/1-9 switch)",
-                                name
-                            ),
-                            action: PendingAction::InstallHooks,
-                        });
-                    } else {
-                        // Hooks already installed - show status
-                        commands.push(Message::SetStatusMessage(Some(
-                            format!("Hooks already installed for '{}'. To reload: /exit then 'claude --continue'", name)
-                        )));
-                    }
-                }
-            }
-
             Message::ShowConfirmation { message, action } => {
                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                     message,
@@ -1986,21 +1935,6 @@ impl App {
             Message::ConfirmAction => {
                 if let Some(confirmation) = self.model.ui_state.pending_confirmation.take() {
                     match confirmation.action {
-                        PendingAction::InstallHooks => {
-                            // Hook installation has been removed - mark as installed
-                            if let Some(project) = self.model.active_project_mut() {
-                                project.hooks_installed = true;
-                            }
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Hooks are no longer required.".to_string()
-                            )));
-                        }
-                        PendingAction::ReloadClaude => {
-                            // No-op: hooks no longer required
-                            commands.push(Message::SetStatusMessage(Some(
-                                "No reload needed.".to_string()
-                            )));
-                        }
                         PendingAction::DeleteTask(task_id) => {
                             // Actually delete the task
                             commands.push(Message::DeleteTask(task_id));
@@ -2301,16 +2235,6 @@ impl App {
                 if let Some(confirmation) = self.model.ui_state.pending_confirmation.take() {
                     // Show manual instructions when user cancels
                     match confirmation.action {
-                        PendingAction::InstallHooks => {
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Hooks not installed/outdated. Press Ctrl-R later to install.".to_string()
-                            )));
-                        }
-                        PendingAction::ReloadClaude => {
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Manual reload: /exit in Claude, then run 'claude --continue'".to_string()
-                            )));
-                        }
                         PendingAction::DeleteTask(_) => {
                             // Just clear the confirmation, no message needed
                         }
