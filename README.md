@@ -9,7 +9,7 @@
 
 **A TUI Kanban board for orchestrating parallel Claude Code sessions**
 
-KanBlam! is a terminal-based task manager that lets you run multiple Claude Code AI coding sessions simultaneously, each in complete isolation through git worktrees. Plan your tasks, queue them up, and watch Claude work on them in parallel—then review, accept, or discard the results.
+KanBlam! is a terminal-based task manager that lets you run multiple Claude Code AI coding sessions simultaneously, each in complete isolation through git worktrees. Plan your tasks, queue them up, and watch Claude work on them in parallel—then review, accept, or discard the results. It's vibe coding at the speed of sound.
 
 ### The Problem
 
@@ -210,5 +210,5 @@ MIT
 ---
 
 <p align="center">
-<i>Built for developers who want to harness the full power of AI coding assistants</i>
+<i>Built for developers who want to harness the full power of vibe coding with AI coding assistants</i>
 </p>

@@ -4450,7 +4450,7 @@ impl App {
 
                 let current_dir = std::env::current_dir().unwrap_or_default();
 
-                // Detect if we're running debug or release build
+// Detect if we're running debug or release build
                 // Check the current executable path for "debug" or "release"
                 let is_release = std::env::current_exe()
                     .map(|p| p.to_string_lossy().contains("/release/"))
