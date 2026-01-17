@@ -15,7 +15,7 @@
 
 KanBlam! is a terminal-based task manager that lets you run multiple Claude Code AI coding sessions simultaneously, each in complete isolation through git worktrees. Plan your tasks, queue them up, and watch Claude work on them in parallel—then review, accept, or discard the results. It's vibe coding at the speed of sound.
 
-![KanBlam Screenshot](assets/screenshots/screenshot.png) ![KanBlam Screenshot 2](assets/screenshots/screenshot2.png)
+![KanBlam Screenshot](assets/screenshots/screenshot.png)
 
 ### The Problem
 
