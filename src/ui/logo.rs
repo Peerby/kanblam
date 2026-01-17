@@ -234,7 +234,9 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animat
         Line::from(vec![
             Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
             Span::styled("    ", Style::default()),
-            Span::styled("█ █ ▄▀█ █▄ █ ██▄ █   ▄▀█ █▀▄▀█", text_style),
+            Span::styled("█ █ ▄▀█ █▄ █ █", text_style),
+            Span::styled("▖", Style::default().fg(Color::Black).bg(green)), // B top hole
+            Span::styled("▄ █   ▄▀█ █▀▄▀█", text_style),
             Span::styled(" ", Style::default()),       // Shift left by 1
         ]),
         // Face row with green eyes in the negative space
@@ -286,12 +288,14 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_anim
 
     // KB wordmark (just K and B from KANBLAM)
     // K: █ █ / █▀▄ / █ █
-    // B: ██▄ / █▀▄ / ██▀
+    // B: █▖▄ / █▀▄ / ██▀ (▖ is black on green bg for top hole)
     let lines = vec![
         Line::from(vec![
             Span::styled(LOGO_MASCOT[0], mascot_styles[0]),
             Span::styled("  ", Style::default()),
-            Span::styled("█ █ ██▄", text_style),
+            Span::styled("█ █ █", text_style),
+            Span::styled("▖", Style::default().fg(Color::Black).bg(green)), // B top hole
+            Span::styled("▄", text_style),
             Span::styled(" ", Style::default()),
         ]),
         // Face row with green eyes in the negative space
