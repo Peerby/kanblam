@@ -1436,7 +1436,10 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
-                    Message::ResetTask(task.id),
+                    Message::ShowConfirmation {
+                        message: format!("Reset '{}'? This will clean up worktree and move to Planned.", task.title),
+                        action: model::PendingAction::ResetTask(task.id),
+                    },
                 ]
             } else {
                 vec![]
