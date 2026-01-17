@@ -14,25 +14,11 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         // Skip multiline messages - they're rendered as modals instead
         if !confirmation.message.contains('\n') {
-            let msg = Paragraph::new(Span::styled(
-                format!(" {} ", confirmation.message),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            frame.render_widget(msg, area);
+            render_confirmation_prompt(frame, area, &confirmation.message, confirmation.animation_tick);
             return;
         }
         // For multiline, show a simple hint in the status bar
-        let msg = Paragraph::new(Span::styled(
-            " [y] Confirm  [n/Esc] Cancel ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        frame.render_widget(msg, area);
+        render_confirmation_prompt(frame, area, " [y] Confirm  [n/Esc] Cancel ", confirmation.animation_tick);
         return;
     }
 
@@ -267,4 +253,80 @@ fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
         height: 1,
     };
     frame.render_widget(Paragraph::new(hints), hint_area);
+}
+
+/// Render confirmation prompt with highlight sweep animation
+/// animation_tick: starts at 20, counts down to 0. Animation runs while > 0.
+fn render_confirmation_prompt(frame: &mut Frame, area: Rect, message: &str, animation_tick: usize) {
+    let width = area.width as usize;
+    let animation_duration: usize = 20; // ticks for the sweep animation
+
+    // Calculate light position based on animation tick
+    // tick starts at 20, so elapsed = 20 - tick
+    let ticks_elapsed = animation_duration.saturating_sub(animation_tick);
+    let light_pos = if ticks_elapsed < animation_duration {
+        // Map elapsed ticks to position across screen width
+        (ticks_elapsed * width) / animation_duration
+    } else {
+        usize::MAX // Animation complete, no light
+    };
+    let light_width = 8; // Width of the bright spot
+
+    // First, fill the entire bar with yellow background
+    let bg_style = Style::default().bg(Color::Yellow);
+    let full_bg = " ".repeat(width);
+    frame.render_widget(
+        Paragraph::new(Span::styled(&full_bg, bg_style)),
+        area,
+    );
+
+    // Build the message text with character-by-character styling for the light effect
+    let message_text = format!(" {} ", message);
+    let message_chars: Vec<char> = message_text.chars().collect();
+    let message_width = message_chars.len();
+
+    // Left-align the message (start at x=0)
+    let start_x = 0_usize;
+
+    // Create spans for each character with appropriate styling
+    let mut spans = Vec::new();
+
+    for (i, ch) in message_chars.iter().enumerate() {
+        let screen_x = start_x + i;
+        let dist_from_light = if light_pos == usize::MAX {
+            usize::MAX
+        } else if screen_x >= light_pos {
+            screen_x - light_pos
+        } else {
+            light_pos - screen_x
+        };
+
+        // Determine background color based on distance from light
+        let bg = if dist_from_light == 0 {
+            Color::White // Brightest at center
+        } else if dist_from_light <= light_width / 2 {
+            Color::Rgb(255, 255, 200) // Near-white yellow
+        } else if dist_from_light <= light_width {
+            Color::Rgb(255, 255, 150) // Bright yellow
+        } else {
+            Color::Yellow // Base yellow
+        };
+
+        let style = Style::default()
+            .fg(Color::Black)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD);
+
+        spans.push(Span::styled(ch.to_string(), style));
+    }
+
+    // Render the message
+    let message_line = Line::from(spans);
+    let message_area = Rect {
+        x: area.x + start_x as u16,
+        y: area.y,
+        width: message_width.min(width) as u16,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(message_line), message_area);
 }

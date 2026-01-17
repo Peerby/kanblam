@@ -1019,6 +1019,8 @@ impl UiState {
 pub struct PendingConfirmation {
     pub message: String,
     pub action: PendingAction,
+    /// Animation tick for the highlight sweep effect (starts at 20, counts down to 0)
+    pub animation_tick: usize,
 }
 
 /// Actions that require user confirmation

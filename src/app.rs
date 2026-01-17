@@ -1930,6 +1930,7 @@ impl App {
                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                     message,
                     action,
+                    animation_tick: 20, // Start sweep animation (same duration as startup hints)
                 });
             }
 
@@ -3927,6 +3928,13 @@ impl App {
                         self.model.ui_state.startup_hint_until_tick = Some(remaining - 1);
                     } else {
                         self.model.ui_state.startup_hint_until_tick = None;
+                    }
+                }
+
+                // Animate confirmation prompt highlight sweep
+                if let Some(ref mut confirmation) = self.model.ui_state.pending_confirmation {
+                    if confirmation.animation_tick > 0 {
+                        confirmation.animation_tick -= 1;
                     }
                 }
 
