@@ -12,7 +12,7 @@ use ratatui::{
     prelude::Widget,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -1358,7 +1358,8 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
                     .border_style(Style::default().fg(Color::Green))
                     .title(" Select Directory "),
             );
-        frame.render_widget(list, chunks[2]);
+        let mut list_state = ListState::default().with_selected(Some(browser.selected_idx));
+        frame.render_stateful_widget(list, chunks[2], &mut list_state);
     }
 
     // Render hints
