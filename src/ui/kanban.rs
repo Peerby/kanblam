@@ -376,20 +376,24 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
             get_column_hints(status)
         };
 
-        // Calculate the width of hints text
-        let hints_text: String = hints.iter().map(|s| s.content.as_ref()).collect();
-        let hints_width = hints_text.chars().count() as u16;
+        // Try to fit hints in available width, using progressively shorter versions
+        let available_width = area.width.saturating_sub(2); // Leave space for corners
+        let final_hints = fit_hints_to_width(hints, available_width, status);
 
-        // Position on bottom border, right-aligned (leave space for corner)
-        if area.width > hints_width + 2 {
-            let hints_area = Rect {
-                x: area.x + area.width - hints_width - 2,
-                y: area.y + area.height - 1,
-                width: hints_width,
-                height: 1,
-            };
-            let hints_widget = Paragraph::new(Line::from(hints));
-            frame.render_widget(hints_widget, hints_area);
+        if !final_hints.is_empty() {
+            let hints_text: String = final_hints.iter().map(|s| s.content.as_ref()).collect();
+            let hints_width = hints_text.chars().count() as u16;
+
+            if hints_width > 0 && area.width > hints_width + 2 {
+                let hints_area = Rect {
+                    x: area.x + area.width - hints_width - 2,
+                    y: area.y + area.height - 1,
+                    width: hints_width,
+                    height: 1,
+                };
+                let hints_widget = Paragraph::new(Line::from(final_hints));
+                frame.render_widget(hints_widget, hints_area);
+            }
         }
     }
 
@@ -703,4 +707,146 @@ fn get_accepting_hints(task: &crate::model::Task) -> Vec<Span<'static>> {
     }
 
     parts
+}
+
+/// Fit hints to available width by trying progressively shorter versions
+fn fit_hints_to_width(hints: Vec<Span<'static>>, available_width: u16, status: TaskStatus) -> Vec<Span<'static>> {
+    let hints_text: String = hints.iter().map(|s| s.content.as_ref()).collect();
+    let hints_width = hints_text.chars().count() as u16;
+
+    // If full hints fit, use them
+    if hints_width <= available_width {
+        return hints;
+    }
+
+    // Try medium abbreviated version
+    let medium = get_medium_hints(status);
+    let medium_text: String = medium.iter().map(|s| s.content.as_ref()).collect();
+    if (medium_text.chars().count() as u16) <= available_width {
+        return medium;
+    }
+
+    // Try short version (just keys)
+    let short = get_short_hints(status);
+    let short_text: String = short.iter().map(|s| s.content.as_ref()).collect();
+    if (short_text.chars().count() as u16) <= available_width {
+        return short;
+    }
+
+    // Nothing fits
+    Vec::new()
+}
+
+/// Get medium-length hints (abbreviated descriptions)
+fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+
+    match status {
+        TaskStatus::Planned => vec![
+            Span::styled("s", key_style),
+            Span::styled("tart ", desc_style),
+            Span::styled("e", key_style),
+            Span::styled("dit ", desc_style),
+            Span::styled("d", key_style),
+            Span::styled("el ", desc_style),
+            Span::styled("q", key_style),
+            Span::styled("ue", desc_style),
+        ],
+        TaskStatus::Queued => vec![
+            Span::styled("s", key_style),
+            Span::styled("tart ", desc_style),
+            Span::styled("e", key_style),
+            Span::styled("dit ", desc_style),
+            Span::styled("d", key_style),
+            Span::styled("el", desc_style),
+        ],
+        TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
+            Span::styled("s", key_style),
+            Span::styled("w ", desc_style),
+            Span::styled("o", key_style),
+            Span::styled("pen ", desc_style),
+            Span::styled("t", key_style),
+            Span::styled("est ", desc_style),
+            Span::styled("r", key_style),
+            Span::styled("ev ", desc_style),
+            Span::styled("x", key_style),
+            Span::styled("-rst", desc_style),
+        ],
+        TaskStatus::Review => vec![
+            Span::styled("a", key_style),
+            Span::styled("pp ", desc_style),
+            Span::styled("u", key_style),
+            Span::styled("nap ", desc_style),
+            Span::styled("r", key_style),
+            Span::styled("eb ", desc_style),
+            Span::styled("m", key_style),
+            Span::styled("rg ", desc_style),
+            Span::styled("d", key_style),
+            Span::styled("is ", desc_style),
+            Span::styled("c", key_style),
+            Span::styled("hk ", desc_style),
+            Span::styled("f", key_style),
+            Span::styled("b ", desc_style),
+            Span::styled("x", key_style),
+            Span::styled("-rst", desc_style),
+        ],
+        TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => vec![
+            Span::styled("...", desc_style),
+        ],
+        TaskStatus::Done => vec![
+            Span::styled("e", key_style),
+            Span::styled("dit ", desc_style),
+            Span::styled("d", key_style),
+            Span::styled("el ", desc_style),
+            Span::styled("r", key_style),
+            Span::styled("ev", desc_style),
+        ],
+    }
+}
+
+/// Get short hints (just the key letters)
+fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+    let sep = Span::styled(" ", desc_style);
+
+    match status {
+        TaskStatus::Planned => vec![
+            Span::styled("s", key_style), sep.clone(),
+            Span::styled("e", key_style), sep.clone(),
+            Span::styled("d", key_style), sep.clone(),
+            Span::styled("q", key_style),
+        ],
+        TaskStatus::Queued => vec![
+            Span::styled("s", key_style), sep.clone(),
+            Span::styled("e", key_style), sep.clone(),
+            Span::styled("d", key_style),
+        ],
+        TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
+            Span::styled("s", key_style), sep.clone(),
+            Span::styled("o", key_style), sep.clone(),
+            Span::styled("t", key_style), sep.clone(),
+            Span::styled("r", key_style), sep.clone(),
+            Span::styled("x", key_style),
+        ],
+        TaskStatus::Review => vec![
+            Span::styled("a", key_style), sep.clone(),
+            Span::styled("u", key_style), sep.clone(),
+            Span::styled("r", key_style), sep.clone(),
+            Span::styled("m", key_style), sep.clone(),
+            Span::styled("d", key_style), sep.clone(),
+            Span::styled("c", key_style), sep.clone(),
+            Span::styled("f", key_style), sep.clone(),
+            Span::styled("x", key_style),
+        ],
+        TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => vec![
+            Span::styled("...", desc_style),
+        ],
+        TaskStatus::Done => vec![
+            Span::styled("e", key_style), sep.clone(),
+            Span::styled("d", key_style), sep.clone(),
+            Span::styled("r", key_style),
+        ],
+    }
 }
