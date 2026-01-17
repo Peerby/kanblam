@@ -1731,10 +1731,10 @@ impl App {
                     }
                 }
 
-                // Get task title for status message
+                // Get task title for status message (prefer short_title if available)
                 let task_title = self.model.active_project()
                     .and_then(|p| p.tasks.iter().find(|t| t.id == after_task_id))
-                    .map(|t| t.title.clone())
+                    .map(|t| t.short_title.clone().unwrap_or_else(|| t.title.clone()))
                     .unwrap_or_else(|| "unknown".to_string());
 
                 commands.push(Message::SetStatusMessage(Some(
@@ -1748,12 +1748,13 @@ impl App {
                     p.next_queued_for(finished_task_id).map(|t| (
                         t.id,
                         t.title.clone(),
+                        t.short_title.clone().unwrap_or_else(|| t.title.clone()), // For status display
                         t.images.clone(),
                         p.slug(),
                     ))
                 });
 
-                if let Some((next_task_id, title, images, project_slug)) = next_task_info {
+                if let Some((next_task_id, title, display_title, images, project_slug)) = next_task_info {
                     // Get worktree info from the finished task
                     let worktree_info = self.model.active_project().and_then(|p| {
                         p.tasks.iter().find(|t| t.id == finished_task_id).map(|t| (
@@ -1796,7 +1797,7 @@ impl App {
                                 commands.push(Message::Error(format!("Failed to send queued task: {}", e)));
                             } else {
                                 commands.push(Message::SetStatusMessage(Some(
-                                    format!("Continuing with queued task: {}", title)
+                                    format!("Continuing with queued task: {}", display_title)
                                 )));
                             }
                         }

@@ -350,15 +350,18 @@ impl Project {
 
     /// Format a task reference for display in messages: "[abc123] title truncat..."
     /// Short ID (6 chars) + truncated title (max 20 chars)
+    /// Uses short_title if available, otherwise truncates the full title
     fn format_task_ref(&self, task_id: Uuid) -> String {
         let short_id = &task_id.to_string()[..6];
         let title = self.tasks.iter()
             .find(|t| t.id == task_id)
             .map(|t| {
-                if t.title.len() > 20 {
-                    format!("{}..", &t.title[..18])
+                // Prefer short_title if available
+                let display_title = t.short_title.as_ref().unwrap_or(&t.title);
+                if display_title.len() > 20 {
+                    format!("{}..", &display_title[..18])
                 } else {
-                    t.title.clone()
+                    display_title.clone()
                 }
             })
             .unwrap_or_else(|| "unknown".to_string());
