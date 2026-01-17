@@ -920,7 +920,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
                             // Otherwise do full merge
                             return vec![Message::ShowConfirmation {
-                                message: "Merge all changes and mark done?".to_string(),
+                                message: "Merge all changes and mark done? (y/n)".to_string(),
                                 action: model::PendingAction::AcceptTask(task.id),
                             }];
                         }
@@ -1372,7 +1372,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![
                     Message::ToggleTaskPreview,
                     Message::ShowConfirmation {
-                        message: "Merge all changes and mark done?".to_string(),
+                        message: "Merge all changes and mark done? (y/n)".to_string(),
                         action: model::PendingAction::AcceptTask(task.id),
                     },
                 ]
