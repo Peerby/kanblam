@@ -1515,7 +1515,20 @@ impl App {
                                 }
                             }
                         }
-                        Err(_) => {
+                        Err(apply_err) => {
+                            let err_msg = apply_err.to_string();
+
+                            // Check for "empty diff" case - task is already merged
+                            if err_msg.contains("No valid patches") || err_msg.contains("Nothing to apply") {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
+                                commands.push(Message::Error(
+                                    "Nothing to apply - task changes are already in main. Mark as done with 'm'.".to_string()
+                                ));
+                                return commands;
+                            }
+
                             // Fast apply failed - check if we need to rebase first
                             let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
 
@@ -1558,13 +1571,13 @@ impl App {
                                     ));
                                 }
                             } else {
-                                // No divergence but apply still failed - might be uncommitted changes
+                                // No divergence but apply still failed - show actual error
                                 if let Some(project) = self.model.active_project_mut() {
                                     project.release_main_worktree_lock(task_id);
                                 }
-                                commands.push(Message::Error(
-                                    "Failed to apply changes. Ensure main worktree is clean.".to_string()
-                                ));
+                                commands.push(Message::Error(format!(
+                                    "Failed to apply: {}", err_msg
+                                )));
                             }
                         }
                     }
@@ -3324,7 +3337,7 @@ impl App {
                                     }
                                 }
                                 Err(e) => {
-                                    // Apply still failed after rebase - shouldn't happen
+                                    let err_msg = e.to_string();
                                     if let Some(project) = self.model.active_project_mut() {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                             task.status = TaskStatus::Review;
@@ -3332,10 +3345,17 @@ impl App {
                                         }
                                         project.release_main_worktree_lock(task_id);
                                     }
-                                    commands.push(Message::Error(format!(
-                                        "Apply failed even after rebase: {}",
-                                        e
-                                    )));
+                                    // Check for "already merged" case
+                                    if err_msg.contains("Nothing to apply") || err_msg.contains("No valid patches") {
+                                        commands.push(Message::Error(
+                                            "Nothing to apply - task changes are already in main. Mark as done with 'm'.".to_string()
+                                        ));
+                                    } else {
+                                        commands.push(Message::Error(format!(
+                                            "Apply failed: {}",
+                                            err_msg
+                                        )));
+                                    }
                                 }
                             }
                         }

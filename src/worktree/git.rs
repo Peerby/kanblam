@@ -507,6 +507,14 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("diff size={} bytes", diff_output.stdout.len()));
     if diff_output.stdout.is_empty() {
         log("WARNING: diff is empty! Nothing to apply.");
+        // Restore stash if we made one
+        if stash_ref.is_some() {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+        return Err(anyhow!("Nothing to apply - task changes are already in main."));
     }
 
     // Save the patch file for surgical reversal later
