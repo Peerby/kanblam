@@ -104,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?; // Clear screen to remove any cargo-watch output artifacts
 
     // Run the main loop
     let result = run_app(&mut terminal, &mut app, hook_watcher, sidecar_receiver, async_receiver);
