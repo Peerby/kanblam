@@ -3257,24 +3257,30 @@ impl App {
             }
 
             Message::EnterFeedbackMode(task_id) => {
-                // Verify task exists and is in Review status
-                let can_enter = self.model.active_project().map_or(false, |project| {
-                    project.tasks.iter().any(|t| t.id == task_id && t.status == TaskStatus::Review)
+                // Verify task exists and is in Review or InProgress status
+                let task_status = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|t| t.status)
                 });
 
+                let can_enter = matches!(task_status, Some(TaskStatus::Review) | Some(TaskStatus::InProgress));
+
                 if can_enter {
+                    let is_live = task_status == Some(TaskStatus::InProgress);
                     // Enter feedback mode: set the feedback task and focus the input
                     self.model.ui_state.feedback_task_id = Some(task_id);
                     self.model.ui_state.focus = crate::model::FocusArea::TaskInput;
                     self.model.ui_state.clear_input();
                     // Ensure we're in insert mode for typing
                     self.model.ui_state.editor_state.mode = edtui::EditorMode::Insert;
-                    commands.push(Message::SetStatusMessage(Some(
-                        "Enter feedback (Esc to cancel, Enter to send)".to_string()
-                    )));
+                    let msg = if is_live {
+                        "Enter live feedback (Esc to cancel, Enter to send)"
+                    } else {
+                        "Enter feedback (Esc to cancel, Enter to send)"
+                    };
+                    commands.push(Message::SetStatusMessage(Some(msg.to_string())));
                 } else {
                     commands.push(Message::SetStatusMessage(Some(
-                        "Task must be in Review status to send feedback".to_string()
+                        "Task must be in Review or InProgress status to send feedback".to_string()
                     )));
                 }
             }
@@ -3302,57 +3308,91 @@ impl App {
                             task.tmux_window.clone(),
                             task.worktree_path.clone(),
                             project.slug(),
+                            task.status,
                         )
                     })
                 });
 
-                if let Some((session_id_opt, tmux_window_opt, worktree_path_opt, project_slug)) = task_info {
-                    // Kill any existing tmux window to avoid sync issues
-                    if let Some(ref window_name) = tmux_window_opt {
-                        let _ = crate::tmux::kill_task_window(&project_slug, window_name);
-                    }
-
-                    if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
-                        // Resume SDK session with feedback - preserves full conversation context
+                if let Some((session_id_opt, tmux_window_opt, worktree_path_opt, project_slug, task_status)) = task_info {
+                    // For InProgress tasks: use send_prompt (session is active)
+                    // For Review tasks: use resume_session (session is paused)
+                    if task_status == TaskStatus::InProgress {
+                        // Live feedback to active session - don't kill tmux, don't change status
                         if let Some(ref client) = self.sidecar_client {
-                            match client.resume_session(task_id, session_id, worktree_path, Some(&feedback)) {
-                                Ok(new_session_id) => {
-                                    // Update task state: move to InProgress and set Working state
+                            match client.send_prompt(task_id, &feedback, None) {
+                                Ok(()) => {
+                                    // Log the feedback, but keep task in InProgress
                                     if let Some(project) = self.model.active_project_mut() {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.claude_session_id = Some(new_session_id);
-                                            task.status = TaskStatus::InProgress;
-                                            task.session_state = crate::model::ClaudeSessionState::Working;
-                                            task.session_mode = crate::model::SessionMode::SdkManaged;
+                                            let truncated = if feedback.len() > 50 {
+                                                format!("{}...", &feedback[..50])
+                                            } else {
+                                                feedback.clone()
+                                            };
+                                            task.log_activity(&format!("Live feedback: {}", truncated));
                                             task.last_activity_at = Some(chrono::Utc::now());
-                                            // Clear tmux window since we killed it
-                                            task.tmux_window = None;
                                         }
-                                        project.needs_attention = false;
-                                        notify::clear_attention_indicator();
                                     }
-
-                                    // Move selection to InProgress column
-                                    commands.push(Message::SelectColumn(TaskStatus::InProgress));
-
                                     commands.push(Message::SetStatusMessage(Some(
-                                        "Feedback sent - task resumed".to_string()
+                                        "Live feedback sent".to_string()
                                     )));
                                 }
                                 Err(e) => {
-                                    commands.push(Message::Error(format!("Failed to send feedback: {}", e)));
+                                    commands.push(Message::Error(format!("Failed to send live feedback: {}", e)));
                                 }
                             }
                         } else {
                             commands.push(Message::Error("Cannot send feedback: sidecar not connected".to_string()));
                         }
                     } else {
-                        let reason = match (&session_id_opt, &worktree_path_opt) {
-                            (None, _) => "no session ID (task has no prior Claude session)",
-                            (_, None) => "no worktree path",
-                            _ => "unknown reason",
-                        };
-                        commands.push(Message::Error(format!("Cannot send feedback: {}", reason)));
+                        // Paused session (Review): resume with feedback
+                        // Kill any existing tmux window to avoid sync issues
+                        if let Some(ref window_name) = tmux_window_opt {
+                            let _ = crate::tmux::kill_task_window(&project_slug, window_name);
+                        }
+
+                        if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
+                            // Resume SDK session with feedback - preserves full conversation context
+                            if let Some(ref client) = self.sidecar_client {
+                                match client.resume_session(task_id, session_id, worktree_path, Some(&feedback)) {
+                                    Ok(new_session_id) => {
+                                        // Update task state: move to InProgress and set Working state
+                                        if let Some(project) = self.model.active_project_mut() {
+                                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                                task.claude_session_id = Some(new_session_id);
+                                                task.status = TaskStatus::InProgress;
+                                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                                task.session_mode = crate::model::SessionMode::SdkManaged;
+                                                task.last_activity_at = Some(chrono::Utc::now());
+                                                // Clear tmux window since we killed it
+                                                task.tmux_window = None;
+                                            }
+                                            project.needs_attention = false;
+                                            notify::clear_attention_indicator();
+                                        }
+
+                                        // Move selection to InProgress column
+                                        commands.push(Message::SelectColumn(TaskStatus::InProgress));
+
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "Feedback sent - task resumed".to_string()
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        commands.push(Message::Error(format!("Failed to send feedback: {}", e)));
+                                    }
+                                }
+                            } else {
+                                commands.push(Message::Error("Cannot send feedback: sidecar not connected".to_string()));
+                            }
+                        } else {
+                            let reason = match (&session_id_opt, &worktree_path_opt) {
+                                (None, _) => "no session ID (task has no prior Claude session)",
+                                (_, None) => "no worktree path",
+                                _ => "unknown reason",
+                            };
+                            commands.push(Message::Error(format!("Cannot send feedback: {}", reason)));
+                        }
                     }
                 } else {
                     commands.push(Message::Error("Task not found".to_string()));

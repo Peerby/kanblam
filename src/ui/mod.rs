@@ -5,7 +5,7 @@ mod output;
 mod status_bar;
 
 use crate::app::App;
-use crate::model::FocusArea;
+use crate::model::{FocusArea, TaskStatus};
 use edtui::{EditorTheme, EditorView};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -350,10 +350,19 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_editing_task = app.model.ui_state.editing_task_id.is_some();
     let is_feedback_mode = app.model.ui_state.feedback_task_id.is_some();
 
+    // Check if feedback is for a live (InProgress) task
+    let is_live_feedback = app.model.ui_state.feedback_task_id.and_then(|task_id| {
+        app.model.active_project().and_then(|project| {
+            project.tasks.iter().find(|t| t.id == task_id).map(|t| t.status == TaskStatus::InProgress)
+        })
+    }).unwrap_or(false);
+
     // Choose colors based on focus and mode
     let (border_color, text_color) = if is_focused {
-        let color = if is_feedback_mode {
-            Color::Cyan
+        let color = if is_live_feedback {
+            Color::Green  // Green for live feedback to running task
+        } else if is_feedback_mode {
+            Color::Cyan   // Cyan for feedback to paused task
         } else if is_editing_task {
             Color::Magenta
         } else {
@@ -372,7 +381,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         Style::default().fg(border_color)
     };
 
-    let title = if is_feedback_mode {
+    let title = if is_live_feedback {
+        Line::from(Span::styled(" Live Feedback ", title_style))
+    } else if is_feedback_mode {
         Line::from(Span::styled(" Feedback ", title_style))
     } else if is_editing_task {
         Line::from(Span::styled(" Edit Task ", title_style))
@@ -1146,6 +1157,11 @@ fn render_help(frame: &mut Frame) {
         Line::from("  d          Decline: discard changes and mark done"),
         Line::from("  f          Feedback: send follow-up instructions"),
         Line::from("  u          Unapply task changes (if applied)"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("InProgress Column", Style::default().add_modifier(Modifier::UNDERLINED)),
+        ]),
+        Line::from("  f          Live feedback: send message to running task"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Input Mode", Style::default().add_modifier(Modifier::UNDERLINED)),

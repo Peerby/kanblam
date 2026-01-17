@@ -1053,10 +1053,13 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Send feedback to a task in Review - 'f' key
-        KeyCode::Char('f') if app.model.ui_state.selected_column == TaskStatus::Review => {
+        // Send feedback to a task in Review or InProgress - 'f' key
+        KeyCode::Char('f') if matches!(
+            app.model.ui_state.selected_column,
+            TaskStatus::Review | TaskStatus::InProgress
+        ) => {
             if let Some(project) = app.model.active_project() {
-                let tasks = project.tasks_by_status(TaskStatus::Review);
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
                         // Don't allow feedback on tasks being accepted
