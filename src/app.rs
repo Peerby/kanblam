@@ -675,6 +675,22 @@ impl App {
             }
 
             Message::SmartAcceptTask(task_id) => {
+                // Check if this task's changes are already applied to main
+                // If so, we can just commit them directly (skip merge)
+                let is_already_applied = self.model.active_project()
+                    .map(|p| p.applied_task_id == Some(task_id))
+                    .unwrap_or(false);
+
+                if is_already_applied {
+                    // Changes already applied - show confirmation to commit them
+                    self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                        message: "Task changes are already applied. Commit them to main and complete the task?".to_string(),
+                        action: PendingAction::CommitAppliedChanges(task_id),
+                        animation_tick: 20,
+                    });
+                    return commands;
+                }
+
                 // Get task info to check if rebase is needed
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
