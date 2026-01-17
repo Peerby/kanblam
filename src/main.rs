@@ -921,7 +921,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                             // If this task's changes are currently applied, commit them
                             if applied_task_id == Some(task.id) {
                                 return vec![Message::ShowConfirmation {
-                                    message: "Commit applied changes and mark done?".to_string(),
+                                    message: "Commit applied changes and mark done? (y/n)".to_string(),
                                     action: model::PendingAction::CommitAppliedChanges(task.id),
                                 }];
                             }
@@ -1053,7 +1053,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                             return vec![];
                         }
                         return vec![Message::ShowConfirmation {
-                            message: "Discard all changes and mark done?".to_string(),
+                            message: "Discard all changes and mark done? (y/n)".to_string(),
                             action: model::PendingAction::DeclineTask(task.id),
                         }];
                     }
@@ -1164,7 +1164,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                         // Reset works on InProgress, NeedsInput, Review, Done
                         if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
                             return vec![Message::ShowConfirmation {
-                                message: format!("Reset '{}'? This will clean up worktree and move to Planned.", task.title),
+                                message: format!("Reset '{}'? This will clean up worktree and move to Planned. (y/n)", task.title),
                                 action: model::PendingAction::ResetTask(task.id),
                             }];
                         }
