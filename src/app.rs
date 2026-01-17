@@ -2414,42 +2414,57 @@ impl App {
                                 } else if has_queued {
                                     // Don't move to review - send the queued task instead
                                     // Move to end of Review tasks so first-finished appears at top
+                                    // (only if not already in Review from a duplicate hook)
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                    if task.status != TaskStatus::Review {
+                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                    }
                                     // Don't play attention sound - we're continuing automatically
                                     commands.push(Message::SendQueuedTask { finished_task_id: task_id });
                                 } else {
                                     // Normal stop - move to review and notify
                                     // Move to end of Review tasks so first-finished appears at top
+                                    // (only if not already in Review from a duplicate hook)
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
-                                    project.needs_attention = true;
-                                    notify::play_attention_sound();
-                                    notify::set_attention_indicator(&project_name);
+                                    if task.status != TaskStatus::Review {
+                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.needs_attention = true;
+                                        notify::play_attention_sound();
+                                        notify::set_attention_indicator(&project_name);
+                                    }
                                 }
                             }
                             "end" => {
                                 task.log_activity("Session ended");
                                 // If session ends while Accepting/Updating/Applying, cancel the operation
+                                // and restore to Review (task was already in Review before the operation)
                                 if was_accepting {
                                     task.log_activity("Accept cancelled");
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Ended;
                                     commands.push(Message::SetStatusMessage(Some(
                                         "Accept cancelled: Claude session ended during rebase.".to_string()
                                     )));
                                 } else if was_updating {
                                     task.log_activity("Update cancelled");
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Ended;
                                     commands.push(Message::SetStatusMessage(Some(
                                         "Update cancelled: Claude session ended during rebase.".to_string()
                                     )));
                                 } else if was_applying {
                                     task.log_activity("Apply cancelled");
+                                    task.status = TaskStatus::Review;
+                                    task.session_state = crate::model::ClaudeSessionState::Ended;
                                     commands.push(Message::SetStatusMessage(Some(
                                         "Apply cancelled: Claude session ended during rebase.".to_string()
                                     )));
+                                } else if task.status != TaskStatus::Review {
+                                    // Normal end - move to end of Review tasks so first-finished appears at top
+                                    // (only if not already in Review from a duplicate hook)
+                                    task.session_state = crate::model::ClaudeSessionState::Ended;
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                 }
-                                // Move to end of Review tasks so first-finished appears at top
-                                task.session_state = crate::model::ClaudeSessionState::Ended;
-                                project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                 project.needs_attention = true;
                                 notify::play_attention_sound();
                                 notify::set_attention_indicator(&project.name);
@@ -2752,10 +2767,10 @@ impl App {
                             }
                             SessionEventType::Stopped => {
                                 task.log_activity("Session stopped");
-                                // If task was accepting/updating/applying (rebase) OR is already done, don't change status
+                                // If task was accepting/updating/applying (rebase) OR is already done/review, don't change status
                                 // Note: Both stopped and ended events may arrive - if stopped triggered
                                 // CompleteAcceptTask/CompleteUpdateTask/CompleteApplyTask which moved task, we must not reset it to Review
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
+                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done && task.status != TaskStatus::Review {
                                     // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     let task_id = task.id;
@@ -2767,7 +2782,7 @@ impl App {
                             }
                             SessionEventType::Ended => {
                                 task.log_activity("Session ended");
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done {
+                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done && task.status != TaskStatus::Review {
                                     // Move to end of Review tasks so first-finished appears at top
                                     task.session_state = crate::model::ClaudeSessionState::Ended;
                                     let task_id = task.id;
