@@ -7,7 +7,7 @@
    ▀▀ ▀▀
 ```
 
-> **Open source by [Peerby](https://www.peerby.com)** — We're building the future of sharing. [Join us!](https://www.peerby.com/careers)
+> **Open source by [Peerby](https://www.peerby.com)** — We're building the future of sharing. [Join us!](https://www.peerby.com/contact)
 
 > **WARNING: This project is highly experimental and may destroy your code and repository. Use at your own risk. Always have backups and handle with care.**
 
