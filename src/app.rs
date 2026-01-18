@@ -5327,14 +5327,45 @@ impl App {
             }
 
             Message::InputSubmitAndStart => {
-                // Get text from editor - only works for new tasks (not feedback or edit mode)
+                // Get text from editor
                 let input = self.model.ui_state.get_input_text().trim().to_string();
 
-                // Only handle new task creation - feedback/edit uses regular submit
-                if self.model.ui_state.feedback_task_id.is_none()
-                    && self.model.ui_state.editing_task_id.is_none()
-                    && !input.is_empty()
-                {
+                // Check if we're in feedback mode - Ctrl+S submits feedback same as Enter
+                if let Some(task_id) = self.model.ui_state.feedback_task_id {
+                    if !input.is_empty() {
+                        commands.push(Message::SendFeedback { task_id, feedback: input });
+                    } else {
+                        // Empty feedback cancels the mode
+                        commands.push(Message::CancelFeedbackMode);
+                    }
+                }
+                // Check if we're in edit mode - Ctrl+S updates and starts if possible
+                else if let Some(task_id) = self.model.ui_state.editing_task_id {
+                    if !input.is_empty() {
+                        // Check if task can be started after editing
+                        let can_start = self.model.active_project()
+                            .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+                            .map(|t| t.can_start())
+                            .unwrap_or(false);
+                        let is_git_repo = self.model.active_project()
+                            .map(|p| p.is_git_repo())
+                            .unwrap_or(false);
+
+                        // First update the task
+                        commands.push(Message::UpdateTask { task_id, title: input });
+
+                        // Then start it if it can be started
+                        if can_start {
+                            if is_git_repo {
+                                commands.push(Message::StartTaskWithWorktree(task_id));
+                            } else {
+                                commands.push(Message::StartTask(task_id));
+                            }
+                        }
+                    }
+                }
+                // New task creation - create and immediately start
+                else if !input.is_empty() {
                     // Take pending images before borrowing project
                     let pending_images = std::mem::take(&mut self.model.ui_state.pending_images);
                     let title_len = input.len();
