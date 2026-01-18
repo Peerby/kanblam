@@ -2,7 +2,8 @@ use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, Lines,
-    actions::{Composed, SelectInnerWord, DeleteSelection, SwitchMode, MoveWordForwardToEndOfWord, MoveWordBackward, MoveForward},
+    actions::{Action, Composed, SelectInnerWord, DeleteSelection, SwitchMode, MoveWordForwardToEndOfWord, MoveWordBackward, MoveForward, MoveToFirst, MoveToEndOfLine, MoveToStartOfLine},
+    actions::motion::{MoveToLastRow, MoveToFirstRow},
     events::{KeyEvent, KeyEventHandler, KeyEventRegister},
 };
 use serde::{Deserialize, Serialize};
@@ -1674,6 +1675,39 @@ fn create_vim_handler() -> EditorEventHandler {
     key_handler.insert(
         KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('i'), KeyEvent::Char('w')]),
         Composed::new(SelectInnerWord).chain(DeleteSelection),
+    );
+
+    // Add ^ (caret) to go to first non-blank character of line (same as _)
+    // This is the standard vim binding that edtui doesn't include by default
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('^')]),
+        Action::from(MoveToFirst()),
+    );
+    key_handler.insert(
+        KeyEventRegister::v(vec![KeyEvent::Char('^')]),
+        Action::from(MoveToFirst()),
+    );
+
+    // Add dG (delete from cursor to end of buffer)
+    // In vim, dG deletes from the current line to the end of the file
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('G')]),
+        Composed::new(SwitchMode(EditorMode::Visual))
+            .chain(MoveToLastRow())
+            .chain(MoveToEndOfLine())
+            .chain(DeleteSelection)
+            .chain(SwitchMode(EditorMode::Normal)),
+    );
+
+    // Add dgg (delete from cursor to beginning of buffer)
+    // In vim, dgg deletes from the current line to the beginning of the file
+    key_handler.insert(
+        KeyEventRegister::n(vec![KeyEvent::Char('d'), KeyEvent::Char('g'), KeyEvent::Char('g')]),
+        Composed::new(SwitchMode(EditorMode::Visual))
+            .chain(MoveToFirstRow())
+            .chain(MoveToStartOfLine())
+            .chain(DeleteSelection)
+            .chain(SwitchMode(EditorMode::Normal)),
     );
 
     EditorEventHandler::new(key_handler)

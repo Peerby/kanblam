@@ -133,20 +133,24 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
     }
 
     let mut visual_lines = 0;
-    for line in content.lines() {
-        // Calculate how many visual rows this line takes when wrapped
-        let line_width = line.chars().count();
-        let wrapped_rows = if line_width == 0 {
-            1 // Empty line still takes one row
-        } else {
-            (line_width + available_width - 1) / available_width
-        };
-        visual_lines += wrapped_rows;
-    }
 
-    // If content is empty, count as 1 line
-    if visual_lines == 0 {
+    // Handle empty content
+    if content.is_empty() {
         visual_lines = 1;
+    } else {
+        // Split by newlines manually to correctly handle trailing newlines
+        // str.lines() ignores trailing newlines, but we need to count them for the editor
+        // For example, "hello\n" should show 2 lines (one for "hello", one for the cursor)
+        for line in content.split('\n') {
+            // Calculate how many visual rows this line takes when wrapped
+            let line_width = line.chars().count();
+            let wrapped_rows = if line_width == 0 {
+                1 // Empty line still takes one row
+            } else {
+                (line_width + available_width - 1) / available_width
+            };
+            visual_lines += wrapped_rows;
+        }
     }
 
     // Add 2 for borders, and 1 extra line for cursor space

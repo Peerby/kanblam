@@ -682,17 +682,33 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
     let super_key = key.modifiers.contains(KeyModifiers::SUPER);
 
     match key.code {
-        // Enter: submit unless line ends with \ (line continuation)
+        // Enter behavior depends on editor mode:
+        // - Normal mode: submit (or line continuation if ends with \)
+        // - Insert mode: insert newline (handled by edtui)
+        // - Search mode: go to first search result (handled by edtui)
         KeyCode::Enter if !ctrl && !alt => {
-            let text = app.model.ui_state.get_input_text();
-            if text.ends_with('\\') {
-                // Remove the backslash and insert a newline
-                use edtui::actions::{Execute, DeleteChar, LineBreak};
-                DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
-                LineBreak(1).execute(&mut app.model.ui_state.editor_state);
-                vec![]
-            } else {
-                vec![Message::InputSubmit]
+            use edtui::EditorMode;
+            match app.model.ui_state.editor_state.mode {
+                EditorMode::Normal => {
+                    let text = app.model.ui_state.get_input_text();
+                    if text.ends_with('\\') {
+                        // Remove the backslash and insert a newline
+                        use edtui::actions::{Execute, DeleteChar, LineBreak};
+                        DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
+                        LineBreak(1).execute(&mut app.model.ui_state.editor_state);
+                        vec![]
+                    } else {
+                        vec![Message::InputSubmit]
+                    }
+                }
+                EditorMode::Insert | EditorMode::Search | EditorMode::Visual => {
+                    // Let edtui handle: LineBreak in Insert, FindFirst in Search
+                    app.model.ui_state.editor_event_handler.on_key_event(
+                        key,
+                        &mut app.model.ui_state.editor_state,
+                    );
+                    vec![]
+                }
             }
         }
 
