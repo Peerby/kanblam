@@ -4939,6 +4939,9 @@ impl App {
             }
 
             Message::QueueFeedback { task_id, feedback } => {
+                // Clear the confirmation dialog
+                self.model.ui_state.pending_confirmation = None;
+
                 // Queue feedback to be sent when Claude finishes current work
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
