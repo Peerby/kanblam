@@ -990,6 +990,24 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // S = Toggle stash modal (uppercase)
         KeyCode::Char('S') => vec![Message::ToggleStashModal],
 
+        // Welcome screen speech bubble navigation
+        KeyCode::Char('j') | KeyCode::Down if app.model.projects.is_empty() && !app.model.ui_state.welcome_bubble_focused => {
+            // Focus the speech bubble
+            vec![Message::WelcomeBubbleFocus]
+        }
+        KeyCode::Char('k') | KeyCode::Up if app.model.projects.is_empty() && app.model.ui_state.welcome_bubble_focused => {
+            // Unfocus the speech bubble
+            vec![Message::WelcomeBubbleUnfocus]
+        }
+        KeyCode::Char('h') | KeyCode::Left if app.model.projects.is_empty() && app.model.ui_state.welcome_bubble_focused => {
+            // Previous message
+            vec![Message::WelcomeMessagePrev]
+        }
+        KeyCode::Char('l') | KeyCode::Right if app.model.projects.is_empty() && app.model.ui_state.welcome_bubble_focused => {
+            // Next message
+            vec![Message::WelcomeMessageNext]
+        }
+
         // Navigation
         KeyCode::Char('h') | KeyCode::Left => vec![Message::NavigateLeft],
         KeyCode::Char('l') | KeyCode::Right => vec![Message::NavigateRight],
@@ -997,6 +1015,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('k') | KeyCode::Up => vec![Message::NavigateUp],
         KeyCode::Home | KeyCode::Char('g') => vec![Message::NavigateToStart],
         KeyCode::End | KeyCode::Char('G') => vec![Message::NavigateToEnd],
+
+        // Enter on welcome screen (no projects) opens project dialog
+        KeyCode::Enter if app.model.projects.is_empty() => {
+            vec![Message::ShowOpenProjectDialog { slot: 0 }]
+        }
 
         // Focus switching
         KeyCode::Tab => {
@@ -1439,6 +1462,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // ESC pressed multiple times shows the startup help bar
         KeyCode::Esc => {
+            // If welcome bubble is focused, unfocus it first
+            if app.model.projects.is_empty() && app.model.ui_state.welcome_bubble_focused {
+                return vec![Message::WelcomeBubbleUnfocus];
+            }
             // Track consecutive ESC presses - when count reaches 2, show hints
             let current_count = app.model.ui_state.consecutive_esc_count;
             if current_count >= 1 {

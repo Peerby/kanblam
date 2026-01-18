@@ -3349,6 +3349,30 @@ impl App {
                 self.model.ui_state.consecutive_esc_count = 0;
             }
 
+            Message::WelcomeBubbleFocus => {
+                self.model.ui_state.welcome_bubble_focused = true;
+            }
+
+            Message::WelcomeBubbleUnfocus => {
+                self.model.ui_state.welcome_bubble_focused = false;
+            }
+
+            Message::WelcomeMessagePrev => {
+                let count = crate::ui::welcome_message_count();
+                self.model.ui_state.welcome_message_idx =
+                    (self.model.ui_state.welcome_message_idx + count - 1) % count;
+                // Reset cooldown so it doesn't immediately rotate
+                self.model.ui_state.welcome_message_cooldown = 80;
+            }
+
+            Message::WelcomeMessageNext => {
+                let count = crate::ui::welcome_message_count();
+                self.model.ui_state.welcome_message_idx =
+                    (self.model.ui_state.welcome_message_idx + 1) % count;
+                // Reset cooldown so it doesn't immediately rotate
+                self.model.ui_state.welcome_message_cooldown = 80;
+            }
+
             Message::HookSignalReceived(signal) => {
                 // Try to find task by task_id first (worktree-based tasks use task UUID as session_id)
                 let task_uuid = uuid::Uuid::parse_str(&signal.session_id).ok();
@@ -5610,6 +5634,21 @@ impl App {
                         .map(|d| (d.as_millis() % 300) as u16)
                         .unwrap_or(0);
                     self.model.ui_state.eye_animation_cooldown = 450 + random_offset;
+                }
+
+                // Rotate welcome messages when on welcome screen (no projects)
+                // Only auto-rotate when the speech bubble is not focused
+                if self.model.projects.is_empty() && !self.model.ui_state.welcome_bubble_focused {
+                    if self.model.ui_state.welcome_message_cooldown > 0 {
+                        self.model.ui_state.welcome_message_cooldown -= 1;
+                    } else {
+                        // Advance to next message
+                        let count = crate::ui::welcome_message_count();
+                        self.model.ui_state.welcome_message_idx =
+                            (self.model.ui_state.welcome_message_idx + 1) % count;
+                        // Reset cooldown (~8 seconds)
+                        self.model.ui_state.welcome_message_cooldown = 80;
+                    }
                 }
 
                 // Decay startup navigation hints after ~10 seconds

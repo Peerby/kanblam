@@ -375,6 +375,29 @@ fn render_compact_logo(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Width of the KANBLAM text-only wordmark (no mascot)
+pub const KANBLAM_TEXT_WIDTH: u16 = 31;
+
+/// Render the 3-line KANBLAM wordmark without the mascot
+/// Used on the welcome screen where the mascot is shown in the center
+pub fn render_kanblam_text_only(frame: &mut Frame, area: Rect) {
+    let green = Color::Rgb(80, 200, 120);
+    let text_style = Style::default().fg(green);
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("█ █ ▄▀█ █▄ █ █", text_style),
+            Span::styled("▖", Style::default().fg(Color::Black).bg(green)), // B top hole
+            Span::styled("▄ █   ▄▀█ █▀▄▀█", text_style),
+        ]),
+        Line::from(Span::styled("█▀▄ █▀█ █ ▀█ █▀▄ █   █▀█ █ ▀ █", text_style)),
+        Line::from(Span::styled("█ █ █ █ █  █ ██▀ █▄▄ █ █ █   █", text_style)),
+    ];
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Right);
+    frame.render_widget(paragraph, area);
+}
+
 /// Render minimal version (just the name)
 fn render_minimal_logo(frame: &mut Frame, area: Rect) {
     let green = Color::Rgb(80, 200, 120);

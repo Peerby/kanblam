@@ -1475,6 +1475,14 @@ pub struct UiState {
     pub git_diff_scroll_offset: usize,
     /// Cached git diff content for the currently viewed task
     pub git_diff_cache: Option<(Uuid, String)>,
+
+    // Welcome panel state
+    /// Current welcome message index (for rotation)
+    pub welcome_message_idx: usize,
+    /// Ticks until next message rotation (counts down from ~80 = 8 seconds at 100ms tick)
+    pub welcome_message_cooldown: u16,
+    /// Whether the welcome speech bubble is focused (for navigation)
+    pub welcome_bubble_focused: bool,
 }
 
 /// State for the interactive Claude terminal modal
@@ -1765,6 +1773,10 @@ impl Default for UiState {
             stash_modal_selected_idx: 0,
             git_diff_scroll_offset: 0,
             git_diff_cache: None,
+            // Welcome panel: start at first message, rotate every ~8 seconds
+            welcome_message_idx: 0,
+            welcome_message_cooldown: 80,
+            welcome_bubble_focused: false,
         }
     }
 }

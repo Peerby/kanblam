@@ -3,6 +3,7 @@ mod kanban;
 pub mod logo;
 mod output;
 mod status_bar;
+mod welcome;
 
 use crate::app::App;
 use crate::model::{DirEntry, FocusArea, MillerColumn, SpecialEntry, TaskStatus};
@@ -20,6 +21,7 @@ pub use interactive_modal::render_interactive_modal;
 pub use kanban::render_kanban;
 pub use output::render_output;
 pub use status_bar::render_status_bar;
+pub use welcome::welcome_message_count;
 
 /// Main view function - renders the entire UI
 /// In tmux-split mode, we only render the kanban board (left pane)
@@ -39,9 +41,17 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    // Check if we're on the welcome screen (no projects)
+    let is_welcome_screen = app.model.projects.is_empty();
+
     // Calculate dynamic input height based on editor content
+    // Hide input on welcome screen - it's useless without a project
     let frame_width = frame.area().width.saturating_sub(4) as usize; // Account for borders
-    let input_height = calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width);
+    let input_height = if is_welcome_screen {
+        0
+    } else {
+        calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width)
+    };
 
     // Determine header height based on available space
     // Show full 3-line logo header when terminal is wide enough and tall enough
@@ -54,8 +64,8 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(header_height),  // Header (project bar + optional logo)
-            Constraint::Min(10),                // Main content (Kanban board)
-            Constraint::Length(input_height),   // Input area (dynamic)
+            Constraint::Min(10),                // Main content (Kanban board or Welcome)
+            Constraint::Length(input_height),   // Input area (hidden on welcome screen)
             Constraint::Length(1),              // Status bar
         ])
         .split(frame.area());
@@ -63,23 +73,38 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     // Render header area (project bar + logo)
     render_header(frame, chunks[0], app, logo_size);
 
-    // Render kanban board (full width - tmux handles the split)
-    render_kanban(frame, chunks[1], app);
+    // Render main content area - welcome panel or kanban board
+    if app.model.projects.is_empty() {
+        // Show welcome panel when no projects are loaded
+        welcome::render_welcome_panel(
+            frame,
+            chunks[1],
+            app.model.ui_state.eye_animation,
+            app.model.ui_state.animation_frame,
+            app.model.ui_state.welcome_message_idx,
+            app.model.ui_state.welcome_bubble_focused,
+        );
+    } else {
+        // Render kanban board (full width - tmux handles the split)
+        render_kanban(frame, chunks[1], app);
 
-    // Render mascot feet overlapping the kanban border (only when full/medium logo is shown)
-    if show_full_header {
-        // The feet should be rendered at the top row of the kanban area, right-aligned
-        let feet_area = Rect {
-            x: chunks[1].x,
-            y: chunks[1].y,
-            width: chunks[1].width,
-            height: 1,
-        };
-        logo::render_mascot_feet(frame, feet_area, app.model.ui_state.logo_shimmer_frame, logo_size);
+        // Render mascot feet overlapping the kanban border (only when full/medium logo is shown)
+        if show_full_header {
+            // The feet should be rendered at the top row of the kanban area, right-aligned
+            let feet_area = Rect {
+                x: chunks[1].x,
+                y: chunks[1].y,
+                width: chunks[1].width,
+                height: 1,
+            };
+            logo::render_mascot_feet(frame, feet_area, app.model.ui_state.logo_shimmer_frame, logo_size);
+        }
     }
 
-    // Render task input area
-    render_input(frame, chunks[2], app);
+    // Render task input area (skip on welcome screen)
+    if !is_welcome_screen {
+        render_input(frame, chunks[2], app);
+    }
 
     // Render status bar (includes git status)
     render_status_bar(frame, chunks[3], app);
@@ -161,32 +186,35 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
 
 /// Render the header area (project bar + optional logo)
 fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::LogoSize) {
+    let is_welcome_screen = app.model.projects.is_empty();
+
     match logo_size {
-        logo::LogoSize::Full => {
+        logo::LogoSize::Full | logo::LogoSize::Medium => {
             // Render project bar on top-left (just first line)
+            let logo_width = if is_welcome_screen {
+                // Welcome screen: just KANBLAM text, no mascot
+                logo::KANBLAM_TEXT_WIDTH + 2
+            } else if matches!(logo_size, logo::LogoSize::Full) {
+                logo::FULL_LOGO_WIDTH + 2
+            } else {
+                logo::MEDIUM_LOGO_WIDTH + 2
+            };
+
             let project_bar_area = Rect {
                 x: area.x,
                 y: area.y,
-                width: area.width.saturating_sub(logo::FULL_LOGO_WIDTH + 2),
+                width: area.width.saturating_sub(logo_width),
                 height: 1,
             };
             render_project_bar(frame, project_bar_area, app);
 
-            // Render full logo using full area - it will right-align itself
-            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation, app.model.ui_state.animation_frame);
-        }
-        logo::LogoSize::Medium => {
-            // Render project bar on top-left (just first line) with more space
-            let project_bar_area = Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width.saturating_sub(logo::MEDIUM_LOGO_WIDTH + 2),
-                height: 1,
-            };
-            render_project_bar(frame, project_bar_area, app);
-
-            // Render medium logo using full area - it will right-align itself
-            logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation, app.model.ui_state.animation_frame);
+            if is_welcome_screen {
+                // Welcome screen: render just KANBLAM text (no mascot - it's in the center)
+                logo::render_kanblam_text_only(frame, area);
+            } else {
+                // Normal: render full logo with mascot
+                logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation, app.model.ui_state.animation_frame);
+            }
         }
         _ => {
             // Compact mode: project bar with inline branding
@@ -207,7 +235,10 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     // First: Show +project button (index 0 in tab selection)
     if num_projects < 9 {
-        let is_tab_selected = is_focused && selected_tab_idx == 0;
+        // Highlight on welcome screen when bubble is not focused, or when normally selected
+        let welcome_bubble_focused = app.model.ui_state.welcome_bubble_focused;
+        let is_tab_selected = (is_focused && selected_tab_idx == 0)
+            || (num_projects == 0 && !welcome_bubble_focused);
         let style = if is_tab_selected {
             Style::default()
                 .fg(Color::Black)
@@ -286,7 +317,10 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
 
     // First: Show +project button (index 0 in tab selection)
     if num_projects < 9 {
-        let is_tab_selected = is_focused && selected_tab_idx == 0;
+        // Highlight on welcome screen when bubble is not focused, or when normally selected
+        let welcome_bubble_focused = app.model.ui_state.welcome_bubble_focused;
+        let is_tab_selected = (is_focused && selected_tab_idx == 0)
+            || (num_projects == 0 && !welcome_bubble_focused);
         let style = if is_tab_selected {
             Style::default()
                 .fg(Color::Black)

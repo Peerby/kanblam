@@ -266,6 +266,14 @@ pub enum Message {
     TriggerMascotBlink,
     /// Show the startup hints bar again (triggered by pressing ESC multiple times)
     ShowStartupHints,
+    /// Focus the welcome speech bubble (triggered by pressing down on welcome screen)
+    WelcomeBubbleFocus,
+    /// Unfocus the welcome speech bubble (triggered by pressing up or Esc when focused)
+    WelcomeBubbleUnfocus,
+    /// Navigate to previous welcome message
+    WelcomeMessagePrev,
+    /// Navigate to next welcome message
+    WelcomeMessageNext,
     /// Trigger app restart (for hot reload after apply)
     TriggerRestart,
     Quit,
