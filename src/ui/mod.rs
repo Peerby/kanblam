@@ -922,11 +922,9 @@ fn render_git_tab<'a>(
         lines.push(Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
             Span::styled(
-                format!("{} commits behind main - ", task.git_commits_behind),
+                format!("{} commits behind main", task.git_commits_behind),
                 Style::default().fg(Color::Yellow),
             ),
-            Span::styled("u", key_style.fg(Color::Cyan)),
-            Span::styled(" to update", Style::default().fg(Color::Yellow)),
         ]));
     }
 
@@ -1294,15 +1292,6 @@ fn render_help_tab<'a>(
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" t ", *key_style), Span::styled(" Open test shell in worktree", *label_style),
-            ]));
-            if task.git_commits_behind > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
-                ]));
-            }
-            lines.push(Line::from(vec![
                 Span::styled(" r ", *key_style), Span::styled(" Move to review", *label_style),
             ]));
             lines.push(Line::from(vec![
@@ -1314,15 +1303,6 @@ fn render_help_tab<'a>(
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
-            lines.push(Line::from(vec![
-                Span::styled(" t ", *key_style), Span::styled(" Open test shell", *label_style),
-            ]));
-            if task.git_commits_behind > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(" u ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::styled(" Update: rebase onto latest main", Style::default().fg(Color::Yellow)),
-                ]));
-            }
             lines.push(Line::from(vec![
                 Span::styled(" r ", *key_style), Span::styled(" Move to review", *label_style),
             ]));
@@ -1355,9 +1335,6 @@ fn render_help_tab<'a>(
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" t ", *key_style), Span::styled(" Open test shell", *label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" x ", *key_style), Span::styled(" Reset (cleanup and move to Planned)", *label_style),
@@ -1539,7 +1516,6 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
             Span::styled("Sessions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
         Line::from("  o/O        Open Claude modal (O: detached)"),
-        Line::from("  t/T        Open test shell (T: detached)"),
         Line::from("  q          Queue task (Planned) / Quit"),
         Line::from(""),
         Line::from(vec![

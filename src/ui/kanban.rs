@@ -562,10 +562,6 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::InProgress => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
-            Span::styled("t", key_style),
-            Span::styled("est ", desc_style),
-            Span::styled("u", key_style),
-            Span::styled("pdate ", desc_style),
             Span::styled("r", key_style),
             Span::styled("eview ", desc_style),
             Span::styled("x", key_style),
@@ -574,10 +570,6 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::NeedsInput => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
-            Span::styled("t", key_style),
-            Span::styled("est ", desc_style),
-            Span::styled("u", key_style),
-            Span::styled("pdate ", desc_style),
             Span::styled("r", key_style),
             Span::styled("eview ", desc_style),
             Span::styled("x", key_style),
