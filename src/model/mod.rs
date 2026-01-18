@@ -1022,6 +1022,8 @@ pub struct UiState {
     pub help_scroll_offset: usize,
     pub pending_confirmation: Option<PendingConfirmation>,
     pub status_message: Option<String>,
+    /// Tick countdown for status message decay (clears when reaches 0)
+    pub status_message_decay: u16,
     /// If set, we're editing an existing task instead of creating a new one
     pub editing_task_id: Option<Uuid>,
     /// Scroll offset for long task titles (marquee effect)
@@ -1258,6 +1260,7 @@ impl Default for UiState {
             help_scroll_offset: 0,
             pending_confirmation: None,
             status_message: None,
+            status_message_decay: 0,
             editing_task_id: None,
             title_scroll_offset: 0,
             title_scroll_delay: 0,

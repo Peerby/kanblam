@@ -2826,7 +2826,14 @@ impl App {
             }
 
             Message::SetStatusMessage(msg) => {
-                self.model.ui_state.status_message = msg;
+                self.model.ui_state.status_message = msg.clone();
+                // Set decay timer: ~5 seconds (50 ticks at 100ms each)
+                // Longer messages get more time to read
+                self.model.ui_state.status_message_decay = if msg.is_some() {
+                    50 + (msg.as_ref().map(|m| m.len() as u16 / 3).unwrap_or(0))
+                } else {
+                    0
+                };
             }
 
             Message::TriggerLogoShimmer => {
@@ -4688,6 +4695,14 @@ impl App {
                 if let Some(ref mut confirmation) = self.model.ui_state.pending_confirmation {
                     if confirmation.animation_tick > 0 {
                         confirmation.animation_tick -= 1;
+                    }
+                }
+
+                // Decay status message after timeout
+                if self.model.ui_state.status_message_decay > 0 {
+                    self.model.ui_state.status_message_decay -= 1;
+                    if self.model.ui_state.status_message_decay == 0 {
+                        self.model.ui_state.status_message = None;
                     }
                 }
 
