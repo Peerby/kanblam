@@ -1811,6 +1811,12 @@ pub fn smart_git_pull(project_dir: &PathBuf) -> Result<String> {
             .output()?;
 
         if restore_output.status.success() {
+            // Unstage tasks.json (checkout stages it, we want it unstaged)
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["restore", "--staged", tasks_json_path])
+                .output();
+
             // Drop the stash since we've restored what we need
             let _ = Command::new("git")
                 .current_dir(project_dir)
