@@ -2663,10 +2663,16 @@ impl App {
                                             let mut project = Project::new(name, path);
                                             // Load any existing tasks from the project's .kanblam/tasks.json
                                             project.load_tasks();
+                                            let has_tasks = !project.tasks.is_empty();
                                             self.model.projects.push(project);
                                             self.model.active_project_idx = slot;
                                             self.model.ui_state.selected_task_idx = None;
-                                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                            // Focus TaskInput if project has no tasks, otherwise KanbanBoard
+                                            self.model.ui_state.focus = if has_tasks {
+                                                FocusArea::KanbanBoard
+                                            } else {
+                                                FocusArea::TaskInput
+                                            };
 
                                             // Close the dialog
                                             self.model.ui_state.open_project_dialog_slot = None;
@@ -2761,10 +2767,16 @@ impl App {
                                 let mut project = Project::new(name, path);
                                 // Load any existing tasks from the project's .kanblam/tasks.json
                                 project.load_tasks();
+                                let has_tasks = !project.tasks.is_empty();
                                 self.model.projects.push(project);
                                 self.model.active_project_idx = slot;
                                 self.model.ui_state.selected_task_idx = None;
-                                self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                // Focus TaskInput if project has no tasks, otherwise KanbanBoard
+                                self.model.ui_state.focus = if has_tasks {
+                                    FocusArea::KanbanBoard
+                                } else {
+                                    FocusArea::TaskInput
+                                };
 
                                 // Close the dialog
                                 self.model.ui_state.open_project_dialog_slot = None;
@@ -3183,10 +3195,16 @@ impl App {
                                             // Now open the project
                                             let mut project = Project::new(name.clone(), path);
                                             project.load_tasks();
+                                            let has_tasks = !project.tasks.is_empty();
                                             self.model.projects.push(project);
                                             self.model.active_project_idx = slot;
                                             self.model.ui_state.selected_task_idx = None;
-                                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                            // Focus TaskInput if project has no tasks, otherwise KanbanBoard
+                                            self.model.ui_state.focus = if has_tasks {
+                                                FocusArea::KanbanBoard
+                                            } else {
+                                                FocusArea::TaskInput
+                                            };
                                             commands.push(Message::SetStatusMessage(Some(
                                                 format!("Initialized git and created initial commit for '{}'", name)
                                             )));
@@ -3212,10 +3230,16 @@ impl App {
                                     // Now open the project
                                     let mut project = Project::new(name.clone(), path);
                                     project.load_tasks();
+                                    let has_tasks = !project.tasks.is_empty();
                                     self.model.projects.push(project);
                                     self.model.active_project_idx = slot;
                                     self.model.ui_state.selected_task_idx = None;
-                                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                    // Focus TaskInput if project has no tasks, otherwise KanbanBoard
+                                    self.model.ui_state.focus = if has_tasks {
+                                        FocusArea::KanbanBoard
+                                    } else {
+                                        FocusArea::TaskInput
+                                    };
                                     commands.push(Message::SetStatusMessage(Some(
                                         format!("Created initial commit for '{}'", name)
                                     )));
@@ -3488,6 +3512,8 @@ impl App {
                         let was_accepting = project.tasks[idx].status == TaskStatus::Accepting;
                         let was_updating = project.tasks[idx].status == TaskStatus::Updating;
                         let was_applying = project.tasks[idx].status == TaskStatus::Applying;
+                        // Terminal states - tasks that are Done should not be moved back
+                        let is_terminal = project.tasks[idx].status == TaskStatus::Done;
                         let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
                         let project_slug = project.slug();
@@ -3532,8 +3558,10 @@ impl App {
 
                         match signal.event.as_str() {
                             "stop" => {
-                                task.log_activity("Session stopped");
-                                if was_accepting {
+                                // Skip terminal tasks - these are stale signals from before task was completed
+                                if is_terminal {
+                                    // Don't modify Done/Discarded tasks
+                                } else if was_accepting {
                                     // Task was rebasing for accept - try to complete the accept
                                     // Keep status as Accepting, CompleteAcceptTask will verify and update
                                     commands.push(Message::CompleteAcceptTask(task_id));
@@ -3567,43 +3595,47 @@ impl App {
                                 }
                             }
                             "end" => {
-                                task.log_activity("Session ended");
-                                // If session ends while Accepting/Updating/Applying, cancel the operation
-                                // and restore to Review (task was already in Review before the operation)
-                                if was_accepting {
-                                    task.log_activity("Accept cancelled");
-                                    task.status = TaskStatus::Review;
-                                    task.session_state = crate::model::ClaudeSessionState::Ended;
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "Accept cancelled: Claude session ended during rebase.".to_string()
-                                    )));
-                                } else if was_updating {
-                                    task.log_activity("Update cancelled");
-                                    task.status = TaskStatus::Review;
-                                    task.session_state = crate::model::ClaudeSessionState::Ended;
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "Update cancelled: Claude session ended during rebase.".to_string()
-                                    )));
-                                } else if was_applying {
-                                    task.log_activity("Apply cancelled");
-                                    task.status = TaskStatus::Review;
-                                    task.session_state = crate::model::ClaudeSessionState::Ended;
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "Apply cancelled: Claude session ended during rebase.".to_string()
-                                    )));
-                                } else if task.status != TaskStatus::Review {
-                                    // Normal end - move to end of Review tasks so first-finished appears at top
-                                    // (only if not already in Review from a duplicate hook)
-                                    task.session_state = crate::model::ClaudeSessionState::Ended;
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                // Skip terminal tasks - these are stale signals from before task was completed
+                                if is_terminal {
+                                    // Don't modify Done/Discarded tasks
+                                } else {
+                                    if was_accepting {
+                                        task.log_activity("Accept cancelled");
+                                        task.status = TaskStatus::Review;
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "Accept cancelled: Claude session ended during rebase.".to_string()
+                                        )));
+                                    } else if was_updating {
+                                        task.log_activity("Update cancelled");
+                                        task.status = TaskStatus::Review;
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "Update cancelled: Claude session ended during rebase.".to_string()
+                                        )));
+                                    } else if was_applying {
+                                        task.log_activity("Apply cancelled");
+                                        task.status = TaskStatus::Review;
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        commands.push(Message::SetStatusMessage(Some(
+                                            "Apply cancelled: Claude session ended during rebase.".to_string()
+                                        )));
+                                    } else if task.status != TaskStatus::Review {
+                                        // Normal end - move to end of Review tasks so first-finished appears at top
+                                        // (only if not already in Review from a duplicate hook)
+                                        task.session_state = crate::model::ClaudeSessionState::Ended;
+                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                    }
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
                                 }
-                                project.needs_attention = true;
-                                notify::play_attention_sound();
-                                notify::set_attention_indicator(&project.name);
                             }
                             "needs-input" => {
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                if was_accepting || was_updating || was_applying {
+                                // Don't change status if task is in a special state
+                                if is_terminal {
+                                    // Skip - task already completed, this is a replayed signal
+                                } else if was_accepting || was_updating || was_applying {
                                     // Skip - we're in the middle of a rebase operation
                                 } else if signal.input_type == "permission" {
                                     // permission_prompt means Claude is blocked waiting for tool approval.
@@ -3644,24 +3676,31 @@ impl App {
                             }
                             "input-provided" => {
                                 task.log_activity("Input received, continuing...");
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                if !was_accepting && !was_updating && !was_applying {
+                                // Don't change status if task is in a special state
+                                if !was_accepting && !was_updating && !was_applying && !is_terminal {
                                     task.status = TaskStatus::InProgress;
                                 }
-                                task.session_state = crate::model::ClaudeSessionState::Working;
-                                project.needs_attention = false;
-                                notify::clear_attention_indicator();
+                                if !is_terminal {
+                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    project.needs_attention = false;
+                                    notify::clear_attention_indicator();
+                                }
                             }
                             "working" => {
                                 // PreToolUse signal - Claude is using a tool
-                                task.log_activity("Working...");
-                                // Don't override Accepting/Updating/Applying status if mid-rebase
-                                if !was_accepting && !was_updating && !was_applying {
-                                    task.status = TaskStatus::InProgress;
+                                // Don't process for terminal tasks (Done/Discarded) - these are stale signals
+                                if is_terminal {
+                                    // Skip - task already completed, this is a replayed signal
+                                } else {
+                                    task.log_activity("Working...");
+                                    // Don't override Accepting/Updating/Applying status if mid-rebase
+                                    if !was_accepting && !was_updating && !was_applying {
+                                        task.status = TaskStatus::InProgress;
+                                    }
+                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    project.needs_attention = false;
+                                    notify::clear_attention_indicator();
                                 }
-                                task.session_state = crate::model::ClaudeSessionState::Working;
-                                project.needs_attention = false;
-                                notify::clear_attention_indicator();
                             }
                             _ => {}
                         }

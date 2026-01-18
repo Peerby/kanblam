@@ -171,6 +171,7 @@ impl HookWatcher {
 
     /// Process all existing signal files in the directory
     /// Call this on startup to catch signals written while app was not running
+    /// Signals are processed in chronological order (oldest first)
     pub fn process_all_pending(&mut self) -> Vec<WatcherEvent> {
         let mut events = Vec::new();
 
@@ -179,7 +180,8 @@ impl HookWatcher {
             Err(_) => return events,
         };
 
-        // Collect and sort signal files by name (includes timestamp)
+        // Collect and sort signal files by timestamp (extracted from filename)
+        // Filename format: signal-{event}-{timestamp_millis}.json
         let mut signal_files: Vec<_> = entries
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -190,8 +192,15 @@ impl HookWatcher {
             })
             .collect();
 
-        // Sort by filename to process in chronological order
-        signal_files.sort_by_key(|e| e.file_name());
+        // Sort by timestamp extracted from filename (last component before .json)
+        signal_files.sort_by_key(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            // Extract timestamp from "signal-{event}-{timestamp}.json"
+            name.strip_suffix(".json")
+                .and_then(|s| s.rsplit('-').next())
+                .and_then(|ts| ts.parse::<i64>().ok())
+                .unwrap_or(0)
+        });
 
         for entry in signal_files {
             let path = entry.path();

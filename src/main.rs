@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let mut hook_watcher = HookWatcher::new().ok();
 
     // Process any signals that arrived while app was not running
+    // Signals are sorted chronologically and replayed in order
     if let Some(ref mut watcher) = hook_watcher {
         let pending_events = watcher.process_all_pending();
         for event in pending_events {
