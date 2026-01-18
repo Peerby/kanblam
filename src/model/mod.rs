@@ -115,8 +115,10 @@ pub struct MillerColumn {
 pub enum EnterResult {
     /// Navigated into a directory
     NavigatedInto,
-    /// Selected "[New Project Here]" - open this directory as project
+    /// Selected a directory - open it as a project
     OpenProject(PathBuf),
+    /// Selected "[New Project Here]" - enter create folder mode
+    CreateNewProject,
     /// Nothing happened
     Nothing,
 }
@@ -465,8 +467,8 @@ impl DirectoryBrowser {
 
         match entry_clone.special {
             SpecialEntry::NewProjectHere => {
-                // Open current column's directory as project
-                Ok(EnterResult::OpenProject(col_dir))
+                // Enter create folder mode to create a new project
+                Ok(EnterResult::CreateNewProject)
             }
             SpecialEntry::ParentDir => {
                 // Navigate to parent (don't open as project)

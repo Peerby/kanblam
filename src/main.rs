@@ -1908,6 +1908,9 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
                     Ok(EnterResult::OpenProject(path)) => {
                         return vec![Message::ConfirmOpenProjectPath(path)];
                     }
+                    Ok(EnterResult::CreateNewProject) => {
+                        return vec![Message::EnterCreateFolderMode];
+                    }
                     Ok(EnterResult::NavigatedInto) => {}
                     Ok(EnterResult::Nothing) => {}
                     Err(_) => {}
