@@ -517,17 +517,23 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("project_dir={:?}, branch={}", project_dir, branch_name));
 
     // Check if there are local changes that need to be stashed
+    // Only check for TRACKED file changes - untracked files don't need stashing
+    // (git stash doesn't stash untracked files by default anyway)
     let status_check = Command::new("git")
         .current_dir(project_dir)
         .args(["status", "--porcelain"])
         .output()?;
 
-    let has_local_changes = !String::from_utf8_lossy(&status_check.stdout).trim().is_empty();
-    log(&format!("has_local_changes={}", has_local_changes));
+    // Filter out untracked files (??) - only stash tracked changes
+    let status_output = String::from_utf8_lossy(&status_check.stdout);
+    let has_tracked_changes = status_output
+        .lines()
+        .any(|line| !line.starts_with("??"));
+    log(&format!("has_tracked_changes={}", has_tracked_changes));
     let mut stash_ref = None;
 
-    // Stash local changes if any
-    if has_local_changes {
+    // Stash tracked changes if any (untracked files don't need stashing)
+    if has_tracked_changes {
         let stash_output = Command::new("git")
             .current_dir(project_dir)
             .args(["stash", "push", "-m", &format!("kanclaude: before applying task {}", task_id)])
@@ -798,10 +804,11 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
 /// Force unapply using destructive reset (only call after user confirmation!).
 /// No stash handling needed - stash was already popped immediately after apply.
 pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
-    // Discard all changes (staged and unstaged) by restoring from HEAD
+    // Discard all changes (staged and unstaged) by resetting to HEAD
+    // Use reset --hard instead of checkout -- . because checkout fails on empty repos
     let reset_output = Command::new("git")
         .current_dir(project_dir)
-        .args(["checkout", "HEAD", "--", "."])
+        .args(["reset", "--hard", "HEAD"])
         .output()?;
 
     if !reset_output.status.success() {

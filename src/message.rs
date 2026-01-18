@@ -83,6 +83,8 @@ pub enum Message {
     UnapplyTaskChanges,
     /// Force unapply using destructive reset (after user confirms)
     ForceUnapplyTaskChanges(Uuid),
+    /// Force unapply and then restore the user's stashed changes
+    ForceUnapplyWithStashRestore { task_id: Uuid, stash_sha: String },
     /// Update worktree to latest main (rebase without merging)
     UpdateWorktreeToMain(Uuid),
     /// Start SDK update rebase session (internal - smart update with conflict resolution)

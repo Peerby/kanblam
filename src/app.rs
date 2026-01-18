@@ -11,6 +11,25 @@ use tokio::sync::mpsc;
 /// Channel sender for async task results
 pub type AsyncTaskSender = mpsc::UnboundedSender<Message>;
 
+/// Check if a project is the "bootstrap" project (i.e., we're developing KanBlam itself).
+/// Returns true if the currently running executable lives within the project's directory.
+fn is_bootstrap_project(project: &Project) -> bool {
+    let Ok(exe_path) = std::env::current_exe() else {
+        return false;
+    };
+
+    // Canonicalize both paths to handle symlinks and normalize
+    let Ok(exe_canonical) = exe_path.canonicalize() else {
+        return false;
+    };
+    let Ok(project_canonical) = project.working_dir.canonicalize() else {
+        return false;
+    };
+
+    // Check if the running binary lives inside this project
+    exe_canonical.starts_with(&project_canonical)
+}
+
 /// Application state and update logic (TEA pattern)
 pub struct App {
     pub model: AppModel,
@@ -1846,6 +1865,63 @@ impl App {
                 }
             }
 
+            Message::ForceUnapplyWithStashRestore { task_id, stash_sha } => {
+                // Force unapply task changes, then try to restore user's stashed work
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id) {
+                        Ok(()) => {
+                            // Clear applied state
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.applied_task_id = None;
+                                project.applied_stash_ref = None;
+                                project.applied_with_conflict_resolution = false;
+                            }
+
+                            // Now try to restore the user's original stashed changes
+                            // Use 'apply' instead of 'pop' so we don't lose the stash if it fails
+                            let apply_result = std::process::Command::new("git")
+                                .current_dir(&project_dir)
+                                .args(["stash", "apply", &stash_sha])
+                                .output();
+
+                            match apply_result {
+                                Ok(output) if output.status.success() => {
+                                    // Successfully restored - now drop the stash
+                                    let _ = std::process::Command::new("git")
+                                        .current_dir(&project_dir)
+                                        .args(["stash", "drop", &stash_sha])
+                                        .output();
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Task unapplied. Your original changes restored.".to_string()
+                                    )));
+                                }
+                                Ok(_) => {
+                                    // Stash apply failed - drop it since it's now orphaned/corrupted
+                                    let _ = std::process::Command::new("git")
+                                        .current_dir(&project_dir)
+                                        .args(["stash", "drop", &stash_sha])
+                                        .output();
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Task unapplied. Could not restore stashed changes (dropped).".to_string()
+                                    )));
+                                }
+                                Err(_) => {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Task unapplied. Stash restore failed.".to_string()
+                                    )));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to force unapply: {}", e)));
+                        }
+                    }
+                }
+            }
+
             Message::UpdateWorktreeToMain(task_id) => {
                 // Get task info
                 let task_info = self.model.active_project().and_then(|p| {
@@ -3108,9 +3184,9 @@ impl App {
                                 "Changes still applied. Use 'u' to try surgical unapply again.".to_string()
                             )));
                         }
-                        PendingAction::StashConflict { task_id, .. } => {
-                            // User pressed 'n' - unapply the changes
-                            commands.push(Message::ForceUnapplyTaskChanges(task_id));
+                        PendingAction::StashConflict { task_id, stash_sha } => {
+                            // User pressed 'n' - unapply task changes and restore user's original work
+                            commands.push(Message::ForceUnapplyWithStashRestore { task_id, stash_sha });
                         }
                         PendingAction::InterruptSdkForCli(_) => {
                             // User cancelled opening CLI - SDK continues running
@@ -5666,7 +5742,21 @@ impl App {
             }
 
             Message::TriggerRestart => {
-                // Only restart if there are no pending operations
+                // Only build and restart for bootstrap mode (developing KanBlam itself)
+                // For other projects, just show success - no need to restart the TUI
+                let is_bootstrap = self.model.active_project()
+                    .map(|p| is_bootstrap_project(p))
+                    .unwrap_or(false);
+
+                if !is_bootstrap {
+                    // Not bootstrap mode - just show success, no build/restart needed
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Changes applied successfully.".to_string()
+                    )));
+                    return commands;
+                }
+
+                // Bootstrap mode: check for pending operations before restart
                 let has_pending = self.model.active_project().map(|p| {
                     p.tasks.iter().any(|t| matches!(
                         t.status,
