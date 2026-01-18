@@ -77,10 +77,10 @@ async fn main() -> anyhow::Result<()> {
         .with_async_sender(async_sender);
 
     // Create hook watcher for completion detection
-    let hook_watcher = HookWatcher::new().ok();
+    let mut hook_watcher = HookWatcher::new().ok();
 
     // Process any signals that arrived while app was not running
-    if let Some(ref watcher) = hook_watcher {
+    if let Some(ref mut watcher) = hook_watcher {
         let pending_events = watcher.process_all_pending();
         for event in pending_events {
             if let Some(msg) = convert_watcher_event(event) {
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
 fn run_app<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    hook_watcher: Option<HookWatcher>,
+    mut hook_watcher: Option<HookWatcher>,
     mut sidecar_receiver: Option<sidecar::SidecarEventReceiver>,
     mut async_receiver: AsyncResultReceiver,
 ) -> anyhow::Result<()>
@@ -167,7 +167,7 @@ where
         }
 
         // Check for hook events (completion detection)
-        if let Some(ref watcher) = hook_watcher {
+        if let Some(ref mut watcher) = hook_watcher {
             while let Some(event) = watcher.poll() {
                 if let Some(msg) = convert_watcher_event(event) {
                     let commands = app.update(msg);

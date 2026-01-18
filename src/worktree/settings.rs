@@ -132,6 +132,12 @@ pub fn setup_claude_settings(
                     "type": "command",
                     "command": format!("{} signal stop {}", kanclaude_bin, task_id)
                 }]
+            }],
+            "PreToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
+                }]
             }]
         }
     });
@@ -215,6 +221,12 @@ pub fn merge_with_project_settings(
                 "hooks": [{
                     "type": "command",
                     "command": format!("{} signal input-provided {}", kanclaude_bin, task_id)
+                }]
+            }],
+            "PreToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
                 }]
             }]
         }

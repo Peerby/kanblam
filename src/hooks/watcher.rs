@@ -1,9 +1,10 @@
 use anyhow::Result;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Event received from hook watcher
 #[derive(Debug, Clone)]
@@ -57,7 +58,15 @@ pub struct HookWatcher {
     signal_dir: PathBuf,
     _watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<Event>>,
+    /// Track processed signal filenames to avoid re-processing
+    processed_signals: HashSet<String>,
+    /// Last cleanup time
+    last_cleanup: std::time::Instant,
 }
+
+/// How long to keep signal files before cleanup (24 hours)
+/// Long TTL allows TUI instances that were offline to sync when they restart
+const SIGNAL_TTL_SECS: u64 = 24 * 60 * 60;
 
 impl HookWatcher {
     /// Create a new hook watcher
@@ -71,7 +80,7 @@ impl HookWatcher {
             move |res| {
                 let _ = tx.send(res);
             },
-            Config::default().with_poll_interval(Duration::from_millis(500)),
+            Config::default().with_poll_interval(Duration::from_millis(100)),
         )?;
 
         watcher.watch(&signal_dir, RecursiveMode::NonRecursive)?;
@@ -80,11 +89,19 @@ impl HookWatcher {
             signal_dir,
             _watcher: watcher,
             receiver: rx,
+            processed_signals: HashSet::new(),
+            last_cleanup: std::time::Instant::now(),
         })
     }
 
     /// Check for new events (non-blocking)
-    pub fn poll(&self) -> Option<WatcherEvent> {
+    pub fn poll(&mut self) -> Option<WatcherEvent> {
+        // Periodic cleanup of old signals (every 30 seconds)
+        if self.last_cleanup.elapsed() > Duration::from_secs(30) {
+            self.cleanup_old_signals();
+            self.last_cleanup = std::time::Instant::now();
+        }
+
         match self.receiver.try_recv() {
             Ok(Ok(event)) => self.process_event(event),
             Ok(Err(e)) => Some(WatcherEvent::Error(e.to_string())),
@@ -93,7 +110,7 @@ impl HookWatcher {
     }
 
     /// Process a file system event
-    fn process_event(&self, event: Event) -> Option<WatcherEvent> {
+    fn process_event(&mut self, event: Event) -> Option<WatcherEvent> {
         // Only process create events
         if !matches!(event.kind, EventKind::Create(_)) {
             return None;
@@ -102,10 +119,17 @@ impl HookWatcher {
         // Read and process signal files
         for path in event.paths {
             if path.extension().map(|e| e == "json").unwrap_or(false) {
+                let filename = path.file_name()?.to_string_lossy().to_string();
+
+                // Skip if already processed
+                if self.processed_signals.contains(&filename) {
+                    continue;
+                }
+
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
-                        // Delete the signal file after reading
-                        let _ = std::fs::remove_file(&path);
+                        // Mark as processed (don't delete - other instances may need it)
+                        self.processed_signals.insert(filename);
 
                         return match signal.event.as_str() {
                             "stop" => Some(WatcherEvent::ClaudeStopped {
@@ -147,7 +171,7 @@ impl HookWatcher {
 
     /// Process all existing signal files in the directory
     /// Call this on startup to catch signals written while app was not running
-    pub fn process_all_pending(&self) -> Vec<WatcherEvent> {
+    pub fn process_all_pending(&mut self) -> Vec<WatcherEvent> {
         let mut events = Vec::new();
 
         let entries = match std::fs::read_dir(&self.signal_dir) {
@@ -171,10 +195,17 @@ impl HookWatcher {
 
         for entry in signal_files {
             let path = entry.path();
+            let filename = entry.file_name().to_string_lossy().to_string();
+
+            // Skip if already processed
+            if self.processed_signals.contains(&filename) {
+                continue;
+            }
+
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
-                    // Delete the signal file after reading
-                    let _ = std::fs::remove_file(&path);
+                    // Mark as processed (don't delete - other instances may need it)
+                    self.processed_signals.insert(filename);
 
                     let event = match signal.event.as_str() {
                         "stop" => Some(WatcherEvent::ClaudeStopped {
@@ -206,13 +237,46 @@ impl HookWatcher {
                         events.push(e);
                     }
                 } else {
-                    // Invalid JSON - delete corrupted file
-                    let _ = std::fs::remove_file(&path);
+                    // Invalid JSON - mark as processed so we don't retry
+                    self.processed_signals.insert(filename);
                 }
             }
         }
 
         events
+    }
+
+    /// Clean up signal files older than SIGNAL_TTL_SECS
+    /// This allows multiple TUI instances to read signals before deletion
+    pub fn cleanup_old_signals(&mut self) {
+        let entries = match std::fs::read_dir(&self.signal_dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+
+        let now = SystemTime::now();
+        let ttl = Duration::from_secs(SIGNAL_TTL_SECS);
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                // Check file age
+                if let Ok(metadata) = path.metadata() {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(age) = now.duration_since(modified) {
+                            if age > ttl {
+                                // Old signal - safe to delete
+                                let _ = std::fs::remove_file(&path);
+                                // Also remove from processed set to avoid memory growth
+                                if let Some(filename) = path.file_name() {
+                                    self.processed_signals.remove(&filename.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
