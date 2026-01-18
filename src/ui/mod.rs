@@ -6,7 +6,7 @@ mod status_bar;
 
 use crate::app::App;
 use crate::model::{DirEntry, FocusArea, MillerColumn, SpecialEntry, TaskStatus};
-use edtui::{EditorTheme, EditorView};
+use edtui::{EditorMode, EditorTheme, EditorView};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::Widget,
@@ -437,7 +437,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         .render(inner, frame.buffer_mut());
 
     // Render hints at bottom-right of the border
-    // Only show full hints when focused; when unfocused show insert hint + ^V
+    // Show mode-specific hints when focused
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(Color::DarkGray);
 
@@ -445,6 +445,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let editor_name = app.model.global_settings.default_editor.name().to_lowercase();
     let editor_hint = format!(" {} ", editor_name);
     let editor_hint_len = editor_hint.len() as u16;
+
+    // Check current editor mode for focused hints
+    let is_insert_mode = matches!(
+        app.model.ui_state.editor_state.mode,
+        EditorMode::Insert | EditorMode::Search | EditorMode::Visual
+    );
 
     let (hints, hints_width) = if !is_focused {
         // When unfocused, show insert hint and paste image hint
@@ -457,39 +463,88 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
             ]),
             14u16,
         )
-    } else if pending_count > 0 {
-        // Show image management hints when images are pending
-        // Base width: "^V+img ^X-1 ^Uclr ^G ⏎ submit" = 31 + editor_hint_len
-        (
-            Line::from(vec![
-                Span::styled("^V", key_style),
-                Span::styled("+img ", desc_style),
-                Span::styled("^X", key_style),
-                Span::styled("-1 ", desc_style),
-                Span::styled("^U", key_style),
-                Span::styled("clr ", desc_style),
-                Span::styled("^G", key_style),
-                Span::styled(editor_hint.clone(), desc_style),
-                Span::styled("⏎", key_style),
-                Span::styled(" submit", desc_style),
-            ]),
-            31 + editor_hint_len,
-        )
+    } else if is_insert_mode {
+        // INSERT MODE hints
+        if pending_count > 0 {
+            // With pending images: "^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit"
+            // Width: 2+5+2+3+2+4+1+6+3+1+1+7 = 37
+            (
+                Line::from(vec![
+                    Span::styled("^V", key_style),
+                    Span::styled("+img ", desc_style),
+                    Span::styled("^X", key_style),
+                    Span::styled("-1 ", desc_style),
+                    Span::styled("^U", key_style),
+                    Span::styled("clr ", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" line ", desc_style),
+                    Span::styled("esc", key_style),
+                    Span::styled("→", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" submit", desc_style),
+                ]),
+                37u16,
+            )
+        } else {
+            // No pending images: "^V img ^G vim ⏎ line esc→⏎ submit"
+            // Width: 2+5+2+editor+1+6+3+1+1+7 = 28 + editor_hint_len
+            (
+                Line::from(vec![
+                    Span::styled("^V", key_style),
+                    Span::styled(" img ", desc_style),
+                    Span::styled("^G", key_style),
+                    Span::styled(editor_hint.clone(), desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" line ", desc_style),
+                    Span::styled("esc", key_style),
+                    Span::styled("→", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" submit", desc_style),
+                ]),
+                28 + editor_hint_len,
+            )
+        }
     } else {
-        // Base width: "^V img ^G ^C cancel ⏎ submit" = 32 + editor_hint_len
-        (
-            Line::from(vec![
-                Span::styled("^V", key_style),
-                Span::styled(" img ", desc_style),
-                Span::styled("^G", key_style),
-                Span::styled(editor_hint, desc_style),
-                Span::styled("^C", key_style),
-                Span::styled(" cancel ", desc_style),
-                Span::styled("⏎", key_style),
-                Span::styled(" submit", desc_style),
-            ]),
-            32 + editor_hint_len,
-        )
+        // NORMAL MODE hints
+        if pending_count > 0 {
+            // With pending images: "^V+img ^X-1 ^Uclr hjkl←↓↑→ aio edit ⏎ submit"
+            // Width: 2+5+2+3+2+4+4+5+3+6+1+7 = 44
+            (
+                Line::from(vec![
+                    Span::styled("^V", key_style),
+                    Span::styled("+img ", desc_style),
+                    Span::styled("^X", key_style),
+                    Span::styled("-1 ", desc_style),
+                    Span::styled("^U", key_style),
+                    Span::styled("clr ", desc_style),
+                    Span::styled("hjkl", key_style),
+                    Span::styled("←↓↑→ ", desc_style),
+                    Span::styled("aio", key_style),
+                    Span::styled(" edit ", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" submit", desc_style),
+                ]),
+                44u16,
+            )
+        } else {
+            // No pending images: "^V img ^G vim hjkl←↓↑→ aio edit ⏎ submit"
+            // Width: 2+5+2+editor+4+5+3+6+1+7 = 35 + editor_hint_len
+            (
+                Line::from(vec![
+                    Span::styled("^V", key_style),
+                    Span::styled(" img ", desc_style),
+                    Span::styled("^G", key_style),
+                    Span::styled(editor_hint, desc_style),
+                    Span::styled("hjkl", key_style),
+                    Span::styled("←↓↑→ ", desc_style),
+                    Span::styled("aio", key_style),
+                    Span::styled(" edit ", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" submit", desc_style),
+                ]),
+                35 + editor_hint_len,
+            )
+        }
     };
     let hints_area = Rect {
         x: area.x + area.width.saturating_sub(hints_width + 1),
