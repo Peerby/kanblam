@@ -5102,6 +5102,14 @@ impl App {
                 self.model.ui_state.show_task_preview = !self.model.ui_state.show_task_preview;
             }
 
+            Message::TaskDetailNextTab => {
+                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.next();
+            }
+
+            Message::TaskDetailPrevTab => {
+                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.prev();
+            }
+
             Message::Tick => {
                 // Increment animation frame for spinners
                 self.model.ui_state.animation_frame = self.model.ui_state.animation_frame.wrapping_add(1);

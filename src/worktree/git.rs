@@ -711,6 +711,25 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
     if patch_path.exists() {
         let patch_content = std::fs::read(&patch_path)?;
 
+        // Check for unstaged changes - these would interfere with patch reversal
+        let has_unstaged = Command::new("git")
+            .current_dir(project_dir)
+            .args(["diff", "--quiet"])
+            .status()
+            .map(|s| !s.success())
+            .unwrap_or(false);
+
+        // If there are unstaged changes, stash them while keeping staged (applied) changes
+        let did_stash = if has_unstaged {
+            let stash_result = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "push", "--keep-index", "-m", "kanclaude: unapply temp stash"])
+                .output()?;
+            stash_result.status.success()
+        } else {
+            false
+        };
+
         // Try to reverse the patch
         let mut apply_cmd = Command::new("git")
             .current_dir(project_dir)
@@ -733,13 +752,30 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
         if output.status.success() {
             // Clean up the patch file
             let _ = std::fs::remove_file(&patch_path);
+
+            // Restore user's unstaged changes if we stashed them
+            if did_stash {
+                let _ = Command::new("git")
+                    .current_dir(project_dir)
+                    .args(["stash", "pop"])
+                    .output();
+            }
+
             return Ok(UnapplyResult::Success);
         }
 
-        // Surgical reversal failed - need user confirmation for destructive reset
+        // Surgical reversal failed - restore stash before returning
+        if did_stash {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+
+        // Need user confirmation for destructive reset
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Ok(UnapplyResult::NeedsConfirmation(format!(
-            "Surgical patch reversal failed: {}. Use destructive reset?",
+            "Surgical patch reversal failed: {}",
             stderr.trim()
         )));
     }

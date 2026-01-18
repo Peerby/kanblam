@@ -239,6 +239,8 @@ pub enum Message {
     ScrollHelpUp(usize),   // Scroll help modal up by N lines
     ScrollHelpDown(usize), // Scroll help modal down by N lines
     ToggleTaskPreview,     // Show/hide task preview modal (v/space)
+    TaskDetailNextTab,     // Move to next tab in task detail modal
+    TaskDetailPrevTab,     // Move to previous tab in task detail modal
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

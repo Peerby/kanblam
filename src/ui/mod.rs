@@ -524,6 +524,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskStatus::Done => (Color::Green, "Done"),
     };
 
+    let current_tab = app.model.ui_state.task_detail_tab;
     let mut lines: Vec<Line> = Vec::new();
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let label_style = Style::default().fg(Color::DarkGray);
@@ -531,59 +532,132 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
     let dim_style = Style::default().fg(Color::DarkGray);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // HEADER: Title (short_title if available, otherwise title) and phase badge
+    // TAB BAR
     // ═══════════════════════════════════════════════════════════════════════
-    let header_title = task.short_title.as_ref().unwrap_or(&task.title);
-    lines.push(Line::from(vec![
-        Span::styled(header_title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(format!("[{}]", phase_label), Style::default().fg(column_color).add_modifier(Modifier::BOLD)),
-    ]));
+    let tab_bar = render_task_detail_tab_bar(current_tab);
+    lines.push(tab_bar);
+    lines.push(Line::from(""));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // FULL TITLE (if short_title exists, show the original title)
+    // TAB CONTENT
     // ═══════════════════════════════════════════════════════════════════════
-    if task.short_title.is_some() {
-        lines.push(Line::from(""));
-        // Show full title in a slightly different style
-        for title_line in task.title.lines() {
-            lines.push(Line::from(Span::styled(title_line, Style::default().fg(Color::White))));
+    match current_tab {
+        crate::model::TaskDetailTab::General => {
+            render_general_tab(&mut lines, task, app, &label_style, &value_style, &dim_style);
+        }
+        crate::model::TaskDetailTab::Git => {
+            render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
+        }
+        crate::model::TaskDetailTab::Claude => {
+            render_claude_tab(&mut lines, task, &label_style, &value_style, &dim_style);
+        }
+        crate::model::TaskDetailTab::Activity => {
+            render_activity_tab(&mut lines, task, &label_style, &dim_style);
+        }
+        crate::model::TaskDetailTab::Help => {
+            render_help_tab(&mut lines, task, &key_style, &label_style, &dim_style);
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // DESCRIPTION (if any)
-    // ═══════════════════════════════════════════════════════════════════════
-    if !task.description.is_empty() {
-        lines.push(Line::from(""));
-        for desc_line in task.description.lines() {
-            lines.push(Line::from(Span::styled(desc_line, Style::default().fg(Color::Gray))));
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ATTACHMENTS
-    // ═══════════════════════════════════════════════════════════════════════
-    if !task.images.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("📎 ", dim_style),
-            Span::styled(format!("{} image(s) attached", task.images.len()), Style::default().fg(Color::Cyan)),
-        ]));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // PHASE-SPECIFIC INFORMATION
+    // FOOTER: Navigation and close hints
     // ═══════════════════════════════════════════════════════════════════════
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+    lines.push(Line::from(vec![
+        Span::styled("←/h", key_style),
+        Span::styled(" ", dim_style),
+        Span::styled("→/l", key_style),
+        Span::styled(" tabs    ", dim_style),
+        Span::styled("Esc", key_style),
+        Span::styled("/", dim_style),
+        Span::styled("Enter", key_style),
+        Span::styled("/", dim_style),
+        Span::styled("Space", key_style),
+        Span::styled(" close", dim_style),
+    ]));
+
+    // Build title: [phase] short_title
+    let short_title = task.short_title.as_ref().unwrap_or(&task.title);
+    let title = format!(" [{}] {} ", phase_label, truncate_string(short_title, 40));
+
+    let preview = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(Span::styled(title, Style::default().fg(Color::White)))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(column_color)),
+        )
+        .style(Style::default().fg(Color::White))
+        .wrap(ratatui::widgets::Wrap { trim: false });
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(preview, area);
+}
+
+/// Render the tab bar for the task detail modal
+fn render_task_detail_tab_bar(current_tab: crate::model::TaskDetailTab) -> Line<'static> {
+    let tabs = crate::model::TaskDetailTab::all();
+    let mut spans = Vec::new();
+
+    for (i, tab) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+        }
+
+        let style = if *tab == current_tab {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        spans.push(Span::styled(tab.label(), style));
+    }
+
+    Line::from(spans)
+}
+
+/// Render the General tab content
+fn render_general_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    app: &App,
+    label_style: &Style,
+    value_style: &Style,
+    dim_style: &Style,
+) {
+    // Title (full if short_title exists)
+    if task.short_title.is_some() {
+        for title_line in task.title.lines() {
+            lines.push(Line::from(Span::styled(title_line.to_string(), Style::default().fg(Color::White))));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Description
+    if !task.description.is_empty() {
+        for desc_line in task.description.lines() {
+            lines.push(Line::from(Span::styled(desc_line.to_string(), Style::default().fg(Color::Gray))));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Attachments
+    if !task.images.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("📎 ", *dim_style),
+            Span::styled(format!("{} image(s) attached", task.images.len()), Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Phase-specific timing info
+    lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
 
     match task.status {
         crate::model::TaskStatus::Planned | crate::model::TaskStatus::Queued => {
-            // Show creation time and queue info
             lines.push(Line::from(vec![
-                Span::styled("Created: ", label_style),
-                Span::styled(format_datetime(task.created_at), value_style),
+                Span::styled("Created: ", *label_style),
+                Span::styled(format_datetime(task.created_at), *value_style),
             ]));
 
             if task.status == crate::model::TaskStatus::Queued {
@@ -591,8 +665,8 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                     if let Some(project) = app.model.active_project() {
                         if let Some(parent_task) = project.tasks.iter().find(|t| t.id == queued_for) {
                             lines.push(Line::from(vec![
-                                Span::styled("Queued for: ", label_style),
-                                Span::styled(&parent_task.title, Style::default().fg(Color::Yellow)),
+                                Span::styled("Queued for: ", *label_style),
+                                Span::styled(parent_task.title.clone(), Style::default().fg(Color::Yellow)),
                             ]));
                         }
                     }
@@ -601,16 +675,14 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         }
 
         crate::model::TaskStatus::InProgress => {
-            // Show session state and timing
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
                 lines.push(Line::from(vec![
-                    Span::styled("Running for: ", label_style),
+                    Span::styled("Running for: ", *label_style),
                     Span::styled(format_duration(duration), Style::default().fg(Color::Yellow)),
                 ]));
             }
 
-            // Session state with color
             let (state_label, state_color) = match task.session_state {
                 crate::model::ClaudeSessionState::Creating => ("Creating worktree...", Color::Yellow),
                 crate::model::ClaudeSessionState::Starting => ("Starting session...", Color::Yellow),
@@ -620,50 +692,40 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 _ => ("Unknown", Color::DarkGray),
             };
             lines.push(Line::from(vec![
-                Span::styled("Session: ", label_style),
+                Span::styled("Session: ", *label_style),
                 Span::styled(state_label, Style::default().fg(state_color)),
             ]));
 
-            // Last tool activity
             if let Some(ref tool_name) = task.last_tool_name {
                 lines.push(Line::from(vec![
-                    Span::styled("Last tool: ", label_style),
-                    Span::styled(tool_name, value_style),
+                    Span::styled("Last tool: ", *label_style),
+                    Span::styled(tool_name.clone(), *value_style),
                 ]));
             }
         }
 
         crate::model::TaskStatus::NeedsInput => {
-            // Urgent - show waiting time
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
                 lines.push(Line::from(vec![
                     Span::styled("⚠ ", Style::default().fg(Color::Red)),
-                    Span::styled("Waiting for input since ", label_style),
+                    Span::styled("Waiting for input since ", *label_style),
                     Span::styled(format_duration(duration), Style::default().fg(Color::Red)),
                 ]));
             }
 
             lines.push(Line::from(vec![
-                Span::styled("Session: ", label_style),
+                Span::styled("Session: ", *label_style),
                 Span::styled("Paused - needs your input", Style::default().fg(Color::Red)),
             ]));
         }
 
         crate::model::TaskStatus::Review | crate::model::TaskStatus::Accepting | crate::model::TaskStatus::Updating | crate::model::TaskStatus::Applying => {
-            // Show timing and branch info
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
                 lines.push(Line::from(vec![
-                    Span::styled("Total time: ", label_style),
-                    Span::styled(format_duration(duration), value_style),
-                ]));
-            }
-
-            if let Some(ref branch) = task.git_branch {
-                lines.push(Line::from(vec![
-                    Span::styled("Branch: ", label_style),
-                    Span::styled(branch, Style::default().fg(Color::Green)),
+                    Span::styled("Total time: ", *label_style),
+                    Span::styled(format_duration(duration), *value_style),
                 ]));
             }
 
@@ -689,10 +751,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         }
 
         crate::model::TaskStatus::Done => {
-            // Show completion info
             if let Some(completed) = task.completed_at {
                 lines.push(Line::from(vec![
-                    Span::styled("Completed: ", label_style),
+                    Span::styled("Completed: ", *label_style),
                     Span::styled(format_datetime(completed), Style::default().fg(Color::Green)),
                 ]));
             }
@@ -700,217 +761,362 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             if let (Some(started), Some(completed)) = (task.started_at, task.completed_at) {
                 let duration = completed.signed_duration_since(started);
                 lines.push(Line::from(vec![
-                    Span::styled("Duration: ", label_style),
-                    Span::styled(format_duration(duration), value_style),
+                    Span::styled("Duration: ", *label_style),
+                    Span::styled(format_duration(duration), *value_style),
                 ]));
             }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // GIT STATUS - For tasks with worktrees
-    // ═══════════════════════════════════════════════════════════════════════
-    if task.worktree_path.is_some() {
+    // Worktree path
+    if let Some(ref wt_path) = task.worktree_path {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
-        lines.push(Line::from(Span::styled("Git Status", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
-        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", *label_style),
+            Span::styled(wt_path.display().to_string(), *dim_style),
+        ]));
+    }
+}
 
-        // Show branch
-        if let Some(ref branch) = task.git_branch {
-            lines.push(Line::from(vec![
-                Span::styled("Branch: ", label_style),
-                Span::styled(branch, Style::default().fg(Color::Green)),
-            ]));
+/// Render the Git tab content
+fn render_git_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    app: &App,
+    label_style: &Style,
+    value_style: &Style,
+    dim_style: &Style,
+    key_style: &Style,
+) {
+    if task.worktree_path.is_none() {
+        lines.push(Line::from(Span::styled("No worktree for this task", *dim_style)));
+        return;
+    }
+
+    // Show branch
+    if let Some(ref branch) = task.git_branch {
+        lines.push(Line::from(vec![
+            Span::styled("Branch: ", *label_style),
+            Span::styled(branch.clone(), Style::default().fg(Color::Green)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Show line changes with visual bar
+    let total_changes = task.git_additions + task.git_deletions;
+    if total_changes > 0 {
+        let bar_width = 20usize;
+        let add_ratio = task.git_additions as f64 / total_changes as f64;
+        let add_chars = (add_ratio * bar_width as f64).round() as usize;
+        let del_chars = bar_width.saturating_sub(add_chars);
+
+        let add_bar = "█".repeat(add_chars);
+        let del_bar = "█".repeat(del_chars);
+
+        lines.push(Line::from(vec![
+            Span::styled("Changes: ", *label_style),
+            Span::styled(format!("+{}", task.git_additions), Style::default().fg(Color::Green)),
+            Span::styled(" / ", *dim_style),
+            Span::styled(format!("-{}", task.git_deletions), Style::default().fg(Color::Red)),
+            Span::styled("  ", *dim_style),
+            Span::styled(add_bar, Style::default().fg(Color::Green)),
+            Span::styled(del_bar, Style::default().fg(Color::Red)),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Files:   ", *label_style),
+            Span::styled(format!("{} changed", task.git_files_changed), *value_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Changes: ", *label_style),
+            Span::styled("No changes yet", *dim_style),
+        ]));
+    }
+
+    // Show commits ahead/behind
+    if task.git_commits_ahead > 0 || task.git_commits_behind > 0 {
+        let mut commit_spans = vec![Span::styled("Commits: ", *label_style)];
+
+        if task.git_commits_ahead > 0 {
+            commit_spans.push(Span::styled(
+                format!("↑{} ahead", task.git_commits_ahead),
+                Style::default().fg(Color::Cyan),
+            ));
         }
 
-        // Show line changes with visual bar
-        let total_changes = task.git_additions + task.git_deletions;
-        if total_changes > 0 {
-            // Create a visual bar showing proportion of additions vs deletions
-            let bar_width = 20usize;
-            let add_ratio = task.git_additions as f64 / total_changes as f64;
-            let add_chars = (add_ratio * bar_width as f64).round() as usize;
-            let del_chars = bar_width.saturating_sub(add_chars);
-
-            let add_bar = "█".repeat(add_chars);
-            let del_bar = "█".repeat(del_chars);
-
-            lines.push(Line::from(vec![
-                Span::styled("Changes: ", label_style),
-                Span::styled(format!("+{}", task.git_additions), Style::default().fg(Color::Green)),
-                Span::styled(" / ", dim_style),
-                Span::styled(format!("-{}", task.git_deletions), Style::default().fg(Color::Red)),
-                Span::styled("  ", dim_style),
-                Span::styled(add_bar, Style::default().fg(Color::Green)),
-                Span::styled(del_bar, Style::default().fg(Color::Red)),
-            ]));
-
-            lines.push(Line::from(vec![
-                Span::styled("Files:   ", label_style),
-                Span::styled(format!("{} changed", task.git_files_changed), value_style),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled("Changes: ", label_style),
-                Span::styled("No changes yet", dim_style),
-            ]));
-        }
-
-        // Show commits ahead/behind with status indicator
-        if task.git_commits_ahead > 0 || task.git_commits_behind > 0 {
-            let mut commit_spans = vec![Span::styled("Commits: ", label_style)];
-
+        if task.git_commits_behind > 0 {
             if task.git_commits_ahead > 0 {
-                commit_spans.push(Span::styled(
-                    format!("↑{} ahead", task.git_commits_ahead),
-                    Style::default().fg(Color::Cyan),
-                ));
+                commit_spans.push(Span::styled("  ", *dim_style));
             }
-
-            if task.git_commits_behind > 0 {
-                if task.git_commits_ahead > 0 {
-                    commit_spans.push(Span::styled("  ", dim_style));
-                }
-                commit_spans.push(Span::styled(
-                    format!("↓{} behind", task.git_commits_behind),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ));
-            }
-
-            lines.push(Line::from(commit_spans));
-
-            // Show warning if behind main
-            if task.git_commits_behind > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("         ", label_style),
-                    Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
-                    Span::styled("Main has new commits - press ", Style::default().fg(Color::Yellow)),
-                    Span::styled("u", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::styled(" to update", Style::default().fg(Color::Yellow)),
-                ]));
-            }
-        } else if total_changes > 0 {
-            lines.push(Line::from(vec![
-                Span::styled("Commits: ", label_style),
-                Span::styled("✓ Up to date with main", Style::default().fg(Color::Green)),
-            ]));
+            commit_spans.push(Span::styled(
+                format!("↓{} behind", task.git_commits_behind),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ));
         }
 
-        // Get and show changed files (limited to top 8)
-        if let Some(project) = app.model.active_project() {
-            if let Ok(files) = crate::worktree::get_worktree_changed_files(&project.working_dir, task.id) {
-                if !files.is_empty() {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled("Changed Files:", label_style)));
+        lines.push(Line::from(commit_spans));
 
-                    let max_files = 8;
-                    for (i, file) in files.iter().take(max_files).enumerate() {
-                        // Truncate long paths
-                        let max_path_len = 35;
-                        let display_path = if file.path.len() > max_path_len {
-                            format!("...{}", &file.path[file.path.len() - max_path_len + 3..])
-                        } else {
-                            file.path.clone()
-                        };
+        if task.git_commits_behind > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("         ", *label_style),
+                Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+                Span::styled("Main has new commits - press ", Style::default().fg(Color::Yellow)),
+                Span::styled("u", key_style.fg(Color::Cyan)),
+                Span::styled(" to update", Style::default().fg(Color::Yellow)),
+            ]));
+        }
+    } else if total_changes > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("Commits: ", *label_style),
+            Span::styled("✓ Up to date with main", Style::default().fg(Color::Green)),
+        ]));
+    }
 
-                        let status_indicator = if file.is_new {
-                            Span::styled(" (new)", Style::default().fg(Color::Green))
-                        } else if file.is_deleted {
-                            Span::styled(" (del)", Style::default().fg(Color::Red))
-                        } else if file.is_renamed {
-                            Span::styled(" (ren)", Style::default().fg(Color::Yellow))
-                        } else {
-                            Span::raw("")
-                        };
+    // Changed files
+    if let Some(project) = app.model.active_project() {
+        if let Ok(files) = crate::worktree::get_worktree_changed_files(&project.working_dir, task.id) {
+            if !files.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
+                lines.push(Line::from(Span::styled("Changed Files:", *label_style)));
+                lines.push(Line::from(""));
 
-                        let line_spans = vec![
-                            Span::styled("  ", dim_style),
-                            Span::styled(display_path, value_style),
-                            status_indicator,
-                            Span::styled(
-                                format!("  +{}", file.additions),
-                                Style::default().fg(Color::Green),
-                            ),
-                            Span::styled("/", dim_style),
-                            Span::styled(
-                                format!("-{}", file.deletions),
-                                Style::default().fg(Color::Red),
-                            ),
-                        ];
+                let max_files = 12;
+                for (i, file) in files.iter().take(max_files).enumerate() {
+                    let max_path_len = 35;
+                    let display_path = if file.path.len() > max_path_len {
+                        format!("...{}", &file.path[file.path.len() - max_path_len + 3..])
+                    } else {
+                        file.path.clone()
+                    };
 
-                        lines.push(Line::from(line_spans));
+                    let status_indicator = if file.is_new {
+                        Span::styled(" (new)", Style::default().fg(Color::Green))
+                    } else if file.is_deleted {
+                        Span::styled(" (del)", Style::default().fg(Color::Red))
+                    } else if file.is_renamed {
+                        Span::styled(" (ren)", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::raw("")
+                    };
 
-                        // Show "and X more..." if truncated
-                        if i == max_files - 1 && files.len() > max_files {
-                            lines.push(Line::from(vec![
-                                Span::styled("  ", dim_style),
-                                Span::styled(
-                                    format!("... and {} more files", files.len() - max_files),
-                                    dim_style,
-                                ),
-                            ]));
-                        }
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", *dim_style),
+                        Span::styled(display_path, *value_style),
+                        status_indicator,
+                        Span::styled(format!("  +{}", file.additions), Style::default().fg(Color::Green)),
+                        Span::styled("/", *dim_style),
+                        Span::styled(format!("-{}", file.deletions), Style::default().fg(Color::Red)),
+                    ]));
+
+                    if i == max_files - 1 && files.len() > max_files {
+                        lines.push(Line::from(vec![
+                            Span::styled("  ", *dim_style),
+                            Span::styled(format!("... and {} more files", files.len() - max_files), *dim_style),
+                        ]));
                     }
                 }
             }
         }
     }
+}
 
-    // Worktree path (collapsed for active tasks, shown for debugging)
-    if let Some(ref wt_path) = task.worktree_path {
-        lines.push(Line::from(""));
+/// Render the Claude tab content (SDK logs)
+fn render_claude_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    label_style: &Style,
+    value_style: &Style,
+    dim_style: &Style,
+) {
+    // Session info
+    if let Some(ref session_id) = task.claude_session_id {
         lines.push(Line::from(vec![
-            Span::styled("Path: ", label_style),
-            Span::styled(wt_path.display().to_string(), dim_style),
+            Span::styled("Session ID: ", *label_style),
+            Span::styled(session_id.clone(), *value_style),
         ]));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // ACTIONS - Phase-specific key hints
-    // ═══════════════════════════════════════════════════════════════════════
+    let mode_str = match task.session_mode {
+        crate::model::SessionMode::SdkManaged => "SDK Managed",
+        crate::model::SessionMode::CliInteractive => "CLI Interactive",
+        crate::model::SessionMode::CliActivelyWorking => "CLI Working",
+        crate::model::SessionMode::WaitingForCliExit => "Waiting for CLI Exit",
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Mode: ", *label_style),
+        Span::styled(mode_str, *value_style),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("SDK Commands: ", *label_style),
+        Span::styled(task.sdk_command_count.to_string(), *value_style),
+    ]));
+
+    if let Some(ref tool_name) = task.last_tool_name {
+        lines.push(Line::from(vec![
+            Span::styled("Last Tool: ", *label_style),
+            Span::styled(tool_name.clone(), *value_style),
+        ]));
+    }
+
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
-    lines.push(Line::from(Span::styled("Actions", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+    lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
+    lines.push(Line::from(Span::styled("SDK Activity Log", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+    lines.push(Line::from(""));
+
+    // Show SDK activity from the activity log (filter for SDK-related entries)
+    if task.activity_log.is_empty() {
+        lines.push(Line::from(Span::styled("No activity logged yet", *dim_style)));
+    } else {
+        // Show all activity entries (up to 20 for the claude tab)
+        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(20).collect();
+        for entry in entries_to_show.iter().rev() {
+            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
+            let time_ago = if elapsed.num_seconds() < 5 {
+                "now".to_string()
+            } else if elapsed.num_seconds() < 60 {
+                format!("{}s ago", elapsed.num_seconds())
+            } else if elapsed.num_minutes() < 60 {
+                format!("{}m ago", elapsed.num_minutes())
+            } else {
+                format!("{}h ago", elapsed.num_hours())
+            };
+
+            let msg_color = if entry.message.starts_with("Using ") || entry.message.starts_with("Tool:") {
+                Color::Cyan
+            } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
+                Color::Red
+            } else if entry.message.contains("success") || entry.message.contains("complete") || entry.message.contains("started") {
+                Color::Green
+            } else if entry.message.contains("Working") || entry.message.contains("Waiting") {
+                Color::Yellow
+            } else {
+                Color::White
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(truncate_string(&entry.message, 45), Style::default().fg(msg_color)),
+            ]));
+        }
+    }
+}
+
+/// Render the Activity tab content (user actions + SDK commands)
+fn render_activity_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    label_style: &Style,
+    dim_style: &Style,
+) {
+    lines.push(Line::from(Span::styled("Command History", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+    lines.push(Line::from(""));
+
+    if task.activity_log.is_empty() {
+        lines.push(Line::from(Span::styled("No activity logged yet", *dim_style)));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Activity will appear here as you:", *label_style)));
+        lines.push(Line::from(Span::styled("  • Start and stop tasks", *dim_style)));
+        lines.push(Line::from(Span::styled("  • Send feedback to Claude", *dim_style)));
+        lines.push(Line::from(Span::styled("  • Open terminals and modals", *dim_style)));
+        lines.push(Line::from(Span::styled("  • Merge or discard changes", *dim_style)));
+    } else {
+        // Show all activity entries (up to 25 for the activity tab)
+        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(25).collect();
+        for entry in entries_to_show.iter().rev() {
+            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
+            let time_ago = if elapsed.num_seconds() < 5 {
+                "now".to_string()
+            } else if elapsed.num_seconds() < 60 {
+                format!("{}s ago", elapsed.num_seconds())
+            } else if elapsed.num_minutes() < 60 {
+                format!("{}m ago", elapsed.num_minutes())
+            } else {
+                format!("{}h ago", elapsed.num_hours())
+            };
+
+            // Categorize and color activity entries
+            let (icon, msg_color) = if entry.message.starts_with("Using ") || entry.message.starts_with("Tool:") {
+                ("🔧", Color::Cyan)
+            } else if entry.message.contains("started") || entry.message.contains("Starting") {
+                ("▶", Color::Green)
+            } else if entry.message.contains("stopped") || entry.message.contains("ended") || entry.message.contains("Ended") {
+                ("⏹", Color::Yellow)
+            } else if entry.message.contains("Waiting") || entry.message.contains("input") {
+                ("⏸", Color::Yellow)
+            } else if entry.message.contains("Working") {
+                ("⚙", Color::Green)
+            } else if entry.message.contains("feedback") || entry.message.contains("Feedback") {
+                ("💬", Color::Magenta)
+            } else if entry.message.contains("merge") || entry.message.contains("Merge") || entry.message.contains("Rebasing") {
+                ("🔀", Color::Magenta)
+            } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
+                ("✗", Color::Red)
+            } else if entry.message.contains("success") || entry.message.contains("complete") {
+                ("✓", Color::Green)
+            } else {
+                ("•", Color::White)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} ", icon), Style::default().fg(msg_color)),
+                Span::styled(truncate_string(&entry.message, 42), Style::default().fg(msg_color)),
+            ]));
+        }
+    }
+}
+
+/// Render the Help tab content (phase-specific actions)
+fn render_help_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    key_style: &Style,
+    label_style: &Style,
+    dim_style: &Style,
+) {
+    lines.push(Line::from(Span::styled("Available Actions", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
     lines.push(Line::from(""));
 
     match task.status {
         crate::model::TaskStatus::Planned => {
             lines.push(Line::from(vec![
-                Span::styled(" s ", key_style), Span::styled(" Start task with worktree isolation", label_style),
+                Span::styled(" s ", *key_style), Span::styled(" Start task with worktree isolation", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" q ", key_style), Span::styled(" Queue for running session", label_style),
+                Span::styled(" q ", *key_style), Span::styled(" Queue for running session", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+                Span::styled(" e ", *key_style), Span::styled(" Edit task", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+                Span::styled(" d ", *key_style), Span::styled(" Delete task", *label_style),
             ]));
         }
 
         crate::model::TaskStatus::Queued => {
             lines.push(Line::from(vec![
-                Span::styled(" s ", key_style), Span::styled(" Start immediately", label_style),
+                Span::styled(" s ", *key_style), Span::styled(" Start immediately", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+                Span::styled(" e ", *key_style), Span::styled(" Edit task", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+                Span::styled(" d ", *key_style), Span::styled(" Delete task", *label_style),
             ]));
         }
 
         crate::model::TaskStatus::InProgress => {
             lines.push(Line::from(vec![
-                Span::styled(" s ", key_style), Span::styled(" Switch to Claude session", label_style),
+                Span::styled(" s ", *key_style), Span::styled(" Switch to Claude session", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+                Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" t ", key_style), Span::styled(" Open test shell in worktree", label_style),
+                Span::styled(" t ", *key_style), Span::styled(" Open test shell in worktree", *label_style),
             ]));
             if task.git_commits_behind > 0 {
                 lines.push(Line::from(vec![
@@ -919,22 +1125,22 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 ]));
             }
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
+                Span::styled(" r ", *key_style), Span::styled(" Move to review", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+                Span::styled(" x ", *key_style), Span::styled(" Reset (cleanup and move to Planned)", *label_style),
             ]));
         }
 
         crate::model::TaskStatus::NeedsInput => {
             lines.push(Line::from(vec![
-                Span::styled(" s ", key_style), Span::styled(" Continue / switch to session", label_style),
+                Span::styled(" s ", *key_style), Span::styled(" Continue / switch to session", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+                Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
+                Span::styled(" t ", *key_style), Span::styled(" Open test shell", *label_style),
             ]));
             if task.git_commits_behind > 0 {
                 lines.push(Line::from(vec![
@@ -943,43 +1149,43 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
                 ]));
             }
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Move to review", label_style),
+                Span::styled(" r ", *key_style), Span::styled(" Move to review", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+                Span::styled(" x ", *key_style), Span::styled(" Reset (cleanup and move to Planned)", *label_style),
             ]));
         }
 
         crate::model::TaskStatus::Review => {
             lines.push(Line::from(vec![
-                Span::styled(" a ", key_style), Span::styled(" Apply: test changes in main worktree", label_style),
+                Span::styled(" a ", *key_style), Span::styled(" Apply: test changes in main worktree", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" u ", key_style), Span::styled(" Unapply: remove applied changes", label_style),
+                Span::styled(" u ", *key_style), Span::styled(" Unapply: remove applied changes", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Rebase: update worktree to latest main", label_style),
+                Span::styled(" r ", *key_style), Span::styled(" Rebase: update worktree to latest main", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" m ", key_style), Span::styled(" Merge: finalize changes and mark done", label_style),
+                Span::styled(" m ", *key_style), Span::styled(" Merge: finalize changes and mark done", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" d ", key_style), Span::styled(" Discard: reject changes and mark done", label_style),
+                Span::styled(" d ", *key_style), Span::styled(" Discard: reject changes and mark done", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" c ", key_style), Span::styled(" Check: view git diff/status report", label_style),
+                Span::styled(" c ", *key_style), Span::styled(" Check: view git diff/status report", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" f ", key_style), Span::styled(" Feedback: send follow-up instructions", label_style),
+                Span::styled(" f ", *key_style), Span::styled(" Feedback: send follow-up instructions", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" o ", key_style), Span::styled(" Open interactive modal", label_style),
+                Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" t ", key_style), Span::styled(" Open test shell", label_style),
+                Span::styled(" t ", *key_style), Span::styled(" Open test shell", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+                Span::styled(" x ", *key_style), Span::styled(" Reset (cleanup and move to Planned)", *label_style),
             ]));
         }
 
@@ -1006,102 +1212,37 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
 
         crate::model::TaskStatus::Done => {
             lines.push(Line::from(vec![
-                Span::styled(" e ", key_style), Span::styled(" Edit task", label_style),
+                Span::styled(" e ", *key_style), Span::styled(" Edit task", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" d ", key_style), Span::styled(" Delete task", label_style),
+                Span::styled(" d ", *key_style), Span::styled(" Delete task", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" r ", key_style), Span::styled(" Move back to Review", label_style),
+                Span::styled(" r ", *key_style), Span::styled(" Move back to Review", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" x ", key_style), Span::styled(" Reset (cleanup and move to Planned)", label_style),
+                Span::styled(" x ", *key_style), Span::styled(" Reset (cleanup and move to Planned)", *label_style),
             ]));
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // ACTIVITY LOG - Show recent activity during Accepting/Updating
-    // ═══════════════════════════════════════════════════════════════════════
-    if !task.activity_log.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
-
-        // Show different header based on status
-        let log_header = match task.status {
-            crate::model::TaskStatus::Accepting => "Merge Activity",
-            crate::model::TaskStatus::Updating => "Update Activity",
-            _ => "Recent Activity",
-        };
-        lines.push(Line::from(Span::styled(
-            log_header,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-        )));
-        lines.push(Line::from(""));
-
-        // Show the last 6 entries (most recent at bottom for natural scrolling feel)
-        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(6).collect();
-        for entry in entries_to_show.iter().rev() {
-            // Format timestamp as relative time
-            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
-            let time_ago = if elapsed.num_seconds() < 5 {
-                "now".to_string()
-            } else if elapsed.num_seconds() < 60 {
-                format!("{}s ago", elapsed.num_seconds())
-            } else if elapsed.num_minutes() < 60 {
-                format!("{}m ago", elapsed.num_minutes())
-            } else {
-                format!("{}h ago", elapsed.num_hours())
-            };
-
-            // Color based on message content
-            let msg_color = if entry.message.starts_with("Using ") {
-                Color::Cyan
-            } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
-                Color::Red
-            } else if entry.message.contains("success") || entry.message.contains("complete") {
-                Color::Green
-            } else {
-                Color::White
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    truncate_string(&entry.message, 35),
-                    Style::default().fg(msg_color)
-                ),
-            ]));
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // FOOTER: Close hint
-    // ═══════════════════════════════════════════════════════════════════════
+    // General navigation help
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
+    lines.push(Line::from(Span::styled("Navigation", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("Esc", key_style),
-        Span::styled("/", dim_style),
-        Span::styled("Enter", key_style),
-        Span::styled("/", dim_style),
-        Span::styled("Space", key_style),
-        Span::styled(" close    ", dim_style),
-        Span::styled("?", key_style),
-        Span::styled(" full help", dim_style),
+        Span::styled(" ←/h ", *key_style), Span::styled(" Previous tab", *label_style),
     ]));
-
-    let preview = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title(format!(" {} ", task.status.label()))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(column_color)),
-        )
-        .style(Style::default().fg(Color::White))
-        .wrap(ratatui::widgets::Wrap { trim: false });
-
-    frame.render_widget(ratatui::widgets::Clear, area);
-    frame.render_widget(preview, area);
+    lines.push(Line::from(vec![
+        Span::styled(" →/l ", *key_style), Span::styled(" Next tab", *label_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Esc ", *key_style), Span::styled(" Close modal", *label_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  ?  ", *key_style), Span::styled(" Full help overlay", *label_style),
+    ]));
 }
 
 /// Format a datetime for display

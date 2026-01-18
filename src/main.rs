@@ -1593,6 +1593,14 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::ToggleTaskPreview]
         }
 
+        // Tab navigation: left/right/h/l
+        KeyCode::Left | KeyCode::Char('h') => {
+            vec![Message::TaskDetailPrevTab]
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            vec![Message::TaskDetailNextTab]
+        }
+
         // Open full help (closes modal, opens help)
         KeyCode::Char('?') => {
             vec![Message::ToggleTaskPreview, Message::ToggleHelp]

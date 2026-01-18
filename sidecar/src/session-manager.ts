@@ -2,7 +2,7 @@
  * Manages Claude Code Agent SDK sessions
  */
 
-import { query, type Options } from '@anthropic-ai/claude-code';
+import { query, type Options, type CanUseTool } from '@anthropic-ai/claude-code';
 import {
   type SessionEventParams,
   type StartSessionParams,
@@ -11,6 +11,7 @@ import {
   type SummarizeTitleParams,
   type SummarizeTitleResult,
 } from './protocol.js';
+import * as path from 'path';
 
 export interface Session {
   taskId: string;

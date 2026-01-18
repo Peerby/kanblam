@@ -1086,6 +1086,8 @@ pub struct UiState {
     // Task preview modal
     /// If true, show the task preview modal for the selected task
     pub show_task_preview: bool,
+    /// Currently selected tab in the task detail modal
+    pub task_detail_tab: TaskDetailTab,
 
     // Interactive terminal modal
     /// If set, the interactive modal is open for this task
@@ -1180,7 +1182,66 @@ impl ConfigField {
             ConfigField::LintCommand,
         ]
     }
+}
 
+/// Tab selection in the task detail modal
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskDetailTab {
+    #[default]
+    General,
+    Git,
+    Claude,
+    Activity,
+    Help,
+}
+
+impl TaskDetailTab {
+    /// Get all tabs in order
+    pub fn all() -> &'static [TaskDetailTab] {
+        &[
+            TaskDetailTab::General,
+            TaskDetailTab::Git,
+            TaskDetailTab::Claude,
+            TaskDetailTab::Activity,
+            TaskDetailTab::Help,
+        ]
+    }
+
+    /// Get the display label for the tab
+    pub fn label(&self) -> &'static str {
+        match self {
+            TaskDetailTab::General => "general",
+            TaskDetailTab::Git => "git",
+            TaskDetailTab::Claude => "claude",
+            TaskDetailTab::Activity => "activity",
+            TaskDetailTab::Help => "help",
+        }
+    }
+
+    /// Move to the next tab (wraps around)
+    pub fn next(&self) -> TaskDetailTab {
+        match self {
+            TaskDetailTab::General => TaskDetailTab::Git,
+            TaskDetailTab::Git => TaskDetailTab::Claude,
+            TaskDetailTab::Claude => TaskDetailTab::Activity,
+            TaskDetailTab::Activity => TaskDetailTab::Help,
+            TaskDetailTab::Help => TaskDetailTab::General,
+        }
+    }
+
+    /// Move to the previous tab (wraps around)
+    pub fn prev(&self) -> TaskDetailTab {
+        match self {
+            TaskDetailTab::General => TaskDetailTab::Help,
+            TaskDetailTab::Git => TaskDetailTab::General,
+            TaskDetailTab::Claude => TaskDetailTab::Git,
+            TaskDetailTab::Activity => TaskDetailTab::Claude,
+            TaskDetailTab::Help => TaskDetailTab::Activity,
+        }
+    }
+}
+
+impl ConfigField {
     /// Get the display label for this field
     pub fn label(&self) -> &'static str {
         match self {
@@ -1315,6 +1376,7 @@ impl Default for UiState {
             queue_dialog_task_id: None,
             queue_dialog_selected_idx: 0,
             show_task_preview: false,
+            task_detail_tab: TaskDetailTab::default(),
             interactive_modal: None,
             open_project_dialog_slot: None,
             directory_browser: None,
