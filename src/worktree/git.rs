@@ -653,6 +653,24 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         return Err(anyhow!("Failed to apply changes. There may be conflicts."));
     }
 
+    // After --3way, files may be in "unmerged" state even if resolved
+    // Stage them to complete the 3-way merge and allow clean unapply later
+    let unmerged_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["ls-files", "-u"])
+        .output();
+
+    if let Ok(output) = unmerged_check {
+        if !output.stdout.is_empty() {
+            log("Found unmerged files after --3way, staging them...");
+            // Stage all files to resolve the unmerged state
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["add", "-u"])  // Only stage modified tracked files
+                .output();
+        }
+    }
+
     // Immediately restore stashed changes - no deferred tracking needed
     // If this conflicts, user deals with it now (better than later)
     if let Some(ref sha) = stash_ref {
