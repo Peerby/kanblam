@@ -1512,7 +1512,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  r          Rebase: update worktree to latest main"),
         Line::from("  c          Check: view git diff/status report"),
         Line::from("  f          Feedback: send follow-up instructions"),
-        Line::from("  s          Continue: open tmux session"),
+        Line::from("  o          Open: interactive Claude session"),
         Line::from(""),
         Line::from(vec![
             Span::styled("InProgress Column", Style::default().add_modifier(Modifier::UNDERLINED)),
