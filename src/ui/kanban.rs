@@ -224,8 +224,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     // Add spinner for in-progress tasks, pulsing indicator for needs-input,
                     // merge animation for accepting tasks, apply animation for applying tasks,
                     // and building animation for queued tasks that are preparing (creating worktree)
-                    // InProgress spinner animation
-                    let spinner_frames = ['·', '✢', '✶', '✻', '✳', '✽'];
+                    // InProgress uses the same spinner as Claude Code CLI: ·✢✳✶✻✽
+                    let spinner_frames = ['·', '✢', '✳', '✶', '✻', '✽'];
                     let pulse_frames = ['◐', '◓', '◑', '◒'];
                     let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
                     let apply_frames = ['⇣', '↓', '⬇', '↓']; // Downward arrow animation for applying
@@ -240,7 +240,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             format!("{} ", building_frames[frame])
                         }
                         TaskStatus::InProgress => {
-                            let frame = app.model.ui_state.animation_frame % spinner_frames.len();
+                            // Slow down spinner: change every 2 ticks (200ms per frame)
+                            let frame = (app.model.ui_state.animation_frame / 2) % spinner_frames.len();
                             format!("{} ", spinner_frames[frame])
                         }
                         TaskStatus::NeedsInput => {
