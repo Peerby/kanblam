@@ -1493,7 +1493,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Task Actions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  v/Space    View task details"),
+        Line::from("  Space/Enter  Open task details"),
         Line::from("  i          New task (focus input)"),
         Line::from("  e          Edit task"),
         Line::from("  s          Start (Planned/Queued) / Continue (Review/NeedsInput)"),

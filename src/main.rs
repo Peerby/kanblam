@@ -1407,15 +1407,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::PasteImage]
         }
 
-        // View task details (v without modifiers, or Space)
-        KeyCode::Char('v') => {
-            // Only show preview if a task is selected
-            if app.model.ui_state.selected_task_idx.is_some() {
-                vec![Message::ToggleTaskPreview]
-            } else {
-                vec![]
-            }
-        }
+        // View task details (Space)
         KeyCode::Char(' ') => {
             // Only show preview if a task is selected
             if app.model.ui_state.selected_task_idx.is_some() {
