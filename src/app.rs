@@ -1220,6 +1220,11 @@ impl App {
             }
 
             Message::ResetTask(task_id) => {
+                // Stop SDK session first (if running)
+                if let Some(ref client) = self.sidecar_client {
+                    let _ = client.stop_session(task_id);
+                }
+
                 // Get all necessary info before mutating
                 let task_info = self.model.active_project().and_then(|p| {
                     p.tasks.iter()
@@ -1239,6 +1244,9 @@ impl App {
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
+
+                    // Kill any detached tmux sessions for this task
+                    crate::tmux::kill_task_sessions(&task_id.to_string());
 
                     // Remove worktree if exists
                     if let Some(ref wt_path) = worktree_path {

@@ -758,7 +758,7 @@ pub fn kill_claude_cli_session(task_id: &str) -> Result<()> {
     if !output.status.success() {
         // Session might not exist, which is fine
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.contains("session not found") && !stderr.contains("no server running") {
+        if !stderr.contains("can't find session") && !stderr.contains("no server running") {
             return Err(anyhow!("Failed to kill session: {}", stderr));
         }
     }
