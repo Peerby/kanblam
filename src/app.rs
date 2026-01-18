@@ -5326,6 +5326,56 @@ impl App {
                 }
             }
 
+            Message::InputSubmitAndStart => {
+                // Get text from editor - only works for new tasks (not feedback or edit mode)
+                let input = self.model.ui_state.get_input_text().trim().to_string();
+
+                // Only handle new task creation - feedback/edit uses regular submit
+                if self.model.ui_state.feedback_task_id.is_none()
+                    && self.model.ui_state.editing_task_id.is_none()
+                    && !input.is_empty()
+                {
+                    // Take pending images before borrowing project
+                    let pending_images = std::mem::take(&mut self.model.ui_state.pending_images);
+                    let title_len = input.len();
+
+                    // Check if git repo before mutable borrow
+                    let is_git_repo = self.model.active_project()
+                        .map(|p| p.is_git_repo())
+                        .unwrap_or(false);
+
+                    if let Some(project) = self.model.active_project_mut() {
+                        let mut task = Task::new(input);
+                        let task_id = task.id;
+                        // Attach pending images
+                        task.images = pending_images;
+                        // Insert at beginning so newest tasks appear first in Planned
+                        project.tasks.insert(0, task);
+
+                        // Clear editor after creating task
+                        self.model.ui_state.clear_input();
+                        // Focus on the kanban board and select the new task
+                        self.model.ui_state.focus = FocusArea::KanbanBoard;
+                        self.model.ui_state.selected_column = TaskStatus::Planned;
+                        self.model.ui_state.selected_task_idx = Some(0);
+                        self.model.ui_state.title_scroll_offset = 0;
+                        self.model.ui_state.title_scroll_delay = 0;
+
+                        // Request title summarization if title is long
+                        if title_len > 40 {
+                            commands.push(Message::RequestTitleSummary { task_id });
+                        }
+
+                        // Immediately start the task (use worktree isolation for git repos)
+                        if is_git_repo {
+                            commands.push(Message::StartTaskWithWorktree(task_id));
+                        } else {
+                            commands.push(Message::StartTask(task_id));
+                        }
+                    }
+                }
+            }
+
             Message::OpenExternalEditor => {
                 // This is handled specially in main.rs where we have terminal access
                 // If it reaches here, something went wrong - just ignore it

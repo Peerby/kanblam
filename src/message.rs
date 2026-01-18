@@ -228,6 +228,8 @@ pub enum Message {
 
     // UI events
     InputSubmit,
+    /// Submit input and immediately start the task (Ctrl+S)
+    InputSubmitAndStart,
     /// Open current input in external editor (vim), submit on save
     OpenExternalEditor,
     /// External editor finished - set the input text and submit

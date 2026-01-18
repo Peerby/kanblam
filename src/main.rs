@@ -683,6 +683,11 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
     let super_key = key.modifiers.contains(KeyModifiers::SUPER);
 
     match key.code {
+        // Ctrl+S: Submit and immediately start the task
+        KeyCode::Char('s') if ctrl => {
+            vec![Message::InputSubmitAndStart]
+        }
+
         // Enter behavior depends on editor mode:
         // - Normal mode: submit (or line continuation if ends with \)
         // - Insert mode: insert newline (handled by edtui)
@@ -978,8 +983,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Help
         KeyCode::Char('?') => vec![Message::ToggleHelp],
 
-        // Settings/Config (Ctrl-S)
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
+        // Settings/Config (Ctrl-,)
+        KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
 
         // Git remote operations
         // P = Pull from remote (uppercase)

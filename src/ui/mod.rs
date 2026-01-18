@@ -500,8 +500,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     } else if is_insert_mode {
         // INSERT MODE hints
         if pending_count > 0 {
-            // With pending images: "^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit"
-            // Width: 2+5+2+3+2+4+1+6+3+1+1+7 = 37
+            // With pending images: "^V+img ^X-1 ^Uclr ⏎ line ^S start"
+            // Width: 2+5+2+3+2+4+1+6+2+6 = 33
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
@@ -512,16 +512,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled("clr ", desc_style),
                     Span::styled("⏎", key_style),
                     Span::styled(" line ", desc_style),
-                    Span::styled("esc", key_style),
-                    Span::styled("→", desc_style),
-                    Span::styled("⏎", key_style),
-                    Span::styled(" submit", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
                 ]),
-                37u16,
+                33u16,
             )
         } else {
-            // No pending images: "^V img ^G vim ⏎ line esc→⏎ submit"
-            // Width: 2+5+2+editor+1+6+3+1+1+7 = 28 + editor_hint_len
+            // No pending images: "^V img ^G vim ⏎ line ^S start"
+            // Width: 2+5+2+editor+1+6+2+6 = 24 + editor_hint_len
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
@@ -530,19 +528,17 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled(editor_hint.clone(), desc_style),
                     Span::styled("⏎", key_style),
                     Span::styled(" line ", desc_style),
-                    Span::styled("esc", key_style),
-                    Span::styled("→", desc_style),
-                    Span::styled("⏎", key_style),
-                    Span::styled(" submit", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
                 ]),
-                28 + editor_hint_len,
+                24 + editor_hint_len,
             )
         }
     } else {
         // NORMAL MODE hints
         if pending_count > 0 {
-            // With pending images: "^V+img ^X-1 ^Uclr hjkl←↓↑→ aio edit ⏎ submit"
-            // Width: 2+5+2+3+2+4+4+5+3+6+1+7 = 44
+            // With pending images: "^V+img ^X-1 ^Uclr aio edit ⏎ submit ^S start"
+            // Width: 2+5+2+3+2+4+3+6+1+8+2+6 = 44
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
@@ -551,30 +547,30 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled("-1 ", desc_style),
                     Span::styled("^U", key_style),
                     Span::styled("clr ", desc_style),
-                    Span::styled("hjkl", key_style),
-                    Span::styled("←↓↑→ ", desc_style),
                     Span::styled("aio", key_style),
                     Span::styled(" edit ", desc_style),
                     Span::styled("⏎", key_style),
-                    Span::styled(" submit", desc_style),
+                    Span::styled(" submit ", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
                 ]),
                 44u16,
             )
         } else {
-            // No pending images: "^V img ^G vim hjkl←↓↑→ aio edit ⏎ submit"
-            // Width: 2+5+2+editor+4+5+3+6+1+7 = 35 + editor_hint_len
+            // No pending images: "^V img ^G vim aio edit ⏎ submit ^S start"
+            // Width: 2+5+2+editor+3+6+1+8+2+6 = 35 + editor_hint_len
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
                     Span::styled(" img ", desc_style),
                     Span::styled("^G", key_style),
                     Span::styled(editor_hint, desc_style),
-                    Span::styled("hjkl", key_style),
-                    Span::styled("←↓↑→ ", desc_style),
                     Span::styled("aio", key_style),
                     Span::styled(" edit ", desc_style),
                     Span::styled("⏎", key_style),
-                    Span::styled(" submit", desc_style),
+                    Span::styled(" submit ", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
                 ]),
                 35 + editor_hint_len,
             )
@@ -1527,7 +1523,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  Ctrl-S     Settings (editor, commands)"),
+        Line::from("  Ctrl-,     Settings (editor, commands)"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(
