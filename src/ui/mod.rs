@@ -1282,9 +1282,6 @@ fn render_help_tab<'a>(
 
         crate::model::TaskStatus::Queued => {
             lines.push(Line::from(vec![
-                Span::styled(" s ", *key_style), Span::styled(" Start immediately", *label_style),
-            ]));
-            lines.push(Line::from(vec![
                 Span::styled(" e ", *key_style), Span::styled(" Edit task", *label_style),
             ]));
             lines.push(Line::from(vec![
@@ -1293,9 +1290,6 @@ fn render_help_tab<'a>(
         }
 
         crate::model::TaskStatus::InProgress => {
-            lines.push(Line::from(vec![
-                Span::styled(" s ", *key_style), Span::styled(" Switch to Claude session", *label_style),
-            ]));
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
@@ -1317,9 +1311,6 @@ fn render_help_tab<'a>(
         }
 
         crate::model::TaskStatus::NeedsInput => {
-            lines.push(Line::from(vec![
-                Span::styled(" s ", *key_style), Span::styled(" Continue / switch to session", *label_style),
-            ]));
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));

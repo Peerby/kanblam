@@ -1213,53 +1213,18 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             }
         }
 
-        // Start/Continue task
-        // In Planned/Queued: Start with worktree isolation
-        // In Review/NeedsInput: Continue the task
-        // In InProgress: Switch to task window
-        KeyCode::Char('s') => {
+        // Start task - only available in Planned phase
+        KeyCode::Char('s') if app.model.ui_state.selected_column == TaskStatus::Planned => {
             if let Some(project) = app.model.active_project() {
-                let column = app.model.ui_state.selected_column;
-                let tasks = project.tasks_by_status(column);
+                let tasks = project.tasks_by_status(TaskStatus::Planned);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        match column {
-                            TaskStatus::Planned | TaskStatus::Queued => {
-                                // Start with worktree isolation if it's a git repo
-                                if project.is_git_repo() {
-                                    return vec![Message::StartTaskWithWorktree(task.id)];
-                                } else {
-                                    // Fall back to legacy start (without worktree)
-                                    return vec![Message::StartTask(task.id)];
-                                }
-                            }
-                            TaskStatus::Review | TaskStatus::NeedsInput => {
-                                // Continue the task (switch to tmux window)
-                                if task.worktree_path.is_some() {
-                                    return vec![Message::ContinueTask(task.id)];
-                                } else {
-                                    // Legacy: reset without worktree
-                                    return vec![Message::StartTask(task.id)];
-                                }
-                            }
-                            TaskStatus::InProgress => {
-                                // Switch to task window
-                                if task.tmux_window.is_some() {
-                                    return vec![Message::SwitchToTaskWindow(task.id)];
-                                }
-                            }
-                            TaskStatus::Accepting => {
-                                // Task is being rebased for accept - can't interact via s
-                            }
-                            TaskStatus::Updating => {
-                                // Task is being rebased for update - can't interact via s
-                            }
-                            TaskStatus::Applying => {
-                                // Task changes are being applied - can't interact via s
-                            }
-                            TaskStatus::Done => {
-                                // Can't do anything with done tasks via s
-                            }
+                        // Start with worktree isolation if it's a git repo
+                        if project.is_git_repo() {
+                            return vec![Message::StartTaskWithWorktree(task.id)];
+                        } else {
+                            // Fall back to legacy start (without worktree)
+                            return vec![Message::StartTask(task.id)];
                         }
                     }
                 }
@@ -1741,30 +1706,15 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         // PHASE-SPECIFIC ACTIONS (close modal then execute)
         // ═══════════════════════════════════════════════════════════════════
 
-        // Start task (Planned/Queued) or switch to session (InProgress/NeedsInput/Review)
-        KeyCode::Char('s') => {
+        // Start task - only available in Planned phase
+        KeyCode::Char('s') if task.status == TaskStatus::Planned => {
             let mut msgs = vec![Message::ToggleTaskPreview];
-            match task.status {
-                TaskStatus::Planned | TaskStatus::Queued => {
-                    if let Some(project) = app.model.active_project() {
-                        if project.is_git_repo() {
-                            msgs.push(Message::StartTaskWithWorktree(task.id));
-                        } else {
-                            msgs.push(Message::StartTask(task.id));
-                        }
-                    }
+            if let Some(project) = app.model.active_project() {
+                if project.is_git_repo() {
+                    msgs.push(Message::StartTaskWithWorktree(task.id));
+                } else {
+                    msgs.push(Message::StartTask(task.id));
                 }
-                TaskStatus::Review | TaskStatus::NeedsInput => {
-                    if task.worktree_path.is_some() {
-                        msgs.push(Message::ContinueTask(task.id));
-                    }
-                }
-                TaskStatus::InProgress => {
-                    if task.tmux_window.is_some() {
-                        msgs.push(Message::SwitchToTaskWindow(task.id));
-                    }
-                }
-                _ => {}
             }
             msgs
         }
