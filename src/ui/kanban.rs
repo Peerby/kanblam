@@ -560,8 +560,6 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("el", desc_style),
         ],
         TaskStatus::InProgress => vec![
-            Span::styled("s", key_style),
-            Span::styled("witch ", desc_style),
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
@@ -574,8 +572,6 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("-reset", desc_style),
         ],
         TaskStatus::NeedsInput => vec![
-            Span::styled("s", key_style),
-            Span::styled("witch ", desc_style),
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
@@ -773,8 +769,6 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("el", desc_style),
         ],
         TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
-            Span::styled("s", key_style),
-            Span::styled("w ", desc_style),
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
@@ -835,7 +829,6 @@ fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("d", key_style),
         ],
         TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
-            Span::styled("s", key_style), sep.clone(),
             Span::styled("o", key_style), sep.clone(),
             Span::styled("t", key_style), sep.clone(),
             Span::styled("r", key_style), sep.clone(),
