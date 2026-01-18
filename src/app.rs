@@ -2637,18 +2637,41 @@ impl App {
                                         self.model.ui_state.open_project_dialog_slot = None;
                                         self.model.ui_state.directory_browser = None;
                                     } else {
-                                        // Valid git repo with commits - open directly
-                                        let mut project = Project::new(name, path);
-                                        // Load any existing tasks from the project's .kanblam/tasks.json
-                                        project.load_tasks();
-                                        self.model.projects.push(project);
-                                        self.model.active_project_idx = slot;
-                                        self.model.ui_state.selected_task_idx = None;
-                                        self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                        // Valid git repo with commits - check .gitignore
+                                        let missing_entries =
+                                            crate::worktree::git::gitignore_missing_kanblam_entries(&path);
+                                        if !missing_entries.is_empty() {
+                                            // Ask permission to add missing entries
+                                            commands.push(Message::ShowConfirmation {
+                                                message: format!(
+                                                    "'{}' .gitignore is missing KanBlam entries:\n  {}\n\nAdd them? (y/n)",
+                                                    name,
+                                                    missing_entries.join(", ")
+                                                ),
+                                                action: PendingAction::UpdateGitignore {
+                                                    path: path.clone(),
+                                                    name: name.clone(),
+                                                    slot,
+                                                    missing_entries,
+                                                },
+                                            });
+                                            // Close the browser dialog (confirmation will handle opening)
+                                            self.model.ui_state.open_project_dialog_slot = None;
+                                            self.model.ui_state.directory_browser = None;
+                                        } else {
+                                            // All good - open directly
+                                            let mut project = Project::new(name, path);
+                                            // Load any existing tasks from the project's .kanblam/tasks.json
+                                            project.load_tasks();
+                                            self.model.projects.push(project);
+                                            self.model.active_project_idx = slot;
+                                            self.model.ui_state.selected_task_idx = None;
+                                            self.model.ui_state.focus = FocusArea::KanbanBoard;
 
-                                        // Close the dialog
-                                        self.model.ui_state.open_project_dialog_slot = None;
-                                        self.model.ui_state.directory_browser = None;
+                                            // Close the dialog
+                                            self.model.ui_state.open_project_dialog_slot = None;
+                                            self.model.ui_state.directory_browser = None;
+                                        }
                                     }
                                 }
                             }
@@ -2712,18 +2735,41 @@ impl App {
                             self.model.ui_state.open_project_dialog_slot = None;
                             self.model.ui_state.directory_browser = None;
                         } else {
-                            // Valid git repo with commits - open directly
-                            let mut project = Project::new(name, path);
-                            // Load any existing tasks from the project's .kanblam/tasks.json
-                            project.load_tasks();
-                            self.model.projects.push(project);
-                            self.model.active_project_idx = slot;
-                            self.model.ui_state.selected_task_idx = None;
-                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+                            // Valid git repo with commits - check .gitignore
+                            let missing_entries =
+                                crate::worktree::git::gitignore_missing_kanblam_entries(&path);
+                            if !missing_entries.is_empty() {
+                                // Ask permission to add missing entries
+                                commands.push(Message::ShowConfirmation {
+                                    message: format!(
+                                        "'{}' .gitignore is missing KanBlam entries:\n  {}\n\nAdd them? (y/n)",
+                                        name,
+                                        missing_entries.join(", ")
+                                    ),
+                                    action: PendingAction::UpdateGitignore {
+                                        path: path.clone(),
+                                        name: name.clone(),
+                                        slot,
+                                        missing_entries,
+                                    },
+                                });
+                                // Close the browser dialog (confirmation will handle opening)
+                                self.model.ui_state.open_project_dialog_slot = None;
+                                self.model.ui_state.directory_browser = None;
+                            } else {
+                                // All good - open directly
+                                let mut project = Project::new(name, path);
+                                // Load any existing tasks from the project's .kanblam/tasks.json
+                                project.load_tasks();
+                                self.model.projects.push(project);
+                                self.model.active_project_idx = slot;
+                                self.model.ui_state.selected_task_idx = None;
+                                self.model.ui_state.focus = FocusArea::KanbanBoard;
 
-                            // Close the dialog
-                            self.model.ui_state.open_project_dialog_slot = None;
-                            self.model.ui_state.directory_browser = None;
+                                // Close the dialog
+                                self.model.ui_state.open_project_dialog_slot = None;
+                                self.model.ui_state.directory_browser = None;
+                            }
                         }
                     }
                 }
@@ -3185,6 +3231,28 @@ impl App {
                             // User chose to use smart apply with Claude
                             commands.push(Message::StartApplySession { task_id });
                         }
+                        PendingAction::UpdateGitignore { path, name, slot, .. } => {
+                            // User confirmed adding KanBlam entries to .gitignore
+                            match crate::worktree::git::ensure_gitignore_has_kanblam_entries(&path) {
+                                Ok(()) => {
+                                    // Now open the project
+                                    let mut project = Project::new(name.clone(), path);
+                                    project.load_tasks();
+                                    self.model.projects.push(project);
+                                    self.model.active_project_idx = slot;
+                                    self.model.ui_state.selected_task_idx = None;
+                                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("Updated .gitignore and opened '{}'", name)
+                                    )));
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!(
+                                        "Failed to update .gitignore: {}", e
+                                    )));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -3281,6 +3349,18 @@ impl App {
                             // User cancelled smart apply - nothing to do
                             commands.push(Message::SetStatusMessage(Some(
                                 "Apply cancelled. Use 'p' to try again.".to_string()
+                            )));
+                        }
+                        PendingAction::UpdateGitignore { path, name, slot, .. } => {
+                            // User declined to update .gitignore - open anyway but warn
+                            let mut project = Project::new(name.clone(), path);
+                            project.load_tasks();
+                            self.model.projects.push(project);
+                            self.model.active_project_idx = slot;
+                            self.model.ui_state.selected_task_idx = None;
+                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Opened '{}' (warning: .gitignore not updated)", name)
                             )));
                         }
                     }

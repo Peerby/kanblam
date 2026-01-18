@@ -1002,6 +1002,9 @@ pub fn init_repo(project_dir: &PathBuf) -> Result<()> {
 
 /// Create an initial commit in a git repository
 pub fn create_initial_commit(project_dir: &PathBuf) -> Result<()> {
+    // Ensure .gitignore has KanBlam entries before the initial commit
+    ensure_gitignore_has_kanblam_entries(project_dir)?;
+
     // Add all files
     let add_output = Command::new("git")
         .current_dir(project_dir)
@@ -1024,6 +1027,63 @@ pub fn create_initial_commit(project_dir: &PathBuf) -> Result<()> {
         return Err(anyhow!("Failed to create initial commit: {}", stderr));
     }
 
+    Ok(())
+}
+
+/// Required entries for KanBlam to work properly with git
+const KANBLAM_GITIGNORE_ENTRIES: &[&str] = &[".claude/", "worktrees/"];
+
+/// Check if .gitignore is missing any KanBlam-required entries
+pub fn gitignore_missing_kanblam_entries(project_dir: &PathBuf) -> Vec<String> {
+    let gitignore_path = project_dir.join(".gitignore");
+    let existing_content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+
+    let mut missing = Vec::new();
+    for entry in KANBLAM_GITIGNORE_ENTRIES {
+        // Check if the entry exists (with or without trailing newline, commented out doesn't count)
+        let has_entry = existing_content.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed == *entry || trimmed == entry.trim_end_matches('/')
+        });
+        if !has_entry {
+            missing.push(entry.to_string());
+        }
+    }
+    missing
+}
+
+/// Ensure .gitignore contains KanBlam-required entries (creates file if missing)
+pub fn ensure_gitignore_has_kanblam_entries(project_dir: &PathBuf) -> Result<()> {
+    let gitignore_path = project_dir.join(".gitignore");
+    let missing = gitignore_missing_kanblam_entries(project_dir);
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    // Read existing content or start fresh
+    let existing_content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+
+    // Build new content
+    let mut new_content = existing_content.clone();
+
+    // Add a section header if we're adding entries
+    if !missing.is_empty() {
+        // Ensure there's a newline before our section if file has content
+        if !new_content.is_empty() && !new_content.ends_with('\n') {
+            new_content.push('\n');
+        }
+        if !new_content.is_empty() {
+            new_content.push('\n');
+        }
+        new_content.push_str("# KanBlam (Claude Code task manager)\n");
+        for entry in &missing {
+            new_content.push_str(entry);
+            new_content.push('\n');
+        }
+    }
+
+    std::fs::write(&gitignore_path, new_content)?;
     Ok(())
 }
 

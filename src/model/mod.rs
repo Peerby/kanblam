@@ -1889,6 +1889,14 @@ pub enum PendingAction {
     /// Apply conflict - show conflict details in scrollable modal
     /// Options: y=try smart apply with Claude, n=cancel
     ApplyConflict { task_id: Uuid, conflict_output: String },
+    /// Project .gitignore is missing KanBlam entries (.claude/, worktrees/)
+    /// Options: y=add entries, n=open anyway without adding
+    UpdateGitignore {
+        path: PathBuf,
+        name: String,
+        slot: usize,
+        missing_entries: Vec<String>,
+    },
 }
 
 /// Which UI element has focus
