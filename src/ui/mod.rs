@@ -1527,8 +1527,9 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Projects", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  1-9        Switch to project N / open new project"),
-        Line::from("  Ctrl-D     Close current project"),
+        Line::from("  !/Shift-1  Open project"),
+        Line::from("  @-(/Shift-2-9  Switch to project N"),
+        Line::from("  Ctrl-D     Close current active project"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Sessions", Style::default().add_modifier(Modifier::UNDERLINED)),
