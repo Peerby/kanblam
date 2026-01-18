@@ -79,17 +79,15 @@ impl Default for GlobalSettings {
     }
 }
 
-/// Simple directory browser for project selection
-#[derive(Debug, Clone)]
-pub struct DirectoryBrowser {
-    /// Current directory being browsed
-    pub current_dir: PathBuf,
-    /// List of entries in the current directory (directories only)
-    pub entries: Vec<DirEntry>,
-    /// Currently selected index
-    pub selected_idx: usize,
-    /// Scroll offset for display
-    pub scroll_offset: usize,
+/// Special entry types for directory browser
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpecialEntry {
+    #[default]
+    None,
+    /// "[New Project Here]" action item
+    NewProjectHere,
+    /// Parent directory ".."
+    ParentDir,
 }
 
 /// A directory entry
@@ -98,36 +96,67 @@ pub struct DirEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    pub special: SpecialEntry,
 }
 
-impl DirectoryBrowser {
-    /// Create a new directory browser starting at the given path
-    pub fn new(start_dir: PathBuf) -> std::io::Result<Self> {
-        let mut browser = Self {
-            current_dir: start_dir,
-            entries: Vec::new(),
-            selected_idx: 0,
-            scroll_offset: 0,
-        };
-        browser.refresh()?;
-        Ok(browser)
-    }
+/// State for a single Miller column
+#[derive(Debug, Clone)]
+pub struct MillerColumn {
+    /// Directory this column displays
+    pub dir: PathBuf,
+    /// Entries in this column
+    pub entries: Vec<DirEntry>,
+    /// Selected index in this column
+    pub selected_idx: usize,
+}
 
-    /// Refresh the directory listing
-    pub fn refresh(&mut self) -> std::io::Result<()> {
-        self.entries.clear();
+/// Result of entering a selected item
+#[derive(Debug, Clone)]
+pub enum EnterResult {
+    /// Navigated into a directory
+    NavigatedInto,
+    /// Selected "[New Project Here]" - open this directory as project
+    OpenProject(PathBuf),
+    /// Nothing happened
+    Nothing,
+}
+
+/// Miller columns directory browser for project selection
+#[derive(Debug, Clone)]
+pub struct DirectoryBrowser {
+    /// The three columns: grandparent (0), parent (1), current (2)
+    pub columns: [Option<MillerColumn>; 3],
+    /// Which column is currently active (0, 1, or 2)
+    pub active_column: usize,
+}
+
+impl MillerColumn {
+    /// Load a column for a directory
+    fn load(dir: PathBuf, include_new_project: bool) -> std::io::Result<Self> {
+        let mut entries = Vec::new();
+
+        // Add "[New Project Here]" if requested (for the active/rightmost column)
+        if include_new_project {
+            entries.push(DirEntry {
+                name: "[New Project Here]".to_string(),
+                path: dir.clone(),
+                is_dir: false,
+                special: SpecialEntry::NewProjectHere,
+            });
+        }
 
         // Add parent directory entry if not at root
-        if let Some(parent) = self.current_dir.parent() {
-            self.entries.push(DirEntry {
+        if dir.parent().is_some() {
+            entries.push(DirEntry {
                 name: "..".to_string(),
-                path: parent.to_path_buf(),
+                path: dir.parent().unwrap().to_path_buf(),
                 is_dir: true,
+                special: SpecialEntry::ParentDir,
             });
         }
 
         // Read directory entries
-        let read_dir = std::fs::read_dir(&self.current_dir)?;
+        let read_dir = std::fs::read_dir(&dir)?;
         let mut dirs: Vec<DirEntry> = Vec::new();
 
         for entry in read_dir.flatten() {
@@ -144,84 +173,374 @@ impl DirectoryBrowser {
                     name,
                     path,
                     is_dir: true,
+                    special: SpecialEntry::None,
                 });
             }
         }
 
         // Sort directories alphabetically
         dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        self.entries.extend(dirs);
+        entries.extend(dirs);
 
-        // Reset selection if out of bounds
-        if self.selected_idx >= self.entries.len() {
-            self.selected_idx = 0;
+        Ok(Self {
+            dir,
+            entries,
+            selected_idx: 0,
+        })
+    }
+
+    /// Get the selected entry
+    fn selected(&self) -> Option<&DirEntry> {
+        self.entries.get(self.selected_idx)
+    }
+
+    /// Get the selected directory path (for regular directories, not special entries)
+    fn selected_dir_path(&self) -> Option<&PathBuf> {
+        self.selected().and_then(|e| {
+            if e.is_dir && e.special == SpecialEntry::None {
+                Some(&e.path)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl DirectoryBrowser {
+    /// Create a new Miller columns browser starting at the given path
+    pub fn new(start_dir: PathBuf) -> std::io::Result<Self> {
+        let mut browser = Self {
+            columns: [None, None, None],
+            active_column: 2,
+        };
+        browser.navigate_to(start_dir)?;
+        Ok(browser)
+    }
+
+    /// Navigate to a specific directory, setting up all columns
+    fn navigate_to(&mut self, dir: PathBuf) -> std::io::Result<()> {
+        // Current column (rightmost, index 2)
+        let current = MillerColumn::load(dir.clone(), true)?;
+
+        // Parent column (index 1)
+        let parent = if let Some(parent_dir) = dir.parent() {
+            Some(MillerColumn::load(parent_dir.to_path_buf(), false)?)
+        } else {
+            None
+        };
+
+        // Grandparent column (index 0)
+        let grandparent = if let Some(ref parent_col) = parent {
+            if let Some(gp_dir) = parent_col.dir.parent() {
+                Some(MillerColumn::load(gp_dir.to_path_buf(), false)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.columns = [grandparent, parent, Some(current)];
+        self.active_column = 2;
+
+        // Select the current directory in parent column
+        if let Some(ref mut parent_col) = self.columns[1] {
+            if let Some(idx) = parent_col.entries.iter().position(|e| e.path == dir) {
+                parent_col.selected_idx = idx;
+            }
         }
-        self.scroll_offset = 0;
+
+        // Select the parent directory in grandparent column
+        // Clone the parent dir first to avoid borrow checker issues
+        let parent_dir_opt = self.columns[1].as_ref().map(|c| c.dir.clone());
+        if let (Some(ref mut gp_col), Some(parent_dir)) = (&mut self.columns[0], parent_dir_opt) {
+            if let Some(idx) = gp_col.entries.iter().position(|e| e.path == parent_dir) {
+                gp_col.selected_idx = idx;
+            }
+        }
 
         Ok(())
     }
 
-    /// Move selection up
+    /// Get the active column
+    fn active_column_mut(&mut self) -> Option<&mut MillerColumn> {
+        self.columns[self.active_column].as_mut()
+    }
+
+    /// Get the active column (immutable)
+    pub fn active_column_ref(&self) -> Option<&MillerColumn> {
+        self.columns[self.active_column].as_ref()
+    }
+
+    /// Move selection up in active column
     pub fn move_up(&mut self) {
-        if self.selected_idx > 0 {
-            self.selected_idx -= 1;
-        }
-    }
-
-    /// Move selection down
-    pub fn move_down(&mut self) {
-        if !self.entries.is_empty() && self.selected_idx < self.entries.len() - 1 {
-            self.selected_idx += 1;
-        }
-    }
-
-    /// Jump to first entry
-    pub fn move_to_start(&mut self) {
-        self.selected_idx = 0;
-    }
-
-    /// Jump to last entry
-    pub fn move_to_end(&mut self) {
-        if !self.entries.is_empty() {
-            self.selected_idx = self.entries.len() - 1;
-        }
-    }
-
-    /// Enter the selected directory
-    pub fn enter_selected(&mut self) -> std::io::Result<bool> {
-        if let Some(entry) = self.entries.get(self.selected_idx) {
-            if entry.is_dir {
-                self.current_dir = entry.path.clone();
-                self.refresh()?;
-                return Ok(true);
+        if let Some(col) = self.active_column_mut() {
+            if col.selected_idx > 0 {
+                col.selected_idx -= 1;
+                self.sync_child_columns();
             }
         }
-        Ok(false)
     }
 
-    /// Go to parent directory
-    pub fn go_parent(&mut self) -> std::io::Result<bool> {
-        if let Some(parent) = self.current_dir.parent() {
-            self.current_dir = parent.to_path_buf();
-            self.refresh()?;
-            return Ok(true);
+    /// Move selection down in active column
+    pub fn move_down(&mut self) {
+        if let Some(col) = self.active_column_mut() {
+            if !col.entries.is_empty() && col.selected_idx < col.entries.len() - 1 {
+                col.selected_idx += 1;
+                self.sync_child_columns();
+            }
         }
-        Ok(false)
     }
 
-    /// Get the currently selected entry
+    /// Jump to first entry in active column
+    pub fn move_to_start(&mut self) {
+        if let Some(col) = self.active_column_mut() {
+            if col.selected_idx != 0 {
+                col.selected_idx = 0;
+                self.sync_child_columns();
+            }
+        }
+    }
+
+    /// Jump to last entry in active column
+    pub fn move_to_end(&mut self) {
+        if let Some(col) = self.active_column_mut() {
+            if !col.entries.is_empty() {
+                let last = col.entries.len() - 1;
+                if col.selected_idx != last {
+                    col.selected_idx = last;
+                    self.sync_child_columns();
+                }
+            }
+        }
+    }
+
+    /// Page up in active column
+    pub fn page_up(&mut self, count: usize) {
+        if let Some(col) = self.active_column_mut() {
+            let old_idx = col.selected_idx;
+            col.selected_idx = col.selected_idx.saturating_sub(count);
+            if col.selected_idx != old_idx {
+                self.sync_child_columns();
+            }
+        }
+    }
+
+    /// Page down in active column
+    pub fn page_down(&mut self, count: usize) {
+        if let Some(col) = self.active_column_mut() {
+            if !col.entries.is_empty() {
+                let old_idx = col.selected_idx;
+                col.selected_idx = (col.selected_idx + count).min(col.entries.len() - 1);
+                if col.selected_idx != old_idx {
+                    self.sync_child_columns();
+                }
+            }
+        }
+    }
+
+    /// Jump to first entry starting with character in active column
+    pub fn jump_to_letter(&mut self, c: char) {
+        let lower_c = c.to_ascii_lowercase();
+        if let Some(col) = self.active_column_mut() {
+            // Find first regular directory entry starting with this letter
+            for (idx, entry) in col.entries.iter().enumerate() {
+                // Skip special entries
+                if entry.special != SpecialEntry::None {
+                    continue;
+                }
+                if entry
+                    .name
+                    .chars()
+                    .next()
+                    .map(|first| first.to_ascii_lowercase() == lower_c)
+                    .unwrap_or(false)
+                {
+                    if col.selected_idx != idx {
+                        col.selected_idx = idx;
+                        self.sync_child_columns();
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Move focus left to parent column
+    pub fn move_left(&mut self) {
+        if self.active_column > 0 && self.columns[self.active_column - 1].is_some() {
+            self.active_column -= 1;
+        } else if self.active_column == 0 {
+            // At leftmost column, try to navigate up to show grandparent
+            // Clone the dir first to avoid borrow checker issues
+            let col_dir = self.columns[0].as_ref().map(|c| c.dir.clone());
+            if let Some(dir) = col_dir {
+                if let Some(parent) = dir.parent() {
+                    // Shift to show the parent as the new rightmost column
+                    let _ = self.shift_columns_left(parent.to_path_buf());
+                }
+            }
+        }
+    }
+
+    /// Move focus right to child column or enter directory
+    pub fn move_right(&mut self) -> std::io::Result<()> {
+        if self.active_column < 2 && self.columns[self.active_column + 1].is_some() {
+            // Move focus right
+            self.active_column += 1;
+        } else if self.active_column == 2 {
+            // At rightmost column, enter selected directory
+            if let Some(ref col) = self.columns[2] {
+                if let Some(entry) = col.entries.get(col.selected_idx) {
+                    if entry.is_dir && entry.special == SpecialEntry::None {
+                        self.enter_directory(entry.path.clone())?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Shift all columns left and load new content for a directory
+    fn shift_columns_left(&mut self, new_current_dir: PathBuf) -> std::io::Result<()> {
+        self.navigate_to(new_current_dir)?;
+        self.active_column = 2;
+        Ok(())
+    }
+
+    /// Enter a directory, shifting columns
+    fn enter_directory(&mut self, dir: PathBuf) -> std::io::Result<()> {
+        self.navigate_to(dir)?;
+        Ok(())
+    }
+
+    /// Sync child columns when selection changes in a non-rightmost column
+    fn sync_child_columns(&mut self) {
+        // If active column is not the rightmost, update columns to the right
+        if self.active_column < 2 {
+            if let Some(ref col) = self.columns[self.active_column] {
+                if let Some(selected_path) = col.selected_dir_path() {
+                    // Update the next column to show selected directory's contents
+                    let is_rightmost_child = self.active_column == 1;
+                    if let Ok(child_col) = MillerColumn::load(selected_path.clone(), is_rightmost_child) {
+                        self.columns[self.active_column + 1] = Some(child_col);
+
+                        // If we updated column 1, also update column 2
+                        if self.active_column == 0 {
+                            if let Some(ref col1) = self.columns[1] {
+                                if let Some(child_path) = col1.selected_dir_path() {
+                                    if let Ok(col2) = MillerColumn::load(child_path.clone(), true) {
+                                        self.columns[2] = Some(col2);
+                                    }
+                                } else {
+                                    // No valid selection in column 1, clear column 2
+                                    self.columns[2] = None;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Selected item is not a navigable directory, clear child columns
+                    for i in (self.active_column + 1)..3 {
+                        self.columns[i] = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Enter the selected item - opens project or navigates for special entries
+    pub fn enter_selected(&mut self) -> std::io::Result<EnterResult> {
+        let (entry_clone, col_dir) = {
+            let col = match self.columns[self.active_column].as_ref() {
+                Some(c) => c,
+                None => return Ok(EnterResult::Nothing),
+            };
+            let entry = match col.entries.get(col.selected_idx) {
+                Some(e) => e,
+                None => return Ok(EnterResult::Nothing),
+            };
+            (entry.clone(), col.dir.clone())
+        };
+
+        match entry_clone.special {
+            SpecialEntry::NewProjectHere => {
+                // Open current column's directory as project
+                Ok(EnterResult::OpenProject(col_dir))
+            }
+            SpecialEntry::ParentDir => {
+                // Navigate to parent (don't open as project)
+                self.navigate_to(entry_clone.path)?;
+                Ok(EnterResult::NavigatedInto)
+            }
+            SpecialEntry::None => {
+                if entry_clone.is_dir {
+                    // Open selected directory as project
+                    Ok(EnterResult::OpenProject(entry_clone.path))
+                } else {
+                    Ok(EnterResult::Nothing)
+                }
+            }
+        }
+    }
+
+    /// Get a preview of the selected directory's contents (for showing in next column)
+    pub fn get_preview_entries(&self) -> Option<Vec<DirEntry>> {
+        let col = self.columns[self.active_column].as_ref()?;
+        let entry = col.entries.get(col.selected_idx)?;
+
+        // Only preview regular directories
+        if entry.special != SpecialEntry::None || !entry.is_dir {
+            return None;
+        }
+
+        // Try to load preview entries
+        let read_dir = std::fs::read_dir(&entry.path).ok()?;
+        let mut dirs: Vec<DirEntry> = Vec::new();
+
+        for dir_entry in read_dir.flatten() {
+            let path = dir_entry.path();
+            let name = dir_entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden files/directories
+            if name.starts_with('.') {
+                continue;
+            }
+
+            if path.is_dir() {
+                dirs.push(DirEntry {
+                    name,
+                    path,
+                    is_dir: true,
+                    special: SpecialEntry::None,
+                });
+            }
+        }
+
+        // Sort directories alphabetically
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Some(dirs)
+    }
+
+    /// Get the currently selected entry in active column
     pub fn selected(&self) -> Option<&DirEntry> {
-        self.entries.get(self.selected_idx)
+        self.columns[self.active_column]
+            .as_ref()
+            .and_then(|col| col.entries.get(col.selected_idx))
     }
 
-    /// Get the current directory
-    pub fn cwd(&self) -> &PathBuf {
-        &self.current_dir
+    /// Get the current directory (from the active column)
+    pub fn cwd(&self) -> Option<&PathBuf> {
+        self.columns[self.active_column].as_ref().map(|col| &col.dir)
     }
 
-    /// Create a new folder in the current directory and initialize it with git.
-    /// Returns the path to the created folder on success.
+    /// Create a new folder in the active column's directory and initialize it with git.
     pub fn create_folder(&mut self, name: &str) -> std::io::Result<PathBuf> {
+        let current_dir = self.columns[self.active_column]
+            .as_ref()
+            .map(|col| col.dir.clone())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "No active column"))?;
+
         // Validate folder name
         if name.is_empty() || name == "." || name == ".." {
             return Err(std::io::Error::new(
@@ -238,7 +557,7 @@ impl DirectoryBrowser {
             ));
         }
 
-        let folder_path = self.current_dir.join(name);
+        let folder_path = current_dir.join(name);
 
         // Check if folder already exists
         if folder_path.exists() {
@@ -269,12 +588,14 @@ impl DirectoryBrowser {
             ));
         }
 
-        // Refresh the directory listing to show the new folder
-        self.refresh()?;
+        // Refresh by re-navigating to current directory
+        self.navigate_to(current_dir)?;
 
         // Select the newly created folder
-        if let Some(idx) = self.entries.iter().position(|e| e.path == folder_path) {
-            self.selected_idx = idx;
+        if let Some(ref mut col) = self.columns[self.active_column] {
+            if let Some(idx) = col.entries.iter().position(|e| e.path == folder_path) {
+                col.selected_idx = idx;
+            }
         }
 
         Ok(folder_path)

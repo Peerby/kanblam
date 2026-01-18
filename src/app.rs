@@ -2463,10 +2463,10 @@ impl App {
                     if let Some(ref browser) = self.model.ui_state.directory_browser {
                         // Use the selected (cursor) directory as the project path
                         if let Some(selected) = browser.selected() {
-                            // Don't allow selecting ".." as project
-                            if selected.name == ".." {
+                            // Don't allow selecting ".." or special entries as project
+                            if selected.special != crate::model::SpecialEntry::None {
                                 commands.push(Message::SetStatusMessage(Some(
-                                    "Cannot select parent directory (..) - navigate into a directory first".to_string()
+                                    "Cannot select this item - use [New Project Here] or navigate into a directory".to_string()
                                 )));
                             } else {
                                 let path = selected.path.clone();
@@ -2492,6 +2492,29 @@ impl App {
                             }
                         }
                     }
+                }
+            }
+
+            Message::ConfirmOpenProjectPath(path) => {
+                if let Some(slot) = self.model.ui_state.open_project_dialog_slot {
+                    // Use the directory name as the project name
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("project")
+                        .to_string();
+
+                    let mut project = Project::new(name, path);
+                    // Load any existing tasks from the project's .kanblam/tasks.json
+                    project.load_tasks();
+                    self.model.projects.push(project);
+                    self.model.active_project_idx = slot;
+                    self.model.ui_state.selected_task_idx = None;
+                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                    // Close the dialog
+                    self.model.ui_state.open_project_dialog_slot = None;
+                    self.model.ui_state.directory_browser = None;
                 }
             }
 

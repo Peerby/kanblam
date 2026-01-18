@@ -5,7 +5,7 @@ mod output;
 mod status_bar;
 
 use crate::app::App;
-use crate::model::{FocusArea, TaskStatus};
+use crate::model::{DirEntry, FocusArea, MillerColumn, SpecialEntry, TaskStatus};
 use edtui::{EditorTheme, EditorView};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -1523,7 +1523,7 @@ fn render_queue_dialog(frame: &mut Frame, app: &App) {
 
 /// Render the open project dialog
 fn render_open_project_dialog(frame: &mut Frame, app: &App) {
-    let area = centered_rect(70, 70, frame.area());
+    let area = centered_rect(85, 75, frame.area());
 
     let slot = app.model.ui_state.open_project_dialog_slot.unwrap_or(0);
     let is_creating = app.model.ui_state.create_folder_input.is_some();
@@ -1531,14 +1531,14 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
     // Clear area first
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    // Split the area: title at top, current path, directory list in middle, create input (optional), hints at bottom
+    // Split the area: title, breadcrumb path, columns, create input (optional), hints
     let chunks = if is_creating {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),  // Title
-                Constraint::Length(2),  // Current path
-                Constraint::Min(8),     // Directory list
+                Constraint::Length(1),  // Breadcrumb path
+                Constraint::Min(8),     // Miller columns
                 Constraint::Length(3),  // Create folder input
                 Constraint::Length(2),  // Hints
             ])
@@ -1548,9 +1548,9 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),  // Title
-                Constraint::Length(2),  // Current path
-                Constraint::Min(10),    // Directory list
-                Constraint::Length(3),  // Hints
+                Constraint::Length(1),  // Breadcrumb path
+                Constraint::Min(10),    // Miller columns
+                Constraint::Length(2),  // Hints
             ])
             .split(area)
     };
@@ -1564,50 +1564,24 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
     ]));
     frame.render_widget(title, chunks[0]);
 
-    // Render directory browser
+    // Render directory browser with Miller columns
     if let Some(ref browser) = app.model.ui_state.directory_browser {
-        // Current path display
+        // Breadcrumb path display
+        let path_str = browser
+            .cwd()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "~".to_string());
         let path_display = Paragraph::new(Line::from(vec![
-            Span::styled(" 📁 ", Style::default().fg(Color::Yellow)),
+            Span::styled(" ", Style::default()),
             Span::styled(
-                browser.cwd().display().to_string(),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                path_str,
+                Style::default().fg(Color::DarkGray),
             ),
         ]));
         frame.render_widget(path_display, chunks[1]);
 
-        // Build list items from directory entries
-        let items: Vec<ListItem> = browser
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                let icon = if entry.name == ".." {
-                    "↩ "
-                } else {
-                    "📂 "
-                };
-                let style = if idx == browser.selected_idx {
-                    Style::default().bg(Color::Blue).fg(Color::White)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(icon, style),
-                    Span::styled(&entry.name, style),
-                ]))
-            })
-            .collect();
-
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green))
-                    .title(" Select Directory "),
-            );
-        let mut list_state = ListState::default().with_selected(Some(browser.selected_idx));
-        frame.render_stateful_widget(list, chunks[2], &mut list_state);
+        // Render three Miller columns
+        render_miller_columns(frame, chunks[2], browser, app);
     }
 
     // Render create folder input if in create mode
@@ -1634,18 +1608,189 @@ fn render_open_project_dialog(frame: &mut Frame, app: &App) {
         frame.render_widget(hints, chunks[4]);
     } else {
         // Render normal hints
-        let hints = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "↑↓/jk: Navigate  Space/Enter/l: Open dir  Backspace/h: Parent  Esc: Cancel",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(vec![
-                Span::styled("o: Open as project  ", Style::default().fg(Color::Yellow)),
-                Span::styled("c: Create new folder", Style::default().fg(Color::Green)),
-            ]),
-        ]);
+        let hints = Paragraph::new(Line::from(Span::styled(
+            "↑↓: Navigate  ←→: Columns  Enter: Open project  Esc: Cancel  Type letter to jump",
+            Style::default().fg(Color::DarkGray),
+        )));
         frame.render_widget(hints, chunks[3]);
     }
+}
+
+/// Render Miller columns (directory browser with preview)
+fn render_miller_columns(
+    frame: &mut Frame,
+    area: Rect,
+    browser: &crate::model::DirectoryBrowser,
+    _app: &App,
+) {
+    // Get preview entries for the selected directory
+    let preview_entries = browser.get_preview_entries();
+
+    // Determine which columns have content (up to and including active column)
+    // Don't show empty columns on the left when at root
+    let mut columns_to_show: Vec<(usize, &MillerColumn)> = Vec::new();
+    for col_idx in 0..=browser.active_column {
+        if let Some(ref column) = browser.columns[col_idx] {
+            columns_to_show.push((col_idx, column));
+        }
+    }
+
+    // Always show at least 2 columns: active + preview/empty on right
+    let num_content_columns = columns_to_show.len();
+    let total_columns = num_content_columns + 1; // +1 for preview column on right
+
+    // Calculate column widths - distribute evenly
+    let pct = 100 / total_columns as u16;
+    let mut constraints: Vec<Constraint> = Vec::new();
+    for i in 0..total_columns {
+        if i > 0 {
+            constraints.push(Constraint::Length(1)); // Separator
+        }
+        // Last column gets remaining percentage
+        if i == total_columns - 1 {
+            constraints.push(Constraint::Percentage(100 - pct * (total_columns as u16 - 1)));
+        } else {
+            constraints.push(Constraint::Percentage(pct));
+        }
+    }
+
+    let column_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+
+    // Render content columns (areas at indices 0, 2, 4, ... are columns; 1, 3, 5, ... are separators)
+    for (display_idx, (col_idx, column)) in columns_to_show.iter().enumerate() {
+        let chunk_idx = display_idx * 2; // Skip separator indices
+        let is_active = *col_idx == browser.active_column;
+        render_miller_column(frame, column_chunks[chunk_idx], column, is_active);
+    }
+
+    // Render separators between content columns
+    for sep_idx in 0..num_content_columns {
+        let chunk_idx = sep_idx * 2 + 1;
+        if chunk_idx < column_chunks.len() {
+            render_column_separator(frame, column_chunks[chunk_idx]);
+        }
+    }
+
+    // Render preview column on the right (always shown)
+    let preview_chunk_idx = num_content_columns * 2;
+    if preview_chunk_idx < column_chunks.len() {
+        if let Some(ref entries) = preview_entries {
+            render_preview_column(frame, column_chunks[preview_chunk_idx], entries, browser);
+        } else {
+            // Empty preview column
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(block, column_chunks[preview_chunk_idx]);
+        }
+    }
+}
+
+/// Render a single Miller column
+fn render_miller_column(
+    frame: &mut Frame,
+    area: Rect,
+    column: &MillerColumn,
+    is_active: bool,
+) {
+    let items: Vec<ListItem> = column
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let is_selected = idx == column.selected_idx;
+
+            // Determine display text and suffix
+            let (display_text, suffix) = match entry.special {
+                SpecialEntry::NewProjectHere => ("[New Project Here]".to_string(), ""),
+                SpecialEntry::ParentDir => ("..".to_string(), " ↩"),
+                SpecialEntry::None => (entry.name.clone(), if entry.is_dir { " →" } else { "" }),
+            };
+
+            // Styling based on selection and active state
+            let style = if is_selected && is_active {
+                Style::default().bg(Color::Blue).fg(Color::White)
+            } else if is_selected {
+                Style::default().fg(Color::Cyan)
+            } else if entry.special == SpecialEntry::NewProjectHere {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {}{} ", display_text, suffix), style),
+            ]))
+        })
+        .collect();
+
+    let border_color = if is_active { Color::Yellow } else { Color::DarkGray };
+
+    // Get directory name for title
+    let title = column
+        .dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| format!(" {} ", s))
+        .unwrap_or_else(|| " / ".to_string());
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(title),
+    );
+
+    let mut list_state = ListState::default().with_selected(Some(column.selected_idx));
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render a vertical separator between columns
+fn render_column_separator(frame: &mut Frame, area: Rect) {
+    let sep = Paragraph::new(
+        (0..area.height)
+            .map(|_| Line::from("│"))
+            .collect::<Vec<_>>(),
+    )
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(sep, area);
+}
+
+/// Render a preview column showing contents of selected directory
+fn render_preview_column(
+    frame: &mut Frame,
+    area: Rect,
+    entries: &[DirEntry],
+    browser: &crate::model::DirectoryBrowser,
+) {
+    // Get the selected entry name for the title
+    let title = browser
+        .selected()
+        .map(|e| format!(" {} ", e.name))
+        .unwrap_or_else(|| " Preview ".to_string());
+
+    let items: Vec<ListItem> = entries
+        .iter()
+        .map(|entry| {
+            let suffix = if entry.is_dir { " →" } else { "" };
+            let style = Style::default().fg(Color::DarkGray);
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {}{} ", entry.name, suffix), style),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(title),
+    );
+
+    frame.render_widget(list, area);
 }
 
 /// Helper function to create a centered rect

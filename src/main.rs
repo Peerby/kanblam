@@ -13,7 +13,7 @@ use app::{load_state, save_state, App, AsyncTaskSender};
 use chrono::Utc;
 use hooks::{HookWatcher, WatcherEvent};
 use message::Message;
-use model::{FocusArea, HookSignal, TaskStatus};
+use model::{EnterResult, FocusArea, HookSignal, TaskStatus};
 use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
@@ -1833,7 +1833,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
             vec![Message::CloseOpenProjectDialog]
         }
 
-        // Navigate up
+        // Navigate up in active column
         KeyCode::Up | KeyCode::Char('k') => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_up();
@@ -1841,7 +1841,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
             vec![]
         }
 
-        // Navigate down
+        // Navigate down in active column
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_down();
@@ -1849,7 +1849,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
             vec![]
         }
 
-        // Jump to start
+        // Jump to start of active column
         KeyCode::Home => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_to_start();
@@ -1857,7 +1857,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
             vec![]
         }
 
-        // Jump to end
+        // Jump to end of active column
         KeyCode::End => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_to_end();
@@ -1865,30 +1865,59 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
             vec![]
         }
 
-        // Enter selected directory (space, enter, or l)
-        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
+        // Page up - jump 5 folders up
+        KeyCode::PageUp => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
-                let _ = browser.enter_selected();
+                browser.page_up(5);
             }
             vec![]
         }
 
-        // Go to parent directory
-        KeyCode::Backspace | KeyCode::Char('h') => {
+        // Page down - jump 5 folders down
+        KeyCode::PageDown => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
-                let _ = browser.go_parent();
+                browser.page_down(5);
             }
             vec![]
         }
 
-        // Select current directory as project ('o' to open as project)
-        KeyCode::Char('o') => {
-            vec![Message::ConfirmOpenProject]
+        // Move focus left to parent column
+        KeyCode::Left | KeyCode::Char('h') | KeyCode::Backspace => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.move_left();
+            }
+            vec![]
         }
 
-        // Create new folder ('c' to create)
-        KeyCode::Char('c') => {
-            vec![Message::EnterCreateFolderMode]
+        // Move focus right to child column (or enter directory if at rightmost)
+        KeyCode::Right | KeyCode::Char('l') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                let _ = browser.move_right();
+            }
+            vec![]
+        }
+
+        // Enter/Space: open project or navigate into directory
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                match browser.enter_selected() {
+                    Ok(EnterResult::OpenProject(path)) => {
+                        return vec![Message::ConfirmOpenProjectPath(path)];
+                    }
+                    Ok(EnterResult::NavigatedInto) => {}
+                    Ok(EnterResult::Nothing) => {}
+                    Err(_) => {}
+                }
+            }
+            vec![]
+        }
+
+        // Jump to first folder starting with typed letter (all letters work now)
+        KeyCode::Char(c) if c.is_ascii_alphabetic() => {
+            if let Some(ref mut browser) = app.model.ui_state.directory_browser {
+                browser.jump_to_letter(c);
+            }
+            vec![]
         }
 
         _ => vec![]

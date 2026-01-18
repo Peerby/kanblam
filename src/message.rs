@@ -137,8 +137,10 @@ pub enum Message {
     ShowOpenProjectDialog { slot: usize },
     /// Close the open project dialog without opening
     CloseOpenProjectDialog,
-    /// Confirm the open project dialog and open the directory
+    /// Confirm the open project dialog and open the selected directory
     ConfirmOpenProject,
+    /// Confirm opening a specific path as project (from Miller columns [New Project Here])
+    ConfirmOpenProjectPath(PathBuf),
     /// Close a project (with confirmation if it has active tasks)
     CloseProject(usize),
     /// Enter create folder mode in the open project dialog
