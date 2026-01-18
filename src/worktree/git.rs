@@ -1064,11 +1064,51 @@ pub fn ensure_gitignore_has_kanblam_entries(project_dir: &PathBuf) -> Result<()>
     // Read existing content or start fresh
     let existing_content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
 
-    // Build new content
-    let mut new_content = existing_content.clone();
+    // Check if there's already a KanBlam section we can append to
+    const KANBLAM_HEADER: &str = "# KanBlam";
+    let lines: Vec<&str> = existing_content.lines().collect();
 
-    // Add a section header if we're adding entries
-    if !missing.is_empty() {
+    // Find the KanBlam section if it exists
+    let kanblam_section_idx = lines.iter().position(|line| line.starts_with(KANBLAM_HEADER));
+
+    let new_content = if let Some(header_idx) = kanblam_section_idx {
+        // Find where to insert: after the header and any existing KanBlam entries
+        // We insert after consecutive non-empty, non-comment lines following the header
+        let mut insert_idx = header_idx + 1;
+        while insert_idx < lines.len() {
+            let line = lines[insert_idx].trim();
+            // Stop if we hit an empty line or another comment (new section)
+            if line.is_empty() || line.starts_with('#') {
+                break;
+            }
+            insert_idx += 1;
+        }
+
+        // Build new content by inserting missing entries at the right position
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            result.push_str(line);
+            result.push('\n');
+            if i + 1 == insert_idx {
+                // Insert missing entries here
+                for entry in &missing {
+                    result.push_str(entry);
+                    result.push('\n');
+                }
+            }
+        }
+        // Handle edge case: insert at the very end
+        if insert_idx >= lines.len() {
+            for entry in &missing {
+                result.push_str(entry);
+                result.push('\n');
+            }
+        }
+        result
+    } else {
+        // No existing KanBlam section - add a new one at the end
+        let mut new_content = existing_content.clone();
+
         // Ensure there's a newline before our section if file has content
         if !new_content.is_empty() && !new_content.ends_with('\n') {
             new_content.push('\n');
@@ -1081,7 +1121,8 @@ pub fn ensure_gitignore_has_kanblam_entries(project_dir: &PathBuf) -> Result<()>
             new_content.push_str(entry);
             new_content.push('\n');
         }
-    }
+        new_content
+    };
 
     std::fs::write(&gitignore_path, new_content)?;
     Ok(())
@@ -2401,6 +2442,8 @@ pub fn get_stash_details(project_dir: &PathBuf, stash_sha: &str) -> Result<(usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_worktree_path() {
@@ -2410,5 +2453,127 @@ mod tests {
         assert!(path.to_string_lossy().contains(".worktrees"));
         assert!(path.to_string_lossy().contains(&format!("task-{}", task_id)));
         assert!(path.starts_with(&project_dir));
+    }
+
+    #[test]
+    fn test_gitignore_missing_entries_empty_file() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        // No .gitignore file - both entries should be missing
+        let missing = gitignore_missing_kanblam_entries(&project_dir);
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&".claude/".to_string()));
+        assert!(missing.contains(&"worktrees/".to_string()));
+    }
+
+    #[test]
+    fn test_gitignore_missing_entries_partial() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        // Only .claude/ present
+        fs::write(project_dir.join(".gitignore"), ".claude/\n").unwrap();
+        let missing = gitignore_missing_kanblam_entries(&project_dir);
+        assert_eq!(missing.len(), 1);
+        assert!(missing.contains(&"worktrees/".to_string()));
+
+        // Only worktrees/ present
+        fs::write(project_dir.join(".gitignore"), "worktrees/\n").unwrap();
+        let missing = gitignore_missing_kanblam_entries(&project_dir);
+        assert_eq!(missing.len(), 1);
+        assert!(missing.contains(&".claude/".to_string()));
+    }
+
+    #[test]
+    fn test_gitignore_missing_entries_all_present() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        fs::write(project_dir.join(".gitignore"), ".claude/\nworktrees/\n").unwrap();
+        let missing = gitignore_missing_kanblam_entries(&project_dir);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn test_ensure_gitignore_creates_new_section() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        // Existing content without KanBlam section
+        fs::write(project_dir.join(".gitignore"), "node_modules/\n.env\n").unwrap();
+
+        ensure_gitignore_has_kanblam_entries(&project_dir).unwrap();
+
+        let content = fs::read_to_string(project_dir.join(".gitignore")).unwrap();
+        assert!(content.contains("# KanBlam"));
+        assert!(content.contains(".claude/"));
+        assert!(content.contains("worktrees/"));
+        // Original content preserved
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains(".env"));
+    }
+
+    #[test]
+    fn test_ensure_gitignore_appends_to_existing_section() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        // Existing KanBlam section with only .claude/
+        let initial = "node_modules/\n\n# KanBlam (Claude Code task manager)\n.claude/\n\n# Other section\nfoo/\n";
+        fs::write(project_dir.join(".gitignore"), initial).unwrap();
+
+        ensure_gitignore_has_kanblam_entries(&project_dir).unwrap();
+
+        let content = fs::read_to_string(project_dir.join(".gitignore")).unwrap();
+
+        // Should have exactly one KanBlam header
+        let header_count = content.matches("# KanBlam").count();
+        assert_eq!(header_count, 1, "Should have exactly one KanBlam header, found: {}", header_count);
+
+        // Both entries present
+        assert!(content.contains(".claude/"));
+        assert!(content.contains("worktrees/"));
+
+        // Other content preserved
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains("# Other section"));
+        assert!(content.contains("foo/"));
+    }
+
+    #[test]
+    fn test_ensure_gitignore_appends_at_end_of_section() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        // KanBlam section at end of file
+        let initial = "node_modules/\n\n# KanBlam\nworktrees/\n";
+        fs::write(project_dir.join(".gitignore"), initial).unwrap();
+
+        ensure_gitignore_has_kanblam_entries(&project_dir).unwrap();
+
+        let content = fs::read_to_string(project_dir.join(".gitignore")).unwrap();
+
+        // Should have exactly one KanBlam header
+        let header_count = content.matches("# KanBlam").count();
+        assert_eq!(header_count, 1);
+
+        // Both entries present
+        assert!(content.contains(".claude/"));
+        assert!(content.contains("worktrees/"));
+    }
+
+    #[test]
+    fn test_ensure_gitignore_noop_when_complete() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().to_path_buf();
+
+        let initial = "# KanBlam\n.claude/\nworktrees/\n";
+        fs::write(project_dir.join(".gitignore"), initial).unwrap();
+
+        ensure_gitignore_has_kanblam_entries(&project_dir).unwrap();
+
+        let content = fs::read_to_string(project_dir.join(".gitignore")).unwrap();
+        assert_eq!(content, initial, "File should not be modified when entries already present");
     }
 }

@@ -48,6 +48,9 @@ exec = "0.3"
 # Terminal emulation for interactive pane
 vt100 = "0.15"
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "kanclaude"
 path = "src/main.rs"
