@@ -228,7 +228,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let spinner_frames = ['·', '✢', '✳', '✶', '✻', '✽'];
                     let pulse_frames = ['◐', '◓', '◑', '◒'];
                     let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
-                    let apply_frames = ['⇣', '↓', '⬇', '↓']; // Downward arrow animation for applying
+                    let rebase_frames = ['↑', '⇧', '⇈', '⇪', '⇈', '⇧', '↑']; // Upward arrows for rebase
+                    // Saved patterns: ['░', '▒', '▓', '█', '▓', '▒'] (fill), ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'] (rotating dot)
+                    let apply_frames = ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈']; // Rotating dot for applying
                     // Building blocks animation - foundation being laid
                     let building_frames = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂'];
                     let prefix = match task.status {
@@ -248,9 +250,13 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             let frame = app.model.ui_state.animation_frame % pulse_frames.len();
                             format!("{} ", pulse_frames[frame])
                         }
-                        TaskStatus::Accepting | TaskStatus::Updating => {
+                        TaskStatus::Accepting => {
                             let frame = app.model.ui_state.animation_frame % merge_frames.len();
                             format!("{} ", merge_frames[frame])
+                        }
+                        TaskStatus::Updating => {
+                            let frame = app.model.ui_state.animation_frame % rebase_frames.len();
+                            format!("{} ", rebase_frames[frame])
                         }
                         TaskStatus::Applying => {
                             let frame = app.model.ui_state.animation_frame % apply_frames.len();

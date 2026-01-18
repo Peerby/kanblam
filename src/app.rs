@@ -1849,12 +1849,21 @@ impl App {
 
                     if let Some(wt_path) = worktree_path {
                         // Set task to Updating status IMMEDIATELY for UI feedback (shows animation)
-                        if let Some(project) = self.model.active_project_mut() {
+                        let task_display_name = if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                 task.status = TaskStatus::Updating;
                                 task.last_activity_at = Some(chrono::Utc::now());
+                                task.short_title.clone().unwrap_or_else(|| task.title.clone())
+                            } else {
+                                "task".to_string()
                             }
-                        }
+                        } else {
+                            "task".to_string()
+                        };
+
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Rebasing {}...", task_display_name)
+                        )));
 
                         // Defer ALL git operations (commit + rebase) to run async
                         commands.push(Message::StartFastRebase {
