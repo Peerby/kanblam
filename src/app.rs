@@ -2495,17 +2495,56 @@ impl App {
                                         .unwrap_or("project")
                                         .to_string();
 
-                                    let mut project = Project::new(name, path);
-                                    // Load any existing tasks from the project's .kanblam/tasks.json
-                                    project.load_tasks();
-                                    self.model.projects.push(project);
-                                    self.model.active_project_idx = slot;
-                                    self.model.ui_state.selected_task_idx = None;
-                                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                    // Check git status and offer to initialize if needed
+                                    let is_git = crate::worktree::git::is_git_repo(&path);
+                                    let has_commits = is_git && crate::worktree::git::has_commits(&path);
 
-                                    // Close the dialog
-                                    self.model.ui_state.open_project_dialog_slot = None;
-                                    self.model.ui_state.directory_browser = None;
+                                    if !is_git {
+                                        // Not a git repo - offer to initialize
+                                        commands.push(Message::ShowConfirmation {
+                                            message: format!(
+                                                "'{}' is not a git repository.\n\nInitialize git? (y/n)",
+                                                name
+                                            ),
+                                            action: PendingAction::InitGit {
+                                                path: path.clone(),
+                                                name: name.clone(),
+                                                slot,
+                                            },
+                                        });
+                                        // Close the browser dialog (confirmation will handle opening)
+                                        self.model.ui_state.open_project_dialog_slot = None;
+                                        self.model.ui_state.directory_browser = None;
+                                    } else if !has_commits {
+                                        // Git repo but no commits - offer to create initial commit
+                                        commands.push(Message::ShowConfirmation {
+                                            message: format!(
+                                                "'{}' has no commits.\n\nCreate initial commit? (y/n)",
+                                                name
+                                            ),
+                                            action: PendingAction::CreateInitialCommit {
+                                                path: path.clone(),
+                                                name: name.clone(),
+                                                slot,
+                                            },
+                                        });
+                                        // Close the browser dialog (confirmation will handle opening)
+                                        self.model.ui_state.open_project_dialog_slot = None;
+                                        self.model.ui_state.directory_browser = None;
+                                    } else {
+                                        // Valid git repo with commits - open directly
+                                        let mut project = Project::new(name, path);
+                                        // Load any existing tasks from the project's .kanblam/tasks.json
+                                        project.load_tasks();
+                                        self.model.projects.push(project);
+                                        self.model.active_project_idx = slot;
+                                        self.model.ui_state.selected_task_idx = None;
+                                        self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                                        // Close the dialog
+                                        self.model.ui_state.open_project_dialog_slot = None;
+                                        self.model.ui_state.directory_browser = None;
+                                    }
                                 }
                             }
                         }
@@ -2531,17 +2570,56 @@ impl App {
                             .unwrap_or("project")
                             .to_string();
 
-                        let mut project = Project::new(name, path);
-                        // Load any existing tasks from the project's .kanblam/tasks.json
-                        project.load_tasks();
-                        self.model.projects.push(project);
-                        self.model.active_project_idx = slot;
-                        self.model.ui_state.selected_task_idx = None;
-                        self.model.ui_state.focus = FocusArea::KanbanBoard;
+                        // Check git status and offer to initialize if needed
+                        let is_git = crate::worktree::git::is_git_repo(&path);
+                        let has_commits = is_git && crate::worktree::git::has_commits(&path);
 
-                        // Close the dialog
-                        self.model.ui_state.open_project_dialog_slot = None;
-                        self.model.ui_state.directory_browser = None;
+                        if !is_git {
+                            // Not a git repo - offer to initialize
+                            commands.push(Message::ShowConfirmation {
+                                message: format!(
+                                    "'{}' is not a git repository.\n\nInitialize git? (y/n)",
+                                    name
+                                ),
+                                action: PendingAction::InitGit {
+                                    path: path.clone(),
+                                    name: name.clone(),
+                                    slot,
+                                },
+                            });
+                            // Close the browser dialog (confirmation will handle opening)
+                            self.model.ui_state.open_project_dialog_slot = None;
+                            self.model.ui_state.directory_browser = None;
+                        } else if !has_commits {
+                            // Git repo but no commits - offer to create initial commit
+                            commands.push(Message::ShowConfirmation {
+                                message: format!(
+                                    "'{}' has no commits.\n\nCreate initial commit? (y/n)",
+                                    name
+                                ),
+                                action: PendingAction::CreateInitialCommit {
+                                    path: path.clone(),
+                                    name: name.clone(),
+                                    slot,
+                                },
+                            });
+                            // Close the browser dialog (confirmation will handle opening)
+                            self.model.ui_state.open_project_dialog_slot = None;
+                            self.model.ui_state.directory_browser = None;
+                        } else {
+                            // Valid git repo with commits - open directly
+                            let mut project = Project::new(name, path);
+                            // Load any existing tasks from the project's .kanblam/tasks.json
+                            project.load_tasks();
+                            self.model.projects.push(project);
+                            self.model.active_project_idx = slot;
+                            self.model.ui_state.selected_task_idx = None;
+                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+
+                            // Close the dialog
+                            self.model.ui_state.open_project_dialog_slot = None;
+                            self.model.ui_state.directory_browser = None;
+                        }
                     }
                 }
             }
@@ -2932,6 +3010,60 @@ impl App {
                             // User confirmed popping the stash
                             commands.push(Message::PopTrackedStash { stash_sha });
                         }
+                        PendingAction::InitGit { path, name, slot } => {
+                            // Initialize git repository
+                            match crate::worktree::git::init_repo(&path) {
+                                Ok(()) => {
+                                    // After git init, create initial commit
+                                    match crate::worktree::git::create_initial_commit(&path) {
+                                        Ok(()) => {
+                                            // Now open the project
+                                            let mut project = Project::new(name.clone(), path);
+                                            project.load_tasks();
+                                            self.model.projects.push(project);
+                                            self.model.active_project_idx = slot;
+                                            self.model.ui_state.selected_task_idx = None;
+                                            self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                            commands.push(Message::SetStatusMessage(Some(
+                                                format!("Initialized git and created initial commit for '{}'", name)
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            commands.push(Message::Error(format!(
+                                                "Git initialized but failed to create initial commit: {}", e
+                                            )));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!(
+                                        "Failed to initialize git: {}", e
+                                    )));
+                                }
+                            }
+                        }
+                        PendingAction::CreateInitialCommit { path, name, slot } => {
+                            // Create initial commit in existing git repo
+                            match crate::worktree::git::create_initial_commit(&path) {
+                                Ok(()) => {
+                                    // Now open the project
+                                    let mut project = Project::new(name.clone(), path);
+                                    project.load_tasks();
+                                    self.model.projects.push(project);
+                                    self.model.active_project_idx = slot;
+                                    self.model.ui_state.selected_task_idx = None;
+                                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("Created initial commit for '{}'", name)
+                                    )));
+                                }
+                                Err(e) => {
+                                    commands.push(Message::Error(format!(
+                                        "Failed to create initial commit: {}", e
+                                    )));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -3008,6 +3140,18 @@ impl App {
                             // User declined to pop stash - no action needed
                             commands.push(Message::SetStatusMessage(Some(
                                 "Stash preserved. Press 'S' to manage stashes.".to_string()
+                            )));
+                        }
+                        PendingAction::InitGit { .. } => {
+                            // User declined to initialize git - project not opened
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Project not opened. Initialize git manually to use with KanBlam.".to_string()
+                            )));
+                        }
+                        PendingAction::CreateInitialCommit { .. } => {
+                            // User declined to create initial commit - project not opened
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Project not opened. Create an initial commit to use with KanBlam.".to_string()
                             )));
                         }
                     }

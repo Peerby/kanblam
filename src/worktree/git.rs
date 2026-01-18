@@ -347,11 +347,11 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
         ));
     }
 
-    // Reset .kanblam/ to main's version - never merge task state from worktrees
-    // This prevents stale task data from worktrees overwriting current state
+    // Reset .kanblam/ and .claude/ to main's version - never merge these from worktrees
+    // .kanblam/ = task state, .claude/ = hooks config (both are infrastructure, not code)
     let _ = Command::new("git")
         .current_dir(project_dir)
-        .args(["checkout", "HEAD", "--", ".kanblam"])
+        .args(["checkout", "HEAD", "--", ".kanblam", ".claude"])
         .output();
 
     // Check if there are staged changes to commit
@@ -571,10 +571,10 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("merge_base={}", merge_base));
 
     // Get the diff from merge-base to the task branch (only the task's changes)
-    // Exclude .kanblam/ directory to avoid overwriting task state during apply/merge
+    // Exclude .kanblam/ (task state) and .claude/ (hooks config) to avoid conflicts
     let diff_output = Command::new("git")
         .current_dir(project_dir)
-        .args(["diff", &merge_base, &branch_name, "--", ".", ":!.kanblam"])
+        .args(["diff", &merge_base, &branch_name, "--", ".", ":!.kanblam", ":!.claude"])
         .output()?;
 
     if !diff_output.status.success() {
@@ -871,6 +871,58 @@ pub fn is_git_repo(project_dir: &PathBuf) -> bool {
         .output();
 
     output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Check if a git repository has at least one commit
+pub fn has_commits(project_dir: &PathBuf) -> bool {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "HEAD"])
+        .output();
+
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Initialize a git repository in the given directory
+pub fn init_repo(project_dir: &PathBuf) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["init"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to initialize git: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Create an initial commit in a git repository
+pub fn create_initial_commit(project_dir: &PathBuf) -> Result<()> {
+    // Add all files
+    let add_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["add", "-A"])
+        .output()?;
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        return Err(anyhow!("Failed to stage files: {}", stderr));
+    }
+
+    // Create initial commit (use --allow-empty in case there are no files)
+    let commit_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["commit", "--allow-empty", "-m", "Initial commit"])
+        .output()?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        return Err(anyhow!("Failed to create initial commit: {}", stderr));
+    }
+
+    Ok(())
 }
 
 /// Get the diff between main/master and a task branch

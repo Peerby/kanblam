@@ -1831,6 +1831,12 @@ pub enum PendingAction {
     /// Offer to pop a tracked stash (after unapply or merge)
     /// Options: y=pop, n=skip
     PopTrackedStash { stash_sha: String },
+    /// Project directory is not a git repository
+    /// Options: y=initialize git, n=cancel
+    InitGit { path: PathBuf, name: String, slot: usize },
+    /// Git repository has no commits
+    /// Options: y=create initial commit, n=cancel
+    CreateInitialCommit { path: PathBuf, name: String, slot: usize },
 }
 
 /// Which UI element has focus
