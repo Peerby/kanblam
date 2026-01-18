@@ -63,6 +63,26 @@ pub enum Message {
     /// Refresh git status (additions/deletions/behind) for all tasks with worktrees
     RefreshGitStatus,
 
+    // Git remote operations (pull/push)
+    /// Start git fetch to check remote status (background)
+    StartGitFetch,
+    /// Git fetch completed - update remote status
+    GitFetchCompleted { ahead: usize, behind: usize },
+    /// Git fetch failed
+    GitFetchFailed { error: String },
+    /// Start git pull from remote (background)
+    StartGitPull,
+    /// Git pull completed successfully
+    GitPullCompleted,
+    /// Git pull failed
+    GitPullFailed { error: String },
+    /// Start git push to remote (background)
+    StartGitPush,
+    /// Git push completed successfully
+    GitPushCompleted,
+    /// Git push failed
+    GitPushFailed { error: String },
+
     // Task queueing
     /// Show the queue dialog to select a session to queue the task for
     ShowQueueDialog(Uuid),

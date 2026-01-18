@@ -349,6 +349,20 @@ pub struct Project {
     /// Custom commands for this project (optional overrides for auto-detected defaults)
     #[serde(default)]
     pub commands: ProjectCommands,
+
+    // Remote tracking status (transient - not persisted)
+    /// Number of commits ahead of remote (local commits not pushed)
+    #[serde(skip)]
+    pub remote_ahead: usize,
+    /// Number of commits behind remote (remote commits not pulled)
+    #[serde(skip)]
+    pub remote_behind: usize,
+    /// Whether there's a configured remote tracking branch
+    #[serde(skip)]
+    pub has_remote: bool,
+    /// Whether a git operation (fetch/pull/push) is currently in progress
+    #[serde(skip)]
+    pub git_operation_in_progress: Option<GitOperation>,
 }
 
 /// Custom commands for a project. All fields are optional - when None,
@@ -466,6 +480,27 @@ pub enum MainWorktreeOperation {
     Applying,
 }
 
+/// Git remote operations (fetch/pull/push)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitOperation {
+    /// Fetching from remote to check status
+    Fetching,
+    /// Pulling changes from remote
+    Pulling,
+    /// Pushing changes to remote
+    Pushing,
+}
+
+impl GitOperation {
+    pub fn label(&self) -> &'static str {
+        match self {
+            GitOperation::Fetching => "Fetching...",
+            GitOperation::Pulling => "Pulling...",
+            GitOperation::Pushing => "Pushing...",
+        }
+    }
+}
+
 impl Project {
     pub fn new(name: String, working_dir: PathBuf) -> Self {
         Self {
@@ -480,6 +515,10 @@ impl Project {
             applied_stash_ref: None,
             main_worktree_lock: None,
             commands: ProjectCommands::default(), // Will auto-detect when needed
+            remote_ahead: 0,
+            remote_behind: 0,
+            has_remote: false,
+            git_operation_in_progress: None,
         }
     }
 

@@ -81,7 +81,7 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     // Render task input area
     render_input(frame, chunks[2], app);
 
-    // Render status bar
+    // Render status bar (includes git status)
     render_status_bar(frame, chunks[3], app);
 
     // Render help overlay if active
@@ -1200,6 +1200,12 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  o/O        Open Claude modal (O: detached)"),
         Line::from("  t/T        Open test shell (T: detached)"),
         Line::from("  q          Queue task (Planned) / Quit"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Git", Style::default().add_modifier(Modifier::UNDERLINED)),
+        ]),
+        Line::from("  P          Pull from remote"),
+        Line::from("  p          Push to remote (when commits ahead)"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),

@@ -895,6 +895,12 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Settings/Config (Ctrl-S)
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
 
+        // Git remote operations
+        // P = Pull from remote (uppercase)
+        KeyCode::Char('P') => vec![Message::StartGitPull],
+        // p = Push to remote (lowercase)
+        KeyCode::Char('p') => vec![Message::StartGitPush],
+
         // Navigation
         KeyCode::Char('h') | KeyCode::Left => vec![Message::NavigateLeft],
         KeyCode::Char('l') | KeyCode::Right => vec![Message::NavigateRight],

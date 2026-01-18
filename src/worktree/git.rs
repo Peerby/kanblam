@@ -1474,6 +1474,221 @@ pub fn get_worktree_changed_files(project_dir: &PathBuf, task_id: Uuid) -> Resul
     Ok(files)
 }
 
+/// Remote tracking status for the main branch
+#[derive(Debug, Clone, Default)]
+pub struct RemoteStatus {
+    /// Commits ahead of remote (local commits not pushed)
+    pub ahead: usize,
+    /// Commits behind remote (remote commits not pulled)
+    pub behind: usize,
+    /// Whether there's a configured remote
+    pub has_remote: bool,
+    /// Name of the remote (usually "origin")
+    pub remote_name: Option<String>,
+    /// Name of the tracked branch
+    pub remote_branch: Option<String>,
+}
+
+/// Fetch from remote to update refs (does not modify working directory)
+/// This allows us to check ahead/behind status
+pub fn git_fetch(project_dir: &PathBuf) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["fetch", "--quiet"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Ignore "no remote" errors - just means there's nothing to fetch
+        if !stderr.contains("No remote repository") && !stderr.contains("does not appear to be a git repository") {
+            return Err(anyhow!("Failed to fetch: {}", stderr));
+        }
+    }
+
+    Ok(())
+}
+
+/// Get the remote tracking status for the current branch
+/// Returns ahead/behind counts relative to the remote tracking branch
+pub fn get_remote_status(project_dir: &PathBuf) -> Result<RemoteStatus> {
+    // Get the current branch name
+    let branch_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    if !branch_output.status.success() {
+        return Ok(RemoteStatus::default());
+    }
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        // Detached HEAD state
+        return Ok(RemoteStatus::default());
+    }
+
+    // Get the remote tracking branch
+    let tracking_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--abbrev-ref", &format!("{}@{{upstream}}", branch)])
+        .output()?;
+
+    if !tracking_output.status.success() {
+        // No upstream configured
+        return Ok(RemoteStatus {
+            has_remote: false,
+            ..Default::default()
+        });
+    }
+
+    let upstream = String::from_utf8_lossy(&tracking_output.stdout).trim().to_string();
+
+    // Parse remote name and branch (e.g., "origin/main" -> ("origin", "main"))
+    let (remote_name, remote_branch) = if let Some(slash_pos) = upstream.find('/') {
+        (
+            Some(upstream[..slash_pos].to_string()),
+            Some(upstream[slash_pos + 1..].to_string()),
+        )
+    } else {
+        (None, None)
+    };
+
+    // Get ahead/behind counts
+    let rev_list_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-list", "--left-right", "--count", &format!("{}...{}", branch, upstream)])
+        .output()?;
+
+    if !rev_list_output.status.success() {
+        return Ok(RemoteStatus {
+            has_remote: true,
+            remote_name,
+            remote_branch,
+            ..Default::default()
+        });
+    }
+
+    let counts = String::from_utf8_lossy(&rev_list_output.stdout);
+    let parts: Vec<&str> = counts.trim().split_whitespace().collect();
+
+    let (ahead, behind) = if parts.len() == 2 {
+        (
+            parts[0].parse().unwrap_or(0),
+            parts[1].parse().unwrap_or(0),
+        )
+    } else {
+        (0, 0)
+    };
+
+    Ok(RemoteStatus {
+        ahead,
+        behind,
+        has_remote: true,
+        remote_name,
+        remote_branch,
+    })
+}
+
+/// Pull from remote (fetch + merge)
+/// Only pulls on the main branch in the main worktree
+pub fn git_pull(project_dir: &PathBuf) -> Result<()> {
+    // First check if we're on the main branch
+    let branch_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+
+    // Only allow pull on main/master branches
+    if branch != "main" && branch != "master" {
+        return Err(anyhow!(
+            "Git pull only allowed on main/master branch. Currently on '{}'",
+            branch
+        ));
+    }
+
+    // Check for uncommitted changes
+    if has_uncommitted_changes(project_dir)? {
+        return Err(anyhow!(
+            "Cannot pull with uncommitted changes. Please commit or stash your changes first."
+        ));
+    }
+
+    // Perform the pull with rebase to keep history clean
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["pull", "--rebase"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Check for common issues
+        if stderr.contains("CONFLICT") {
+            // Abort the rebase
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["rebase", "--abort"])
+                .output();
+            return Err(anyhow!(
+                "Pull failed due to conflicts. The pull has been aborted. Please resolve conflicts manually."
+            ));
+        }
+
+        return Err(anyhow!("Pull failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Push to remote
+/// Only pushes the main branch
+pub fn git_push(project_dir: &PathBuf) -> Result<()> {
+    // First check if we're on the main branch
+    let branch_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+
+    // Only allow push on main/master branches
+    if branch != "main" && branch != "master" {
+        return Err(anyhow!(
+            "Git push only allowed on main/master branch. Currently on '{}'",
+            branch
+        ));
+    }
+
+    // Perform the push
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["push"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Check for common issues
+        if stderr.contains("rejected") || stderr.contains("non-fast-forward") {
+            return Err(anyhow!(
+                "Push rejected. Remote has changes you don't have. Pull first with 'P'."
+            ));
+        }
+
+        if stderr.contains("No configured push destination") || stderr.contains("no upstream") {
+            return Err(anyhow!(
+                "No remote configured for pushing. Set up a remote with 'git remote add origin <url>'"
+            ));
+        }
+
+        return Err(anyhow!("Push failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,5 +18,7 @@ pub use git::{
     get_worktree_git_status, update_worktree_to_main, WorktreeGitStatus,
     get_worktree_changed_files, ChangedFile, is_branch_merged,
     has_uncommitted_changes,
+    // Git remote operations
+    git_fetch, git_pull, git_push, get_remote_status, RemoteStatus,
 };
 pub use settings::{setup_claude_settings, merge_with_project_settings, pre_trust_worktree, remove_worktree_trust};

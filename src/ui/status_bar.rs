@@ -1,5 +1,4 @@
 use crate::app::App;
-use crate::model::MainWorktreeOperation;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -55,7 +54,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     render_summary(frame, chunks[1], app);
 }
 
-/// Render project info for the current project
+/// Render project info for the current project including git status
 fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
     let Some(project) = app.model.active_project() else {
         let no_project = Paragraph::new(Span::styled(
@@ -66,24 +65,19 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    // Count active tasks
-    let active_count = project.tasks.iter()
-        .filter(|t| t.session_state.is_active())
-        .count();
+    // Git animation frames
+    let git_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
+    let pull_frames = ['⇣', '↓', '⬇', '↓'];
+    let push_frames = ['⇡', '↑', '⬆', '↑'];
+
+    let mut spans = Vec::new();
+    spans.push(Span::raw(" "));
 
     // Get current git branch
     let branch_name = get_current_branch(&project.working_dir);
 
-    let mut spans = Vec::new();
-    spans.push(Span::raw(" "));
-    spans.push(Span::styled(
-        &project.name,
-        Style::default().fg(Color::Cyan),
-    ));
-
     // Show git branch if available
     if let Some(branch) = branch_name {
-        spans.push(Span::raw(" "));
         spans.push(Span::styled(
             "\u{e0a0}", // Nerd Font git branch icon
             Style::default().fg(Color::Magenta),
@@ -92,34 +86,132 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
             format!(" {}", branch),
             Style::default().fg(Color::Magenta),
         ));
+
+        // Show key hints (when no operation in progress)
+        if project.git_operation_in_progress.is_none() {
+            spans.push(Span::styled(
+                "  ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled(
+                "P",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                "ull ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled(
+                "p",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                "ush",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
     }
 
+    // Show remote status if we have a remote configured
+    if project.has_remote {
+        // Show operation in progress with animation
+        if let Some(ref op) = project.git_operation_in_progress {
+            let anim_frame = app.model.ui_state.animation_frame;
+
+            spans.push(Span::styled(
+                "  │ ",
+                Style::default().fg(Color::DarkGray),
+            ));
+
+            match op {
+                crate::model::GitOperation::Fetching => {
+                    let frame_idx = anim_frame % git_frames.len();
+                    spans.push(Span::styled(
+                        format!("{} ", git_frames[frame_idx]),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                    spans.push(Span::styled(
+                        "Fetching...",
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                crate::model::GitOperation::Pulling => {
+                    let frame_idx = anim_frame % pull_frames.len();
+                    spans.push(Span::styled(
+                        format!("{} ", pull_frames[frame_idx]),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::styled(
+                        "Pulling...",
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                crate::model::GitOperation::Pushing => {
+                    let frame_idx = anim_frame % push_frames.len();
+                    spans.push(Span::styled(
+                        format!("{} ", push_frames[frame_idx]),
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::styled(
+                        "Pushing...",
+                        Style::default().fg(Color::Green).add_modifier(Modifier::ITALIC),
+                    ));
+                }
+            }
+        } else {
+            // Show ahead/behind status when idle
+            if project.remote_ahead > 0 || project.remote_behind > 0 {
+                spans.push(Span::styled(
+                    "  │ ",
+                    Style::default().fg(Color::DarkGray),
+                ));
+
+                if project.remote_behind > 0 {
+                    spans.push(Span::styled(
+                        format!("↓{}", project.remote_behind),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::styled(
+                        " behind ",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+
+                if project.remote_ahead > 0 {
+                    spans.push(Span::styled(
+                        format!("↑{}", project.remote_ahead),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::styled(
+                        " ahead",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+            } else {
+                spans.push(Span::styled(
+                    "  │ ",
+                    Style::default().fg(Color::DarkGray),
+                ));
+                spans.push(Span::styled(
+                    "✓ synced",
+                    Style::default().fg(Color::Green),
+                ));
+            }
+        }
+    }
+
+    // Show active session count
+    let active_count = project.tasks.iter()
+        .filter(|t| t.session_state.is_active())
+        .count();
     if active_count > 0 {
         spans.push(Span::styled(
-            format!(" ({} active Claude session{})", active_count, if active_count == 1 { "" } else { "s" }),
-            Style::default().fg(Color::Green),
+            "  │ ",
+            Style::default().fg(Color::DarkGray),
         ));
-    }
-
-    // Show main worktree lock indicator if locked
-    if let Some((task_id, operation, task_title)) = project.main_worktree_lock_info() {
-        let op_text = match operation {
-            MainWorktreeOperation::Accepting => "accepting",
-            MainWorktreeOperation::Applying => "applying",
-        };
-        // Format as "[abc123] title trunc.."
-        let short_id = &task_id.to_string()[..6];
-        let truncated_title: String = if task_title.len() > 15 {
-            format!("{}..", &task_title[..13])
-        } else {
-            task_title
-        };
-        spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            format!("{} [{}] {}", op_text, short_id, truncated_title),
-            Style::default()
-                .fg(Color::Rgb(0, 0, 100))  // Dark blue for better contrast on yellow
-                .bg(Color::Yellow),
+            format!("{} active", active_count),
+            Style::default().fg(Color::Green),
         ));
     }
 

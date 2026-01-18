@@ -1873,6 +1873,223 @@ impl App {
                 }
             }
 
+            // === Git remote operations (fetch/pull/push) ===
+
+            Message::StartGitFetch => {
+                // Check if there's already an operation in progress
+                if let Some(project) = self.model.active_project() {
+                    if project.git_operation_in_progress.is_some() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Git operation already in progress".to_string()
+                        )));
+                        return commands;
+                    }
+                }
+
+                // Set operation in progress
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = Some(crate::model::GitOperation::Fetching);
+                }
+
+                // Get project dir for async operation
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let (Some(sender), Some(project_dir)) = (self.async_sender.clone(), project_dir) {
+                    tokio::spawn(async move {
+                        // First fetch from remote
+                        let fetch_result = tokio::task::spawn_blocking({
+                            let dir = project_dir.clone();
+                            move || crate::worktree::git_fetch(&dir)
+                        }).await;
+
+                        // Then get remote status
+                        let status_result = tokio::task::spawn_blocking({
+                            let dir = project_dir.clone();
+                            move || crate::worktree::get_remote_status(&dir)
+                        }).await;
+
+                        let msg = match (fetch_result, status_result) {
+                            (Ok(Ok(())), Ok(Ok(status))) => {
+                                Message::GitFetchCompleted {
+                                    ahead: status.ahead,
+                                    behind: status.behind,
+                                }
+                            }
+                            (Ok(Err(e)), _) => {
+                                Message::GitFetchFailed { error: e.to_string() }
+                            }
+                            (_, Ok(Err(e))) => {
+                                Message::GitFetchFailed { error: e.to_string() }
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                Message::GitFetchFailed { error: format!("Task panicked: {}", e) }
+                            }
+                        };
+
+                        let _ = sender.send(msg);
+                    });
+                }
+            }
+
+            Message::GitFetchCompleted { ahead, behind } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.remote_ahead = ahead;
+                    project.remote_behind = behind;
+                    project.has_remote = true;
+                    project.git_operation_in_progress = None;
+                }
+                // Silent update - no status message for fetch
+            }
+
+            Message::GitFetchFailed { error } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = None;
+                    // Don't show error for "no remote" case - it's expected
+                    if !error.contains("No remote") && !error.contains("no upstream") {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Fetch failed: {}", error)
+                        )));
+                    }
+                }
+            }
+
+            Message::StartGitPull => {
+                // Check if there's already an operation in progress
+                if let Some(project) = self.model.active_project() {
+                    if project.git_operation_in_progress.is_some() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Git operation already in progress".to_string()
+                        )));
+                        return commands;
+                    }
+                    // Check if main worktree is locked (accept/apply in progress)
+                    if project.main_worktree_lock.is_some() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Cannot pull: main worktree is in use by another operation".to_string()
+                        )));
+                        return commands;
+                    }
+                }
+
+                // Set operation in progress
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = Some(crate::model::GitOperation::Pulling);
+                }
+
+                commands.push(Message::SetStatusMessage(Some(
+                    "Pulling from remote...".to_string()
+                )));
+
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let (Some(sender), Some(project_dir)) = (self.async_sender.clone(), project_dir) {
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::worktree::git_pull(&project_dir)
+                        }).await;
+
+                        let msg = match result {
+                            Ok(Ok(())) => Message::GitPullCompleted,
+                            Ok(Err(e)) => Message::GitPullFailed { error: e.to_string() },
+                            Err(e) => Message::GitPullFailed { error: format!("Task panicked: {}", e) },
+                        };
+
+                        let _ = sender.send(msg);
+                    });
+                }
+            }
+
+            Message::GitPullCompleted => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = None;
+                    project.remote_behind = 0; // We pulled, so we're up to date
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    "✓ Pull completed successfully".to_string()
+                )));
+                commands.push(Message::RefreshGitStatus);
+                commands.push(Message::TriggerLogoShimmer);
+            }
+
+            Message::GitPullFailed { error } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = None;
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    format!("Pull failed: {}", error)
+                )));
+            }
+
+            Message::StartGitPush => {
+                // Check if there's already an operation in progress
+                if let Some(project) = self.model.active_project() {
+                    if project.git_operation_in_progress.is_some() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Git operation already in progress".to_string()
+                        )));
+                        return commands;
+                    }
+                    // Only skip if we've confirmed with remote that there's nothing to push
+                    // (has_remote means we've successfully fetched at least once)
+                    if project.has_remote && project.remote_ahead == 0 {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Nothing to push - already up to date".to_string()
+                        )));
+                        return commands;
+                    }
+                }
+
+                // Set operation in progress
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = Some(crate::model::GitOperation::Pushing);
+                }
+
+                commands.push(Message::SetStatusMessage(Some(
+                    "Pushing to remote...".to_string()
+                )));
+
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let (Some(sender), Some(project_dir)) = (self.async_sender.clone(), project_dir) {
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::worktree::git_push(&project_dir)
+                        }).await;
+
+                        let msg = match result {
+                            Ok(Ok(())) => Message::GitPushCompleted,
+                            Ok(Err(e)) => Message::GitPushFailed { error: e.to_string() },
+                            Err(e) => Message::GitPushFailed { error: format!("Task panicked: {}", e) },
+                        };
+
+                        let _ = sender.send(msg);
+                    });
+                }
+            }
+
+            Message::GitPushCompleted => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = None;
+                    project.remote_ahead = 0; // We pushed, so we're up to date
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    "✓ Push completed successfully".to_string()
+                )));
+                commands.push(Message::TriggerLogoShimmer);
+            }
+
+            Message::GitPushFailed { error } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.git_operation_in_progress = None;
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    format!("Push failed: {}", error)
+                )));
+            }
+
             // === Task queueing ===
 
             Message::ShowQueueDialog(task_id) => {
@@ -2073,6 +2290,8 @@ impl App {
 
                     // Refresh git status for the new project
                     commands.push(Message::RefreshGitStatus);
+                    // Also fetch from remote to update ahead/behind indicators
+                    commands.push(Message::StartGitFetch);
                 }
             }
 
@@ -4501,6 +4720,18 @@ impl App {
                 // Refresh git status every ~5 seconds (50 ticks at 100ms per tick)
                 if self.model.ui_state.animation_frame % 50 == 0 {
                     commands.push(Message::RefreshGitStatus);
+                }
+
+                // Fetch from remote every ~30 seconds (300 ticks at 100ms per tick)
+                // to keep the ahead/behind indicators up to date
+                if self.model.ui_state.animation_frame % 300 == 0 {
+                    // Only fetch if there's no operation in progress
+                    let should_fetch = self.model.active_project()
+                        .map(|p| p.git_operation_in_progress.is_none())
+                        .unwrap_or(false);
+                    if should_fetch {
+                        commands.push(Message::StartGitFetch);
+                    }
                 }
             }
 
