@@ -258,12 +258,10 @@ fn get_current_branch(working_dir: &std::path::Path) -> Option<String> {
 
 /// Render summary statistics
 fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
-    // Show names of OTHER projects that need attention (not the current one)
-    let active_idx = app.model.active_project_idx;
+    // Show names of ALL projects that need attention (including the current one)
     let projects_needing_attention: Vec<&str> = app.model.projects.iter()
-        .enumerate()
-        .filter(|(idx, p)| *idx != active_idx && p.attention_count() > 0)
-        .map(|(_, p)| p.name.as_str())
+        .filter(|p| p.attention_count() > 0)
+        .map(|p| p.name.as_str())
         .collect();
 
     let summary = if !projects_needing_attention.is_empty() {
@@ -277,8 +275,8 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         )
     } else {
         Span::styled(
-            " ALL CLEAR ",
-            Style::default().fg(Color::Green),
+            " NO TASKS TO REVIEW ",
+            Style::default().fg(Color::DarkGray),
         )
     };
 
