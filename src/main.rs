@@ -966,6 +966,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Settings/Config (Ctrl-,)
         KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
 
+        // Quick Claude CLI pane (Ctrl-T)
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::OpenClaudeCliPane]
+        }
+
         // Git remote operations
         // P = Pull from remote (uppercase)
         KeyCode::Char('P') => vec![Message::StartGitPull],

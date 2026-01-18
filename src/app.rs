@@ -5919,6 +5919,25 @@ impl App {
                 }
             }
 
+            // === Quick Claude CLI Pane ===
+
+            Message::OpenClaudeCliPane => {
+                // Get the working directory of the active project
+                if let Some(project) = self.model.active_project() {
+                    let working_dir = project.working_dir.clone();
+                    if let Err(e) = crate::tmux::split_pane_with_claude(&working_dir) {
+                        commands.push(Message::Error(format!(
+                            "Failed to open Claude pane: {}",
+                            e
+                        )));
+                    }
+                } else {
+                    commands.push(Message::Error(
+                        "No active project - cannot open Claude CLI".to_string(),
+                    ));
+                }
+            }
+
             // === Configuration Modal ===
 
             Message::ShowConfigModal => {

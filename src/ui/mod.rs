@@ -1515,7 +1515,8 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Sessions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  o/O        Open Claude modal (O: detached)"),
+        Line::from("  o/O        Open task in tmux session (O: detached)"),
+        Line::from("  Ctrl-T     Open Claude in project dir (new pane)"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Git", Style::default().add_modifier(Modifier::UNDERLINED)),
