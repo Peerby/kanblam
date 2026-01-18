@@ -813,6 +813,40 @@ pub fn capture_task_output(project_slug: &str, window_name: &str, lines: u32) ->
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Open a new pane to the right of the current pane and start a fresh Claude CLI session.
+/// This splits the current pane horizontally and runs `claude` in the new pane.
+pub fn split_pane_with_claude(working_dir: &std::path::Path) -> Result<()> {
+    // Split the current pane horizontally (creates pane to the right)
+    // -h = horizontal split (side by side)
+    // -c = start directory
+    let output = Command::new("tmux")
+        .args([
+            "split-window",
+            "-h",
+            "-c",
+            &working_dir.to_string_lossy(),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to split pane: {}", stderr));
+    }
+
+    // The new pane is now active, send the claude command
+    // Use bash -l -c to get login shell environment (for PATH)
+    let output = Command::new("tmux")
+        .args(["send-keys", "claude", "Enter"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to start Claude: {}", stderr));
+    }
+
+    Ok(())
+}
+
 /// Check if Claude's last output in the tmux pane looks like a question
 /// This is used to determine if Claude is waiting for user input vs just finished.
 pub fn claude_output_contains_question(project_slug: &str, window_name: &str) -> bool {

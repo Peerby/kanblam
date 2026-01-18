@@ -17,4 +17,6 @@ pub use session::{
     ClaudeCliState, get_claude_cli_state, kill_claude_cli_session,
     // Question detection for idle_prompt handling
     claude_output_contains_question,
+    // Quick pane split for Ctrl-T
+    split_pane_with_claude,
 };

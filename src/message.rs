@@ -282,6 +282,10 @@ pub enum Message {
     QuitAndSwitchPane(String), // Quit and switch to this pane ID
     Error(String),
 
+    // Quick Claude CLI pane
+    /// Open a fresh Claude CLI session in a pane to the right (Ctrl-T)
+    OpenClaudeCliPane,
+
     // Configuration modal
     /// Open the configuration modal
     ShowConfigModal,

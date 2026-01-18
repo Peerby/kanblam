@@ -1573,6 +1573,7 @@ STEP 2 - FOR EACH CONFLICTING FILE:
 1. Read the file to understand both sides of the conflict
 2. Edit to resolve - keep functionality from BOTH sides where possible
 3. Remove ALL conflict markers (the <<<<<<, =======, >>>>>>> lines)
+4. Run `git add <file>` to mark it as resolved
 
 STEP 3 - VERIFY BUILD:
 ```
@@ -1582,6 +1583,7 @@ cargo build 2>&1 | head -50
 STEP 4 - CONFIRM RESOLUTION:
 ```
 git diff --check  # Should show no conflict markers
+git status        # Should show NO "Unmerged paths" - all conflicts must be git-added
 cargo build       # Should succeed
 ```
 
