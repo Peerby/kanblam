@@ -2,6 +2,29 @@
   "version": 1,
   "tasks": [
     {
+      "id": "a5b165e1-bba1-44ee-bbb7-1f9d138258e7",
+      "title": "Rebasing now shows a down arrow. But it probably makes more sense to show an up arrow. Also, can we make it look like an arrow is shooting by, going up, instead of getting thicker and thinner?",
+      "description": "",
+      "short_title": "Rebasing: up arrow animation",
+      "status": "InProgress",
+      "images": [],
+      "claude_session_id": "eb93907d-9521-466c-8c25-749f64b2ef99",
+      "created_at": "2026-01-18T13:45:43.903910Z",
+      "started_at": "2026-01-18T13:45:45.002507Z",
+      "completed_at": null,
+      "worktree_path": "/Users/daan/code/kanblam/worktrees/task-a5b165e1-bba1-44ee-bbb7-1f9d138258e7",
+      "git_branch": "claude/a5b165e1-bba1-44ee-bbb7-1f9d138258e7",
+      "tmux_window": null,
+      "session_state": "Working",
+      "session_mode": "SdkManaged",
+      "sdk_command_count": 1,
+      "cli_opened_at_command_count": 0,
+      "queued_for_session": null,
+      "accepting_started_at": null,
+      "last_activity_at": "2026-01-18T13:45:54.606098Z",
+      "last_tool_name": "Read"
+    },
+    {
       "id": "8295834d-fabc-4681-a33d-542f949e1267",
       "title": "look at our merge an apply mechanisms. ultrathink about making even more safe and reliabl. how can wd msk sure we never lose work and we always stop and give a useful message when it's nkt safe. reason about many scenrarios. what if this... what if another task did that... what is there is a conflict here or there? what if x chsnged unexpectedly. Don't bloat tbe the steps, but write a structured defense avainst any kind of situation, so thag nerging works in the best of cases and cleanly succeeds in the worst of cases.",
       "description": "",
@@ -100,7 +123,7 @@
       "short_title": "Explain statusbar Review count",
       "status": "Review",
       "images": [],
-      "claude_session_id": "c9724bf8-30f6-4bae-8100-0fecb99c29ad",
+      "claude_session_id": "492d8ec9-ce39-4bb8-b83d-de1f7f2ef1c7",
       "created_at": "2026-01-18T00:36:28.333908Z",
       "started_at": "2026-01-18T00:36:29.888168Z",
       "completed_at": null,
@@ -108,12 +131,12 @@
       "git_branch": "claude/19855131-dcb0-493e-82ad-778d717e35bc",
       "tmux_window": null,
       "session_state": "Paused",
-      "session_mode": "CliInteractive",
+      "session_mode": "SdkManaged",
       "sdk_command_count": 3,
       "cli_opened_at_command_count": 3,
       "queued_for_session": null,
       "accepting_started_at": null,
-      "last_activity_at": "2026-01-18T08:06:24.959736Z",
+      "last_activity_at": "2026-01-18T13:45:53.550456Z",
       "last_tool_name": "Bash"
     },
     {
@@ -2005,10 +2028,8 @@
       "last_tool_name": "Edit"
     }
   ],
-  "applied_task_id": null,
+  "applied_task_id": "19855131-dcb0-493e-82ad-778d717e35bc",
   "applied_stash_ref": null,
-  "applied_with_conflict_resolution": false,
-  "tracked_stashes": [],
   "commands": {
     "check": null,
     "run": null,

@@ -249,8 +249,8 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
 
         spans.push(Span::styled(tab_text, style));
 
-        // Add red badge for non-active projects with tasks needing attention
-        if !is_active && attention_count > 0 {
+        // Add red badge for projects with tasks needing attention
+        if attention_count > 0 {
             spans.push(Span::styled(
                 format!(" {} ", attention_count),
                 Style::default()
@@ -328,8 +328,8 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
 
         spans.push(Span::styled(tab_text, style));
 
-        // Add red badge for non-active projects with tasks needing attention
-        if !is_active && attention_count > 0 {
+        // Add red badge for projects with tasks needing attention
+        if attention_count > 0 {
             spans.push(Span::styled(
                 format!(" {} ", attention_count),
                 Style::default()
