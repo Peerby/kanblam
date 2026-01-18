@@ -65,10 +65,12 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    // Git animation frames
+    // Git animation frames (Nerd Font icons)
+    // nf-dev-git variants for sync animation
     let git_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
-    let pull_frames = ['⇣', '↓', '⬇', '↓'];
-    let push_frames = ['⇡', '↑', '⬆', '↑'];
+    // Standard Unicode arrows for pull/push animation (more reliable across fonts)
+    let pull_frames = ['↓', '⬇', '↓', '⬇'];
+    let push_frames = ['↑', '⬆', '↑', '⬆'];
 
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
@@ -77,7 +79,7 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
     let branch_name = get_current_branch(&project.working_dir);
 
     // Show git branch if available
-    if let Some(branch) = branch_name {
+    if let Some(ref branch) = branch_name {
         spans.push(Span::styled(
             "\u{e0a0}", // Nerd Font git branch icon
             Style::default().fg(Color::Magenta),
@@ -86,118 +88,114 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
             format!(" {}", branch),
             Style::default().fg(Color::Magenta),
         ));
-
-        // Show key hints (when no operation in progress)
-        if project.git_operation_in_progress.is_none() {
-            spans.push(Span::styled(
-                "  ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            spans.push(Span::styled(
-                "P",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                "ull ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            spans.push(Span::styled(
-                "p",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                "ush",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
     }
 
-    // Show remote status if we have a remote configured
-    if project.has_remote {
-        // Show operation in progress with animation
-        if let Some(ref op) = project.git_operation_in_progress {
-            let anim_frame = app.model.ui_state.animation_frame;
+    // Show remote status (operation in progress, or ahead/behind counts)
+    // Show operation indicator even before we know if there's a remote
+    if let Some(ref op) = project.git_operation_in_progress {
+        let anim_frame = app.model.ui_state.animation_frame;
 
+        spans.push(Span::styled(
+            "  │ ",
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        match op {
+            crate::model::GitOperation::Fetching => {
+                let frame_idx = anim_frame % git_frames.len();
+                spans.push(Span::styled(
+                    format!("{} ", git_frames[frame_idx]),
+                    Style::default().fg(Color::Cyan),
+                ));
+                spans.push(Span::styled(
+                    "Fetching...",
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                ));
+            }
+            crate::model::GitOperation::Pulling => {
+                let frame_idx = anim_frame % pull_frames.len();
+                spans.push(Span::styled(
+                    format!("{} ", pull_frames[frame_idx]),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    "Pulling...",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
+                ));
+            }
+            crate::model::GitOperation::Pushing => {
+                let frame_idx = anim_frame % push_frames.len();
+                spans.push(Span::styled(
+                    format!("{} ", push_frames[frame_idx]),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    "Pushing...",
+                    Style::default().fg(Color::Green).add_modifier(Modifier::ITALIC),
+                ));
+            }
+        }
+    } else if project.has_remote {
+        // Show ahead/behind status when idle and we have a remote
+        if project.remote_ahead > 0 || project.remote_behind > 0 {
             spans.push(Span::styled(
                 "  │ ",
                 Style::default().fg(Color::DarkGray),
             ));
 
-            match op {
-                crate::model::GitOperation::Fetching => {
-                    let frame_idx = anim_frame % git_frames.len();
-                    spans.push(Span::styled(
-                        format!("{} ", git_frames[frame_idx]),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                    spans.push(Span::styled(
-                        "Fetching...",
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
-                    ));
+            if project.remote_behind > 0 {
+                // Down arrow = commits to pull (behind remote)
+                spans.push(Span::styled(
+                    format!("↓{}", project.remote_behind),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ));
+                if project.remote_ahead > 0 {
+                    spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
                 }
-                crate::model::GitOperation::Pulling => {
-                    let frame_idx = anim_frame % pull_frames.len();
-                    spans.push(Span::styled(
-                        format!("{} ", pull_frames[frame_idx]),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::styled(
-                        "Pulling...",
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
-                    ));
-                }
-                crate::model::GitOperation::Pushing => {
-                    let frame_idx = anim_frame % push_frames.len();
-                    spans.push(Span::styled(
-                        format!("{} ", push_frames[frame_idx]),
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::styled(
-                        "Pushing...",
-                        Style::default().fg(Color::Green).add_modifier(Modifier::ITALIC),
-                    ));
-                }
+            }
+
+            if project.remote_ahead > 0 {
+                // Up arrow = commits to push (ahead of remote)
+                spans.push(Span::styled(
+                    format!("↑{}", project.remote_ahead),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ));
             }
         } else {
-            // Show ahead/behind status when idle
-            if project.remote_ahead > 0 || project.remote_behind > 0 {
-                spans.push(Span::styled(
-                    "  │ ",
-                    Style::default().fg(Color::DarkGray),
-                ));
-
-                if project.remote_behind > 0 {
-                    spans.push(Span::styled(
-                        format!("↓{}", project.remote_behind),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::styled(
-                        " behind ",
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-
-                if project.remote_ahead > 0 {
-                    spans.push(Span::styled(
-                        format!("↑{}", project.remote_ahead),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::styled(
-                        " ahead",
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-            } else {
-                spans.push(Span::styled(
-                    "  │ ",
-                    Style::default().fg(Color::DarkGray),
-                ));
-                spans.push(Span::styled(
-                    "✓ synced",
-                    Style::default().fg(Color::Green),
-                ));
-            }
+            spans.push(Span::styled(
+                "  │ ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            // Checkmark = synced with remote
+            spans.push(Span::styled(
+                "✓",
+                Style::default().fg(Color::Green),
+            ));
         }
+    }
+
+    // Show key hints for Pull/push (after status, when no operation in progress)
+    if branch_name.is_some() && project.git_operation_in_progress.is_none() && project.has_remote {
+        spans.push(Span::styled(
+            "  ",
+            Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::styled(
+            "P",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            "ull ",
+            Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::styled(
+            "p",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            "ush",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
     // Show active session count

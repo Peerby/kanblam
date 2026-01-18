@@ -98,6 +98,10 @@ async fn main() -> anyhow::Result<()> {
     let commands = app.update(Message::RefreshGitStatus);
     process_commands_recursively(&mut app, commands);
 
+    // Initial git fetch to get remote status (ahead/behind indicators)
+    let commands = app.update(Message::StartGitFetch);
+    process_commands_recursively(&mut app, commands);
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
