@@ -20,7 +20,7 @@ pub use git::{
     get_worktree_changed_files, ChangedFile, is_branch_merged,
     has_uncommitted_changes,
     // Git remote operations
-    git_fetch, git_pull, git_push, get_remote_status, RemoteStatus,
+    git_fetch, git_pull, git_push, smart_git_pull, get_remote_status, RemoteStatus,
     // Stash tracking
     create_tracked_stash, pop_tracked_stash, drop_tracked_stash,
     abort_stash_pop_keep_task_changes, get_stash_details,

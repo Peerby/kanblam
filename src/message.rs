@@ -102,7 +102,7 @@ pub enum Message {
     /// Start git pull from remote (background)
     StartGitPull,
     /// Git pull completed successfully
-    GitPullCompleted,
+    GitPullCompleted { summary: String },
     /// Git pull failed
     GitPullFailed { error: String },
     /// Start git push to remote (background)

@@ -1738,6 +1738,119 @@ pub fn git_pull(project_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Smart pull that handles .kanblam/tasks.json gracefully
+/// Stashes tasks.json, pulls, then restores local tasks.json (ignoring remote's version)
+pub fn smart_git_pull(project_dir: &PathBuf) -> Result<String> {
+    // First check if we're on the main branch
+    let branch_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+
+    // Only allow pull on main/master branches
+    if branch != "main" && branch != "master" {
+        return Err(anyhow!(
+            "Git pull only allowed on main/master branch. Currently on '{}'",
+            branch
+        ));
+    }
+
+    // Check what files are modified
+    let status_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    let status = String::from_utf8_lossy(&status_output.stdout);
+    let modified_files: Vec<&str> = status.lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    // Check if tasks.json is the only modified file (or among modified files)
+    let tasks_json_path = ".kanblam/tasks.json";
+    let has_tasks_json_changes = modified_files.iter()
+        .any(|line| line.contains(tasks_json_path));
+    let has_other_changes = modified_files.iter()
+        .any(|line| !line.contains(tasks_json_path));
+
+    if has_other_changes {
+        return Err(anyhow!(
+            "Cannot pull with uncommitted changes (other than tasks.json). Please commit or stash first."
+        ));
+    }
+
+    // Stash tasks.json if it has changes
+    let did_stash = if has_tasks_json_changes {
+        let stash_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["stash", "push", "-m", "kanblam: tasks.json before pull", "--", tasks_json_path])
+            .output()?;
+        stash_output.status.success()
+    } else {
+        false
+    };
+
+    // Perform the pull with rebase
+    let pull_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["pull", "--rebase"])
+        .output()?;
+
+    let pull_success = pull_output.status.success();
+    let pull_stdout = String::from_utf8_lossy(&pull_output.stdout).to_string();
+    let pull_stderr = String::from_utf8_lossy(&pull_output.stderr).to_string();
+
+    // Restore tasks.json from stash (always use our local version)
+    if did_stash {
+        // Use checkout to restore just tasks.json from stash, avoiding merge
+        let restore_output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["checkout", "stash@{0}", "--", tasks_json_path])
+            .output()?;
+
+        if restore_output.status.success() {
+            // Drop the stash since we've restored what we need
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "drop", "stash@{0}"])
+                .output();
+        } else {
+            // Try regular stash pop as fallback
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["stash", "pop"])
+                .output();
+        }
+    }
+
+    if !pull_success {
+        // Check for conflicts
+        if pull_stderr.contains("CONFLICT") {
+            // Abort the rebase
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["rebase", "--abort"])
+                .output();
+            return Err(anyhow!(
+                "Pull failed due to conflicts. The pull has been aborted."
+            ));
+        }
+        return Err(anyhow!("Pull failed: {}", pull_stderr));
+    }
+
+    // Parse output to create a nice summary
+    let summary = if pull_stdout.contains("Already up to date") || pull_stderr.contains("Already up to date") {
+        "Already up to date.".to_string()
+    } else {
+        // Count files changed from the output
+        format!("Pull successful. {}", pull_stdout.lines().last().unwrap_or(""))
+    };
+
+    Ok(summary)
+}
+
 /// Push to remote
 /// Only pushes the main branch
 pub fn git_push(project_dir: &PathBuf) -> Result<()> {

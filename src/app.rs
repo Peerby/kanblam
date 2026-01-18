@@ -2092,11 +2092,12 @@ impl App {
                 if let (Some(sender), Some(project_dir)) = (self.async_sender.clone(), project_dir) {
                     tokio::spawn(async move {
                         let result = tokio::task::spawn_blocking(move || {
-                            crate::worktree::git_pull(&project_dir)
+                            // Use smart_git_pull which handles .kanblam/tasks.json gracefully
+                            crate::worktree::smart_git_pull(&project_dir)
                         }).await;
 
                         let msg = match result {
-                            Ok(Ok(())) => Message::GitPullCompleted,
+                            Ok(Ok(summary)) => Message::GitPullCompleted { summary },
                             Ok(Err(e)) => Message::GitPullFailed { error: e.to_string() },
                             Err(e) => Message::GitPullFailed { error: format!("Task panicked: {}", e) },
                         };
@@ -2106,13 +2107,13 @@ impl App {
                 }
             }
 
-            Message::GitPullCompleted => {
+            Message::GitPullCompleted { summary } => {
                 if let Some(project) = self.model.active_project_mut() {
                     project.git_operation_in_progress = None;
                     project.remote_behind = 0; // We pulled, so we're up to date
                 }
                 commands.push(Message::SetStatusMessage(Some(
-                    "✓ Pull completed successfully".to_string()
+                    format!("✓ {}", summary)
                 )));
                 commands.push(Message::RefreshGitStatus);
                 commands.push(Message::TriggerLogoShimmer);
