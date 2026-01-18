@@ -500,8 +500,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     } else if is_insert_mode {
         // INSERT MODE hints
         if pending_count > 0 {
-            // With pending images: "^V+img ^X-1 ^Uclr ⏎ line ^S start"
-            // Width: 2+5+2+3+2+4+1+6+2+6 = 33
+            // With pending images: "^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit ^S start"
+            // Width: 2+5+2+3+2+4+1+6+4+8+2+6 = 45
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
@@ -512,14 +512,16 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled("clr ", desc_style),
                     Span::styled("⏎", key_style),
                     Span::styled(" line ", desc_style),
+                    Span::styled("esc→⏎", key_style),
+                    Span::styled(" submit ", desc_style),
                     Span::styled("^S", key_style),
                     Span::styled(" start", desc_style),
                 ]),
-                33u16,
+                45u16,
             )
         } else {
-            // No pending images: "^V img ^G vim ⏎ line ^S start"
-            // Width: 2+5+2+editor+1+6+2+6 = 24 + editor_hint_len
+            // No pending images: "^V img ^G vim ⏎ line esc→⏎ submit ^S start"
+            // Width: 2+5+2+editor+1+6+4+8+2+6 = 36 + editor_hint_len
             (
                 Line::from(vec![
                     Span::styled("^V", key_style),
@@ -528,10 +530,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled(editor_hint.clone(), desc_style),
                     Span::styled("⏎", key_style),
                     Span::styled(" line ", desc_style),
+                    Span::styled("esc→⏎", key_style),
+                    Span::styled(" submit ", desc_style),
                     Span::styled("^S", key_style),
                     Span::styled(" start", desc_style),
                 ]),
-                24 + editor_hint_len,
+                36 + editor_hint_len,
             )
         }
     } else {
