@@ -938,16 +938,41 @@ fn render_claude_tab<'a>(
         ]));
     }
 
+    let is_cli_mode = matches!(
+        task.session_mode,
+        crate::model::SessionMode::CliInteractive | crate::model::SessionMode::CliActivelyWorking
+    );
+
     let mode_str = match task.session_mode {
         crate::model::SessionMode::SdkManaged => "SDK Managed",
         crate::model::SessionMode::CliInteractive => "CLI Interactive",
         crate::model::SessionMode::CliActivelyWorking => "CLI Working",
         crate::model::SessionMode::WaitingForCliExit => "Waiting for CLI Exit",
     };
-    lines.push(Line::from(vec![
-        Span::styled("Mode: ", *label_style),
-        Span::styled(mode_str, *value_style),
-    ]));
+
+    if is_cli_mode {
+        // Show tmux session name when in CLI mode
+        let task_id_str = task.id.to_string();
+        let short_id = &task_id_str[..4.min(task_id_str.len())];
+        let session_name = format!("kb-{}", short_id);
+
+        lines.push(Line::from(vec![
+            Span::styled("Mode: ", *label_style),
+            Span::styled(mode_str, *value_style),
+            Span::styled(format!("  (tmux: {})", session_name), Style::default().fg(Color::Cyan)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("      ", *label_style),
+            Span::styled("Press ", *dim_style),
+            Span::styled("o", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(" to open terminal", *dim_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Mode: ", *label_style),
+            Span::styled(mode_str, *value_style),
+        ]));
+    }
 
     lines.push(Line::from(vec![
         Span::styled("SDK Commands: ", *label_style),

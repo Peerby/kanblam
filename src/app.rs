@@ -182,6 +182,7 @@ impl App {
                         task.title = title;
                         // Clear short_title when title changes (will be regenerated if needed)
                         task.short_title = None;
+                        task.log_activity("User edited task");
                     }
                 }
                 // Clear editing state and editor
@@ -465,6 +466,7 @@ impl App {
                             task.session_state = crate::model::ClaudeSessionState::Creating;
                             task.status = TaskStatus::Queued;
                             task.started_at = Some(Utc::now());
+                            task.log_activity("User started task");
                         }
                     }
 
@@ -539,6 +541,7 @@ impl App {
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     task.session_state = crate::model::ClaudeSessionState::Continuing;
+                                    task.log_activity("User continued task");
                                     // Don't change task.status - let the hook signals manage it
                                 }
                                 project.needs_attention = false;
@@ -677,6 +680,7 @@ impl App {
                             task.worktree_path = None;
                             task.tmux_window = None;
                             task.session_state = crate::model::ClaudeSessionState::Ended;
+                            task.log_activity("User merged changes");
                             project.tasks.push(task);
                         }
                         project.needs_attention = project.review_count() > 0;
@@ -1201,6 +1205,7 @@ impl App {
                             task.tmux_window = None;
                             task.session_state = crate::model::ClaudeSessionState::NotStarted;
                             task.started_at = None;
+                            task.log_activity("User discarded changes");
                         }
                         project.needs_attention = project.review_count() > 0;
                         if !project.needs_attention {
@@ -1464,6 +1469,13 @@ impl App {
                 if let Some((project_slug, window_name)) = switch_info {
                     if let Err(e) = crate::tmux::switch_to_task_window(&project_slug, &window_name) {
                         commands.push(Message::Error(format!("Failed to switch: {}", e)));
+                    } else {
+                        // Log activity
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.log_activity("User switched to session");
+                            }
+                        }
                     }
                 }
             }
@@ -3759,6 +3771,7 @@ impl App {
                             task.session_mode = crate::model::SessionMode::CliInteractive;
                             // Record current SDK command count so we can detect future staleness
                             task.cli_opened_at_command_count = task.sdk_command_count;
+                            task.log_activity("User opened terminal");
                         }
                     }
                 }
@@ -4548,6 +4561,12 @@ impl App {
                                                 task.last_activity_at = Some(chrono::Utc::now());
                                                 task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                                                 task.tmux_window = None;
+                                                let truncated = if feedback.len() > 50 {
+                                                    format!("{}...", &feedback[..50])
+                                                } else {
+                                                    feedback.clone()
+                                                };
+                                                task.log_activity(&format!("Feedback sent: {}", truncated));
                                             }
                                             project.needs_attention = false;
                                             notify::clear_attention_indicator();
@@ -5100,6 +5119,18 @@ impl App {
 
             Message::ToggleTaskPreview => {
                 self.model.ui_state.show_task_preview = !self.model.ui_state.show_task_preview;
+                // Reset to general tab when opening the modal
+                if self.model.ui_state.show_task_preview {
+                    self.model.ui_state.task_detail_tab = crate::model::TaskDetailTab::default();
+                }
+            }
+
+            Message::TaskDetailNextTab => {
+                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.next();
+            }
+
+            Message::TaskDetailPrevTab => {
+                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.prev();
             }
 
             Message::TaskDetailNextTab => {
