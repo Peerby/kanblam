@@ -1505,10 +1505,14 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Review Column", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
-        Line::from("  a          Accept: merge changes and mark done"),
-        Line::from("  d          Decline: discard changes and mark done"),
+        Line::from("  a          Apply: test changes in main worktree"),
+        Line::from("  m/M        Merge changes (m: mark done, M: keep in Review)"),
+        Line::from("  d          Discard: reject changes and mark done"),
+        Line::from("  u          Unapply applied changes"),
+        Line::from("  r          Rebase: update worktree to latest main"),
+        Line::from("  c          Check: view git diff/status report"),
         Line::from("  f          Feedback: send follow-up instructions"),
-        Line::from("  u          Unapply task changes (if applied)"),
+        Line::from("  s          Continue: open tmux session"),
         Line::from(""),
         Line::from(vec![
             Span::styled("InProgress Column", Style::default().add_modifier(Modifier::UNDERLINED)),
