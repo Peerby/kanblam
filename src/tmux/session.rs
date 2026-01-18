@@ -655,6 +655,117 @@ pub fn kill_task_sessions(task_id: &str) {
         .output();
 }
 
+/// Result of checking Claude CLI activity state in a tmux pane
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeCliState {
+    /// Claude is at prompt, waiting for input (shows ❯)
+    WaitingForInput,
+    /// Claude is actively working (processing, using tools)
+    Working,
+    /// Claude process is not running (shell prompt visible, or session doesn't exist)
+    NotRunning,
+    /// Could not determine state
+    Unknown,
+}
+
+/// Check the state of Claude CLI in a task's tmux session.
+/// Examines the pane content to determine if Claude is:
+/// - At prompt (waiting for input)
+/// - Actively working (processing)
+/// - Not running (just a shell)
+pub fn get_claude_cli_state(task_id: &str) -> ClaudeCliState {
+    // Session name is kb-{first 4 chars of task_id}
+    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+    let target = format!("{}:0.0", session_name); // Left pane where Claude runs
+
+    // Check if session exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", &session_name])
+        .output();
+
+    match check {
+        Ok(output) if !output.status.success() => {
+            // Session doesn't exist
+            return ClaudeCliState::NotRunning;
+        }
+        Err(_) => return ClaudeCliState::Unknown,
+        _ => {}
+    }
+
+    // Capture the last 20 lines of the pane
+    let output = match Command::new("tmux")
+        .args(["capture-pane", "-t", &target, "-p", "-S", "-20"])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return ClaudeCliState::Unknown,
+    };
+
+    // Analyze pane content from bottom up
+    for line in output.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Claude's ready prompt character is ❯ (U+276F) when waiting for input
+        if trimmed.starts_with("❯") || trimmed.starts_with(">") {
+            // Skip if showing loading indicator (... or spinner)
+            if trimmed.contains("...") || trimmed.contains("⠋") || trimmed.contains("⠙") {
+                return ClaudeCliState::Working;
+            }
+            return ClaudeCliState::WaitingForInput;
+        }
+
+        // Working indicators (spinners, tool use)
+        if trimmed.contains("⠋") || trimmed.contains("⠙") || trimmed.contains("⠹")
+            || trimmed.contains("⠸") || trimmed.contains("⠼") || trimmed.contains("⠴")
+            || trimmed.contains("⠦") || trimmed.contains("⠧") || trimmed.contains("⠇")
+            || trimmed.contains("⠏")
+        {
+            return ClaudeCliState::Working;
+        }
+
+        // Tool use output (Claude is working or just finished)
+        if trimmed.starts_with("●") || trimmed.starts_with("○") {
+            return ClaudeCliState::Working;
+        }
+
+        // Check for shell prompt (Claude not running) - common patterns
+        // $ prompt, % prompt, user@host patterns
+        if trimmed.ends_with('$') || trimmed.ends_with('%') {
+            // Make sure it's not Claude's output that happens to end with these
+            if trimmed.len() < 80 && !trimmed.contains("Claude") {
+                return ClaudeCliState::NotRunning;
+            }
+        }
+    }
+
+    // If we got here, Claude might be outputting text (also "working")
+    // Default to Unknown if we can't tell
+    ClaudeCliState::Unknown
+}
+
+/// Kill the Claude CLI session for a task (if it exists).
+/// This allows restarting with fresh state after SDK has done work.
+pub fn kill_claude_cli_session(task_id: &str) -> Result<()> {
+    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+
+    let output = Command::new("tmux")
+        .args(["kill-session", "-t", &session_name])
+        .output()?;
+
+    if !output.status.success() {
+        // Session might not exist, which is fine
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("session not found") && !stderr.contains("no server running") {
+            return Err(anyhow!("Failed to kill session: {}", stderr));
+        }
+    }
+
+    Ok(())
+}
+
 /// Check if a task window exists
 pub fn task_window_exists(project_slug: &str, window_name: &str) -> bool {
     let session_name = format!("kc-{}", project_slug);

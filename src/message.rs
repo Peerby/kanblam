@@ -148,6 +148,10 @@ pub enum Message {
     SdkSessionOutput { task_id: Uuid, output: String },
     /// Open interactive modal for a task (hand off to CLI)
     OpenInteractiveModal(Uuid),
+    /// Actually open interactive modal (after confirmation if SDK was working)
+    DoOpenInteractiveModal(Uuid),
+    /// Actually send feedback (after confirmation if CLI was working)
+    DoSendFeedback { task_id: Uuid, feedback: String },
     /// Close interactive modal (return control to app)
     CloseInteractiveModal,
     /// CLI session ended, hand back to SDK
@@ -162,6 +166,8 @@ pub enum Message {
     CancelFeedbackMode,
     /// Send feedback to a task in Review and resume the SDK session
     SendFeedback { task_id: Uuid, feedback: String },
+    /// Queue feedback to be sent when Claude finishes current work
+    QueueFeedback { task_id: Uuid, feedback: String },
 
     // Image handling
     PasteImage,

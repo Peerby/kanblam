@@ -2520,6 +2520,18 @@ impl App {
                             // User confirmed destructive unapply
                             commands.push(Message::ForceUnapplyTaskChanges(task_id));
                         }
+                        PendingAction::InterruptSdkForCli(task_id) => {
+                            // User confirmed interrupting SDK to open CLI
+                            commands.push(Message::DoOpenInteractiveModal(task_id));
+                        }
+                        PendingAction::InterruptSdkForFeedback { task_id, feedback } => {
+                            // User confirmed interrupting SDK to send feedback (i=interrupt)
+                            commands.push(Message::DoSendFeedback { task_id, feedback });
+                        }
+                        PendingAction::InterruptCliForFeedback { task_id, feedback } => {
+                            // User confirmed interrupting CLI to send feedback via SDK (i=interrupt)
+                            commands.push(Message::DoSendFeedback { task_id, feedback });
+                        }
                     }
                 }
             }
@@ -2562,6 +2574,24 @@ impl App {
                             // User declined destructive unapply - changes remain applied
                             commands.push(Message::SetStatusMessage(Some(
                                 "Changes still applied. Use 'u' to try surgical unapply again.".to_string()
+                            )));
+                        }
+                        PendingAction::InterruptSdkForCli(_) => {
+                            // User cancelled opening CLI - SDK continues running
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cancelled. Claude continues working via SDK.".to_string()
+                            )));
+                        }
+                        PendingAction::InterruptSdkForFeedback { .. } => {
+                            // User cancelled sending feedback - SDK continues working
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cancelled. Claude continues working.".to_string()
+                            )));
+                        }
+                        PendingAction::InterruptCliForFeedback { .. } => {
+                            // User cancelled sending feedback - CLI continues
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cancelled. Press 'o' to view CLI.".to_string()
                             )));
                         }
                     }
@@ -2641,16 +2671,42 @@ impl App {
                         let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
 
+                        let was_cli_actively_working = project.tasks[idx].session_mode == crate::model::SessionMode::CliActivelyWorking;
+
                         let task = &mut project.tasks[idx];
                         found_task = true;
 
+                        // Track CLI activity state for SDK/CLI handoff coordination
+                        // When CLI is in CliInteractive or CliActivelyWorking mode, update state based on hooks
+                        if matches!(task.session_mode, crate::model::SessionMode::CliInteractive | crate::model::SessionMode::CliActivelyWorking) {
+                            match signal.event.as_str() {
+                                "working" | "input-provided" => {
+                                    // CLI is actively working (user submitted input or tool is running)
+                                    task.session_mode = crate::model::SessionMode::CliActivelyWorking;
+                                }
+                                "stop" | "end" | "needs-input" => {
+                                    // CLI finished its turn, back to waiting for input
+                                    task.session_mode = crate::model::SessionMode::CliInteractive;
+                                }
+                                _ => {}
+                            }
+                        }
+
                         // Check if we're waiting for CLI to exit (SDK handoff case)
+                        // Only trigger SDK resume if CLI is NOT actively working
                         if was_waiting_for_cli && matches!(signal.event.as_str(), "stop" | "end") {
                             // CLI exited - resume SDK session
                             // Note: Don't overwrite claude_session_id here - the signal uses task_id,
                             // but we want to keep the real SDK session_id that was set when session started
+                            task.session_mode = crate::model::SessionMode::SdkManaged;
                             commands.push(Message::CliSessionEnded { task_id });
                             break;
+                        }
+
+                        // If we were actively working and got a stop/end, transition to WaitingForCliExit
+                        // so the SDK can pick up (unless user closes the modal)
+                        if was_cli_actively_working && matches!(signal.event.as_str(), "stop" | "end") {
+                            task.session_mode = crate::model::SessionMode::CliInteractive;
                         }
 
                         match signal.event.as_str() {
@@ -2759,7 +2815,27 @@ impl App {
                             }
                             _ => {}
                         }
+
                         break;
+                    }
+                }
+
+                // Handle pending feedback after the main loop (avoid borrow conflicts)
+                // We need to re-find the task since the previous borrow ended
+                if matches!(signal.event.as_str(), "stop" | "needs-input") {
+                    if let Some(task_uuid) = task_uuid {
+                        for project in &mut self.model.projects {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_uuid) {
+                                if let Some(feedback) = task.pending_feedback.take() {
+                                    // Claude finished - send the queued feedback
+                                    task.log_activity(&format!("Sending queued feedback: {}...",
+                                        if feedback.len() > 20 { &feedback[..20] } else { &feedback }));
+                                    task.session_mode = crate::model::SessionMode::SdkManaged;
+                                    commands.push(Message::DoSendFeedback { task_id: task_uuid, feedback });
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -3129,6 +3205,8 @@ impl App {
                         task.claude_session_id = Some(session_id);
                         task.session_state = crate::model::ClaudeSessionState::Working;
                         task.session_mode = crate::model::SessionMode::SdkManaged;
+                        // Increment SDK command count for CLI staleness detection
+                        task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                         if let Some(ref wt) = task.worktree_path {
                             worktree_display = wt.display().to_string();
                         }
@@ -3199,23 +3277,63 @@ impl App {
             }
 
             Message::OpenInteractiveModal(task_id) => {
-                // Gather task info
+                // Gather task info including SDK command count for staleness check
                 let task_info = self.model.active_project().and_then(|project| {
                     project.tasks.iter().find(|t| t.id == task_id).map(|task| {
                         (
                             task.worktree_path.clone(),
                             task.claude_session_id.clone(),
                             task.session_state.clone(),
+                            task.session_mode,
+                            task.sdk_command_count,
+                            task.cli_opened_at_command_count,
                         )
                     })
                 });
 
-                if let Some((worktree_path, session_id, _session_state)) = task_info {
+                if let Some((worktree_path, session_id, session_state, session_mode, sdk_count, cli_opened_at)) = task_info {
                     // Require worktree path
                     let Some(worktree_path) = worktree_path else {
                         commands.push(Message::Error(
                             "Cannot open interactive mode: no worktree path.".to_string()
                         ));
+                        return commands;
+                    };
+
+                    // Check if SDK is actively working - if so, ask for confirmation before interrupting
+                    let sdk_is_working = session_mode == crate::model::SessionMode::SdkManaged
+                        && session_state == crate::model::ClaudeSessionState::Working;
+
+                    if sdk_is_working {
+                        // Show confirmation dialog before interrupting SDK
+                        commands.push(Message::ShowConfirmation {
+                            message: "Claude is working via SDK. Interrupt to open terminal? (y/n)".to_string(),
+                            action: PendingAction::InterruptSdkForCli(task_id),
+                        });
+                        return commands;
+                    }
+
+                    // SDK not actively working - proceed with opening CLI
+                    commands.push(Message::DoOpenInteractiveModal(task_id));
+                }
+            }
+
+            Message::DoOpenInteractiveModal(task_id) => {
+                // Actually open the interactive modal (after confirmation or if SDK was idle)
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.worktree_path.clone(),
+                            task.claude_session_id.clone(),
+                            task.sdk_command_count,
+                            task.cli_opened_at_command_count,
+                            task.session_mode.clone(),
+                        )
+                    })
+                });
+
+                if let Some((worktree_path, session_id, sdk_count, cli_opened_at, session_mode)) = task_info {
+                    let Some(worktree_path) = worktree_path else {
                         return commands;
                     };
 
@@ -3226,11 +3344,28 @@ impl App {
                         }
                     }
 
+                    // Check if existing CLI terminal has stale state (SDK ran commands since it was opened)
+                    let cli_is_stale = sdk_count > cli_opened_at;
+                    let task_id_str = task_id.to_string();
+
+                    if cli_is_stale {
+                        // Check if CLI is currently working (using session_mode updated by hooks)
+                        if session_mode == crate::model::SessionMode::CliActivelyWorking {
+                            // CLI is actively working - don't interrupt, let user see it
+                            // Just switch to the existing session
+                        } else {
+                            // CLI is idle or not running - safe to kill and restart
+                            if let Err(e) = crate::tmux::kill_claude_cli_session(&task_id_str) {
+                                eprintln!("Note: Could not kill stale CLI session: {}", e);
+                            }
+                        }
+                    }
+
                     // Always try to resume if we have a session_id
                     // This shows conversation history even for completed sessions
                     let resume_session_id = session_id.as_deref();
 
-                    // Open tmux popup with Claude
+                    // Open tmux popup with Claude (will create new if killed above, or switch to existing)
                     if let Err(e) = crate::tmux::open_popup(&worktree_path, resume_session_id) {
                         commands.push(Message::Error(format!(
                             "Failed to open interactive popup: {}", e
@@ -3238,10 +3373,12 @@ impl App {
                         return commands;
                     }
 
-                    // Update session mode to CLI
+                    // Update session mode to CLI and record when CLI was opened
                     if let Some(project) = self.model.active_project_mut() {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.session_mode = crate::model::SessionMode::CliInteractive;
+                            // Record current SDK command count so we can detect future staleness
+                            task.cli_opened_at_command_count = task.sdk_command_count;
                         }
                     }
                 }
@@ -3291,6 +3428,8 @@ impl App {
                                         task.claude_session_id = Some(new_session_id);
                                         task.session_mode = crate::model::SessionMode::SdkManaged;
                                         task.session_state = crate::model::ClaudeSessionState::Working;
+                                        // Increment SDK command count for CLI staleness detection
+                                        task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                                     }
                                 }
                                 commands.push(Message::SetStatusMessage(Some(
@@ -3601,24 +3740,86 @@ impl App {
                 let task_info = self.model.active_project().and_then(|project| {
                     project.tasks.iter().find(|t| t.id == task_id).map(|task| {
                         (
-                            task.claude_session_id.clone(),
-                            task.tmux_window.clone(),
-                            task.worktree_path.clone(),
-                            project.slug(),
+                            task.session_mode,
+                            task.session_state,
                             task.status,
                         )
                     })
                 });
 
-                if let Some((session_id_opt, tmux_window_opt, worktree_path_opt, project_slug, task_status)) = task_info {
-                    // For InProgress tasks: use send_prompt (session is active)
-                    // For Review tasks: use resume_session (session is paused)
-                    if task_status == TaskStatus::InProgress {
-                        // Live feedback to active session - don't kill tmux, don't change status
+                if let Some((session_mode, session_state, task_status)) = task_info {
+                    // Check if CLI is currently controlling the session
+                    let cli_is_active = matches!(
+                        session_mode,
+                        crate::model::SessionMode::CliInteractive |
+                        crate::model::SessionMode::CliActivelyWorking |
+                        crate::model::SessionMode::WaitingForCliExit
+                    );
+
+                    if cli_is_active {
+                        // CLI has control - check session_mode (updated by hooks) to see if working
+                        if session_mode == crate::model::SessionMode::CliActivelyWorking {
+                            // CLI is actively working (hooks told us) - ask user what to do
+                            commands.push(Message::ShowConfirmation {
+                                message: "CLI working. i=interrupt, q=queue, o=open CLI, n=cancel".to_string(),
+                                action: PendingAction::InterruptCliForFeedback { task_id, feedback },
+                            });
+                        } else {
+                            // CLI is idle (CliInteractive) or closing (WaitingForCliExit) - kill it and send via SDK
+                            commands.push(Message::DoSendFeedback { task_id, feedback });
+                        }
+                    } else if task_status == TaskStatus::InProgress {
+                        // SDK mode and InProgress - check if SDK is actively working
+                        if session_state == crate::model::ClaudeSessionState::Working {
+                            // SDK is actively working - ask user what to do
+                            commands.push(Message::ShowConfirmation {
+                                message: "SDK working. i=interrupt, q=queue, n=cancel".to_string(),
+                                action: PendingAction::InterruptSdkForFeedback { task_id, feedback },
+                            });
+                        } else {
+                            // SDK is idle (WaitingForInput) - send live feedback
+                            commands.push(Message::DoSendFeedback { task_id, feedback });
+                        }
+                    } else {
+                        // Paused session (Review) with SDK mode - resume with feedback
+                        commands.push(Message::DoSendFeedback { task_id, feedback });
+                    }
+                } else {
+                    commands.push(Message::Error("Task not found".to_string()));
+                }
+            }
+
+            Message::DoSendFeedback { task_id, feedback } => {
+                // Actually send feedback (after confirmation or if CLI was idle)
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.claude_session_id.clone(),
+                            task.tmux_window.clone(),
+                            task.worktree_path.clone(),
+                            project.slug(),
+                            task.status,
+                            task.session_mode.clone(),
+                        )
+                    })
+                });
+
+                if let Some((session_id_opt, tmux_window_opt, worktree_path_opt, project_slug, task_status, session_mode)) = task_info {
+                    // Kill any CLI session that might be running
+                    let task_id_str = task_id.to_string();
+                    let _ = crate::tmux::kill_claude_cli_session(&task_id_str);
+
+                    // Check if CLI had control - if so, we need to resume the SDK session
+                    let cli_had_control = matches!(
+                        session_mode,
+                        crate::model::SessionMode::CliInteractive | crate::model::SessionMode::CliActivelyWorking
+                    );
+
+                    if task_status == TaskStatus::InProgress && !cli_had_control {
+                        // SDK was in control - send live feedback to active SDK session
                         if let Some(ref client) = self.sidecar_client {
                             match client.send_prompt(task_id, &feedback, None) {
                                 Ok(()) => {
-                                    // Log the feedback, but keep task in InProgress
                                     if let Some(project) = self.model.active_project_mut() {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                             let truncated = if feedback.len() > 50 {
@@ -3628,6 +3829,8 @@ impl App {
                                             };
                                             task.log_activity(&format!("Live feedback: {}", truncated));
                                             task.last_activity_at = Some(chrono::Utc::now());
+                                            task.sdk_command_count = task.sdk_command_count.saturating_add(1);
+                                            task.session_mode = crate::model::SessionMode::SdkManaged;
                                         }
                                     }
                                     commands.push(Message::SetStatusMessage(Some(
@@ -3642,18 +3845,15 @@ impl App {
                             commands.push(Message::Error("Cannot send feedback: sidecar not connected".to_string()));
                         }
                     } else {
-                        // Paused session (Review): resume with feedback
-                        // Kill any existing tmux window to avoid sync issues
+                        // Paused session (Review) OR CLI had control - resume SDK with feedback
                         if let Some(ref window_name) = tmux_window_opt {
                             let _ = crate::tmux::kill_task_window(&project_slug, window_name);
                         }
 
                         if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
-                            // Resume SDK session with feedback - preserves full conversation context
                             if let Some(ref client) = self.sidecar_client {
                                 match client.resume_session(task_id, session_id, worktree_path, Some(&feedback)) {
                                     Ok(new_session_id) => {
-                                        // Update task state: move to InProgress and set Working state
                                         if let Some(project) = self.model.active_project_mut() {
                                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                                 task.claude_session_id = Some(new_session_id);
@@ -3661,16 +3861,13 @@ impl App {
                                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                                 task.session_mode = crate::model::SessionMode::SdkManaged;
                                                 task.last_activity_at = Some(chrono::Utc::now());
-                                                // Clear tmux window since we killed it
+                                                task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                                                 task.tmux_window = None;
                                             }
                                             project.needs_attention = false;
                                             notify::clear_attention_indicator();
                                         }
-
-                                        // Move selection to InProgress column
                                         commands.push(Message::SelectColumn(TaskStatus::InProgress));
-
                                         commands.push(Message::SetStatusMessage(Some(
                                             "Feedback sent - task resumed".to_string()
                                         )));
@@ -3693,6 +3890,25 @@ impl App {
                     }
                 } else {
                     commands.push(Message::Error("Task not found".to_string()));
+                }
+            }
+
+            Message::QueueFeedback { task_id, feedback } => {
+                // Queue feedback to be sent when Claude finishes current work
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.pending_feedback = Some(feedback.clone());
+                        let truncated = if feedback.len() > 30 {
+                            format!("{}...", &feedback[..30])
+                        } else {
+                            feedback
+                        };
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Feedback queued: {}", truncated)
+                        )));
+                    } else {
+                        commands.push(Message::Error("Task not found".to_string()));
+                    }
                 }
             }
 

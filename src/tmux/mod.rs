@@ -13,4 +13,6 @@ pub use session::{
     // SDK/CLI handoff support
     send_resume_command, send_start_command, send_key_to_pane, capture_pane_with_escapes,
     resize_pane, send_sigwinch, get_pane_size, open_popup,
+    // CLI state detection
+    ClaudeCliState, get_claude_cli_state, kill_claude_cli_session,
 };

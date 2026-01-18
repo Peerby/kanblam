@@ -782,10 +782,41 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
 
 fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
     // Handle confirmation dialogs first - ignore all other input except expected keys
-    if app.model.ui_state.pending_confirmation.is_some() {
+    if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         return match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => vec![Message::ConfirmAction],
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![Message::CancelAction],
+            // 'i' key for interrupt - same as ConfirmAction for feedback dialogs
+            KeyCode::Char('i') | KeyCode::Char('I') => {
+                match &confirmation.action {
+                    model::PendingAction::InterruptSdkForFeedback { .. } |
+                    model::PendingAction::InterruptCliForFeedback { .. } => {
+                        vec![Message::ConfirmAction]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
+            // 'q' key for queue - store feedback to send when Claude finishes
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                match &confirmation.action {
+                    model::PendingAction::InterruptSdkForFeedback { task_id, feedback } |
+                    model::PendingAction::InterruptCliForFeedback { task_id, feedback } => {
+                        vec![Message::QueueFeedback { task_id: *task_id, feedback: feedback.clone() }]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
+            // 'o' key for open CLI - available for both SDK and CLI feedback dialogs
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                match &confirmation.action {
+                    model::PendingAction::InterruptSdkForFeedback { task_id, .. } |
+                    model::PendingAction::InterruptCliForFeedback { task_id, .. } => {
+                        // Cancel the feedback and open CLI instead
+                        vec![Message::CancelAction, Message::OpenInteractiveModal(*task_id)]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
             // Allow 1-9 to cancel and switch to that project
             KeyCode::Char(c @ '1'..='9') => {
                 let project_idx = (c as usize) - ('1' as usize);

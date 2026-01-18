@@ -727,6 +727,9 @@ pub enum SessionMode {
     SdkManaged,
     /// User has taken over via interactive CLI (`claude --resume`)
     CliInteractive,
+    /// CLI session is actively working (received "working" hook but not "stop"/"end")
+    /// SDK must not resume until CLI completes its turn
+    CliActivelyWorking,
     /// Modal closed, waiting for CLI to exit before resuming SDK
     WaitingForCliExit,
 }
@@ -763,6 +766,21 @@ pub struct Task {
     /// Whether session is SDK-managed or CLI-interactive
     #[serde(default)]
     pub session_mode: SessionMode,
+
+    // === SDK/CLI handoff tracking ===
+
+    /// Counter of SDK commands run for this session (incremented on each SDK query)
+    /// Used to detect if CLI terminal has stale state
+    #[serde(default)]
+    pub sdk_command_count: u32,
+    /// SDK command count when CLI terminal was last opened/refreshed
+    /// If sdk_command_count > cli_opened_at_command_count, CLI needs refresh
+    #[serde(default)]
+    pub cli_opened_at_command_count: u32,
+    /// Feedback queued to be sent when Claude finishes current work
+    /// Used when user sends feedback while SDK/CLI is actively working
+    #[serde(skip)]
+    pub pending_feedback: Option<String>,
 
     // === Task queueing ===
 
@@ -830,6 +848,10 @@ impl Task {
             tmux_window: None,
             session_state: ClaudeSessionState::NotStarted,
             session_mode: SessionMode::SdkManaged,
+            // SDK/CLI handoff tracking
+            sdk_command_count: 0,
+            cli_opened_at_command_count: 0,
+            pending_feedback: None,
             // Queueing
             queued_for_session: None,
             // Activity tracking
@@ -1311,6 +1333,14 @@ pub enum PendingAction {
     ForceUnapply(Uuid),
     /// Merge only: merge changes to main but keep worktree and task in Review
     MergeOnlyTask(Uuid),
+    /// Interrupt SDK session to open CLI terminal (y=interrupt, n=cancel)
+    InterruptSdkForCli(Uuid),
+    /// SDK is working, user wants to send feedback (i=interrupt, q=queue, n=cancel)
+    /// Stores task_id and the feedback text to send
+    InterruptSdkForFeedback { task_id: Uuid, feedback: String },
+    /// CLI is working, user wants to send feedback (i=interrupt, q=queue, o=open CLI, n=cancel)
+    /// Stores task_id and the feedback text to send
+    InterruptCliForFeedback { task_id: Uuid, feedback: String },
 }
 
 /// Which UI element has focus
