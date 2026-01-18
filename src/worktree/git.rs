@@ -491,6 +491,27 @@ fn get_patch_file_path(task_id: Uuid) -> PathBuf {
     kanclaude_dir.join(format!("{}.patch", task_id))
 }
 
+/// Parse file paths from unified diff patch content.
+/// Extracts paths from "diff --git a/path b/path" header lines.
+fn parse_patch_files(patch_content: &[u8]) -> Vec<String> {
+    let content = String::from_utf8_lossy(patch_content);
+    let mut files = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("diff --git a/") {
+            // Format: "diff --git a/path/to/file b/path/to/file"
+            if let Some(path_part) = line.strip_prefix("diff --git a/") {
+                if let Some(space_idx) = path_part.find(" b/") {
+                    let file_path = &path_part[..space_idx];
+                    files.push(file_path.to_string());
+                }
+            }
+        }
+    }
+
+    files
+}
+
 /// Clean up after accepting an applied task.
 /// Just removes the patch file - stash was already popped immediately after apply.
 pub fn cleanup_applied_state(task_id: Uuid) {
@@ -808,6 +829,24 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
         let output = apply_cmd.wait_with_output()?;
 
         if output.status.success() {
+            // Surgically unstage only the task's files.
+            // git apply -R only modifies the working directory, but apply_task_changes
+            // may have staged changes with git add -u. We need to clear those stale
+            // index entries, but only for the files the task touched.
+            let task_files = parse_patch_files(&patch_content);
+            if !task_files.is_empty() {
+                let mut reset_cmd = Command::new("git");
+                reset_cmd
+                    .current_dir(project_dir)
+                    .arg("reset")
+                    .arg("HEAD")
+                    .arg("--");
+                for file in &task_files {
+                    reset_cmd.arg(file);
+                }
+                let _ = reset_cmd.output();
+            }
+
             // Clean up the patch file
             let _ = std::fs::remove_file(&patch_path);
 
@@ -855,23 +894,8 @@ pub fn surgical_unapply_for_stash_conflict(project_dir: &PathBuf, task_id: Uuid)
         return Err(anyhow!("No patch file found for task {}. Cannot perform surgical unapply.", task_id));
     }
 
-    // Read the patch to extract the list of files it modifies
-    let patch_content = std::fs::read_to_string(&patch_path)?;
-
-    // Parse patch to get file paths (lines starting with "diff --git a/")
-    let mut files_to_reset: Vec<String> = Vec::new();
-    for line in patch_content.lines() {
-        if line.starts_with("diff --git a/") {
-            // Format: "diff --git a/path/to/file b/path/to/file"
-            // Extract the path after "a/"
-            if let Some(path_part) = line.strip_prefix("diff --git a/") {
-                if let Some(space_idx) = path_part.find(" b/") {
-                    let file_path = &path_part[..space_idx];
-                    files_to_reset.push(file_path.to_string());
-                }
-            }
-        }
-    }
+    let patch_content = std::fs::read(&patch_path)?;
+    let files_to_reset = parse_patch_files(&patch_content);
 
     if files_to_reset.is_empty() {
         return Err(anyhow!("Could not parse any files from patch"));
