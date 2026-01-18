@@ -2471,24 +2471,34 @@ impl App {
                             } else {
                                 let path = selected.path.clone();
 
-                                // Use the directory name as the project name
-                                let name = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("project")
-                                    .to_string();
+                                // Check if this project is already open
+                                if let Some(existing_project) = self.model.projects.iter().find(|p| p.working_dir == path) {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("Project '{}' is already open", existing_project.name)
+                                    )));
+                                    // Close the dialog
+                                    self.model.ui_state.open_project_dialog_slot = None;
+                                    self.model.ui_state.directory_browser = None;
+                                } else {
+                                    // Use the directory name as the project name
+                                    let name = path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("project")
+                                        .to_string();
 
-                                let mut project = Project::new(name, path);
-                                // Load any existing tasks from the project's .kanblam/tasks.json
-                                project.load_tasks();
-                                self.model.projects.push(project);
-                                self.model.active_project_idx = slot;
-                                self.model.ui_state.selected_task_idx = None;
-                                self.model.ui_state.focus = FocusArea::KanbanBoard;
+                                    let mut project = Project::new(name, path);
+                                    // Load any existing tasks from the project's .kanblam/tasks.json
+                                    project.load_tasks();
+                                    self.model.projects.push(project);
+                                    self.model.active_project_idx = slot;
+                                    self.model.ui_state.selected_task_idx = None;
+                                    self.model.ui_state.focus = FocusArea::KanbanBoard;
 
-                                // Close the dialog
-                                self.model.ui_state.open_project_dialog_slot = None;
-                                self.model.ui_state.directory_browser = None;
+                                    // Close the dialog
+                                    self.model.ui_state.open_project_dialog_slot = None;
+                                    self.model.ui_state.directory_browser = None;
+                                }
                             }
                         }
                     }
@@ -2497,24 +2507,34 @@ impl App {
 
             Message::ConfirmOpenProjectPath(path) => {
                 if let Some(slot) = self.model.ui_state.open_project_dialog_slot {
-                    // Use the directory name as the project name
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("project")
-                        .to_string();
+                    // Check if this project is already open
+                    if let Some(existing_project) = self.model.projects.iter().find(|p| p.working_dir == path) {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Project '{}' is already open", existing_project.name)
+                        )));
+                        // Close the dialog
+                        self.model.ui_state.open_project_dialog_slot = None;
+                        self.model.ui_state.directory_browser = None;
+                    } else {
+                        // Use the directory name as the project name
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("project")
+                            .to_string();
 
-                    let mut project = Project::new(name, path);
-                    // Load any existing tasks from the project's .kanblam/tasks.json
-                    project.load_tasks();
-                    self.model.projects.push(project);
-                    self.model.active_project_idx = slot;
-                    self.model.ui_state.selected_task_idx = None;
-                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                        let mut project = Project::new(name, path);
+                        // Load any existing tasks from the project's .kanblam/tasks.json
+                        project.load_tasks();
+                        self.model.projects.push(project);
+                        self.model.active_project_idx = slot;
+                        self.model.ui_state.selected_task_idx = None;
+                        self.model.ui_state.focus = FocusArea::KanbanBoard;
 
-                    // Close the dialog
-                    self.model.ui_state.open_project_dialog_slot = None;
-                    self.model.ui_state.directory_browser = None;
+                        // Close the dialog
+                        self.model.ui_state.open_project_dialog_slot = None;
+                        self.model.ui_state.directory_browser = None;
+                    }
                 }
             }
 
