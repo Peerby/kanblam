@@ -275,29 +275,20 @@ pub fn commit_main_changes(project_dir: &PathBuf) -> Result<bool> {
 /// Commit applied changes from a task with a descriptive message
 /// Returns Ok(true) if changes were committed, Ok(false) if nothing to commit
 pub fn commit_applied_changes(project_dir: &PathBuf, task_title: &str, task_id: Uuid) -> Result<bool> {
-    // Check if there are local changes
-    let status_check = Command::new("git")
+    // Check if there are STAGED changes (applied task changes are staged via --3way)
+    // Don't use git add -A as that would also commit user's unstaged edits
+    let has_staged = Command::new("git")
         .current_dir(project_dir)
-        .args(["status", "--porcelain"])
-        .output()?;
+        .args(["diff", "--cached", "--quiet"])
+        .status()
+        .map(|s| !s.success())  // exit 1 means there ARE differences
+        .unwrap_or(false);
 
-    let status_output = String::from_utf8_lossy(&status_check.stdout);
-    if status_output.trim().is_empty() {
-        return Ok(false); // Nothing to commit
+    if !has_staged {
+        return Ok(false); // Nothing staged to commit
     }
 
-    // Stage all changes
-    let add_output = Command::new("git")
-        .current_dir(project_dir)
-        .args(["add", "-A"])
-        .output()?;
-
-    if !add_output.status.success() {
-        let stderr = String::from_utf8_lossy(&add_output.stderr);
-        return Err(anyhow!("Failed to stage changes: {}", stderr));
-    }
-
-    // Commit with task info
+    // Commit only staged changes (task's applied changes)
     let commit_msg = format!("Merge task {} from Claude session\n\nTask: {}", task_id, task_title);
     let commit_output = Command::new("git")
         .current_dir(project_dir)
