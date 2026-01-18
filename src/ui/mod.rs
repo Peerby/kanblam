@@ -1138,7 +1138,18 @@ fn format_duration(duration: chrono::Duration) -> String {
 
 /// Render help overlay with scrolling support
 fn render_help(frame: &mut Frame, scroll_offset: usize) {
-    let area = centered_rect(60, 80, frame.area());
+    // Minimum width to fit the longest help text line plus borders
+    const MIN_WIDTH: u16 = 58;
+
+    let mut area = centered_rect(60, 80, frame.area());
+
+    // Enforce minimum width (centered within screen)
+    if area.width < MIN_WIDTH {
+        let screen = frame.area();
+        let actual_width = MIN_WIDTH.min(screen.width);
+        area.width = actual_width;
+        area.x = screen.x + (screen.width.saturating_sub(actual_width)) / 2;
+    }
 
     let help_text = vec![
         Line::from(Span::styled(
