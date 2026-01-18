@@ -5178,19 +5178,82 @@ impl App {
             }
 
             Message::TaskDetailNextTab => {
-                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.next();
+                let new_tab = self.model.ui_state.task_detail_tab.next();
+                self.model.ui_state.task_detail_tab = new_tab;
+
+                // Load git diff when switching to Git tab
+                if new_tab == crate::model::TaskDetailTab::Git {
+                    if let Some(task_id) = self.model.ui_state.selected_task_id {
+                        // Check if we need to load the diff (not cached for this task)
+                        let needs_load = self.model.ui_state.git_diff_cache
+                            .as_ref()
+                            .map(|(id, _)| *id != task_id)
+                            .unwrap_or(true);
+                        if needs_load {
+                            return vec![Message::LoadGitDiff(task_id)];
+                        }
+                    }
+                }
             }
 
             Message::TaskDetailPrevTab => {
-                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.prev();
+                let new_tab = self.model.ui_state.task_detail_tab.prev();
+                self.model.ui_state.task_detail_tab = new_tab;
+
+                // Load git diff when switching to Git tab
+                if new_tab == crate::model::TaskDetailTab::Git {
+                    if let Some(task_id) = self.model.ui_state.selected_task_id {
+                        // Check if we need to load the diff (not cached for this task)
+                        let needs_load = self.model.ui_state.git_diff_cache
+                            .as_ref()
+                            .map(|(id, _)| *id != task_id)
+                            .unwrap_or(true);
+                        if needs_load {
+                            return vec![Message::LoadGitDiff(task_id)];
+                        }
+                    }
+                }
             }
 
-            Message::TaskDetailNextTab => {
-                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.next();
+            Message::ScrollGitDiffUp(lines) => {
+                self.model.ui_state.git_diff_scroll_offset =
+                    self.model.ui_state.git_diff_scroll_offset.saturating_sub(lines);
             }
 
-            Message::TaskDetailPrevTab => {
-                self.model.ui_state.task_detail_tab = self.model.ui_state.task_detail_tab.prev();
+            Message::ScrollGitDiffDown(lines) => {
+                // Get the number of lines in the cached diff to cap scrolling
+                let max_lines = self.model.ui_state.git_diff_cache
+                    .as_ref()
+                    .map(|(_, diff)| diff.lines().count())
+                    .unwrap_or(0);
+                let max_scroll = max_lines.saturating_sub(10); // Leave some visible lines
+                self.model.ui_state.git_diff_scroll_offset = self
+                    .model
+                    .ui_state
+                    .git_diff_scroll_offset
+                    .saturating_add(lines)
+                    .min(max_scroll);
+            }
+
+            Message::LoadGitDiff(task_id) => {
+                // Reset scroll when loading new diff
+                self.model.ui_state.git_diff_scroll_offset = 0;
+
+                // Load the diff for this task
+                if let Some(project) = self.model.active_project() {
+                    match crate::worktree::get_task_diff(&project.working_dir, task_id) {
+                        Ok(diff) => {
+                            self.model.ui_state.git_diff_cache = Some((task_id, diff));
+                        }
+                        Err(e) => {
+                            // Store empty diff with error message
+                            self.model.ui_state.git_diff_cache = Some((
+                                task_id,
+                                format!("Error loading diff: {}", e),
+                            ));
+                        }
+                    }
+                }
             }
 
             Message::Tick => {

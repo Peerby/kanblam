@@ -243,6 +243,9 @@ pub enum Message {
     ToggleTaskPreview,     // Show/hide task preview modal (v/space)
     TaskDetailNextTab,     // Move to next tab in task detail modal
     TaskDetailPrevTab,     // Move to previous tab in task detail modal
+    ScrollGitDiffUp(usize),   // Scroll git diff up by N lines
+    ScrollGitDiffDown(usize), // Scroll git diff down by N lines
+    LoadGitDiff(Uuid),        // Load/refresh git diff for a task
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

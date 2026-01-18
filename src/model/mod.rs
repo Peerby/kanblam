@@ -1466,6 +1466,12 @@ pub struct UiState {
     pub show_stash_modal: bool,
     /// Selected index in the stash list
     pub stash_modal_selected_idx: usize,
+
+    // Git diff view in task detail modal
+    /// Scroll offset for the git diff view (lines scrolled from top)
+    pub git_diff_scroll_offset: usize,
+    /// Cached git diff content for the currently viewed task
+    pub git_diff_cache: Option<(Uuid, String)>,
 }
 
 /// State for the interactive Claude terminal modal
@@ -1720,6 +1726,8 @@ impl Default for UiState {
             config_modal: None,
             show_stash_modal: false,
             stash_modal_selected_idx: 0,
+            git_diff_scroll_offset: 0,
+            git_diff_cache: None,
         }
     }
 }

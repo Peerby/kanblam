@@ -784,7 +784,7 @@ fn render_git_tab<'a>(
     task: &crate::model::Task,
     app: &App,
     label_style: &Style,
-    value_style: &Style,
+    _value_style: &Style,
     dim_style: &Style,
     key_style: &Style,
 ) {
@@ -793,19 +793,18 @@ fn render_git_tab<'a>(
         return;
     }
 
-    // Show branch
+    // Show summary header (branch, changes, commits)
     if let Some(ref branch) = task.git_branch {
         lines.push(Line::from(vec![
             Span::styled("Branch: ", *label_style),
             Span::styled(branch.clone(), Style::default().fg(Color::Green)),
         ]));
     }
-    lines.push(Line::from(""));
 
-    // Show line changes with visual bar
+    // Show line changes with visual bar (compact)
     let total_changes = task.git_additions + task.git_deletions;
     if total_changes > 0 {
-        let bar_width = 20usize;
+        let bar_width = 16usize;
         let add_ratio = task.git_additions as f64 / total_changes as f64;
         let add_chars = (add_ratio * bar_width as f64).round() as usize;
         let del_chars = bar_width.saturating_sub(add_chars);
@@ -814,112 +813,179 @@ fn render_git_tab<'a>(
         let del_bar = "█".repeat(del_chars);
 
         lines.push(Line::from(vec![
-            Span::styled("Changes: ", *label_style),
             Span::styled(format!("+{}", task.git_additions), Style::default().fg(Color::Green)),
-            Span::styled(" / ", *dim_style),
+            Span::styled("/", *dim_style),
             Span::styled(format!("-{}", task.git_deletions), Style::default().fg(Color::Red)),
-            Span::styled("  ", *dim_style),
+            Span::styled(format!(" in {} files ", task.git_files_changed), *dim_style),
             Span::styled(add_bar, Style::default().fg(Color::Green)),
             Span::styled(del_bar, Style::default().fg(Color::Red)),
         ]));
-
-        lines.push(Line::from(vec![
-            Span::styled("Files:   ", *label_style),
-            Span::styled(format!("{} changed", task.git_files_changed), *value_style),
-        ]));
     } else {
+        lines.push(Line::from(Span::styled("No changes yet", *dim_style)));
+    }
+
+    // Show commits behind warning if applicable
+    if task.git_commits_behind > 0 {
         lines.push(Line::from(vec![
-            Span::styled("Changes: ", *label_style),
-            Span::styled("No changes yet", *dim_style),
+            Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("{} commits behind main - ", task.git_commits_behind),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::styled("u", key_style.fg(Color::Cyan)),
+            Span::styled(" to update", Style::default().fg(Color::Yellow)),
         ]));
     }
 
-    // Show commits ahead/behind
-    if task.git_commits_ahead > 0 || task.git_commits_behind > 0 {
-        let mut commit_spans = vec![Span::styled("Commits: ", *label_style)];
+    // Separator and scroll hint
+    lines.push(Line::from(Span::styled("─".repeat(50), *dim_style)));
+    lines.push(Line::from(vec![
+        Span::styled("j", *key_style),
+        Span::styled("/", *dim_style),
+        Span::styled("k", *key_style),
+        Span::styled(" scroll  ", *dim_style),
+        Span::styled("PgUp", *key_style),
+        Span::styled("/", *dim_style),
+        Span::styled("PgDn", *key_style),
+        Span::styled(" page  ", *dim_style),
+        Span::styled("Home", *key_style),
+        Span::styled("/", *dim_style),
+        Span::styled("End", *key_style),
+        Span::styled(" jump", *dim_style),
+    ]));
+    lines.push(Line::from(""));
 
-        if task.git_commits_ahead > 0 {
-            commit_spans.push(Span::styled(
-                format!("↑{} ahead", task.git_commits_ahead),
-                Style::default().fg(Color::Cyan),
-            ));
+    // Get git diff from cache or show loading message
+    let scroll_offset = app.model.ui_state.git_diff_scroll_offset;
+
+    if let Some((cached_task_id, ref diff_content)) = app.model.ui_state.git_diff_cache {
+        if cached_task_id == task.id {
+            // Parse and render the diff with colors
+            render_git_diff_content(lines, diff_content, scroll_offset, dim_style);
+        } else {
+            lines.push(Line::from(Span::styled("Loading diff...", *dim_style)));
         }
+    } else {
+        lines.push(Line::from(Span::styled("Loading diff...", *dim_style)));
+    }
+}
 
-        if task.git_commits_behind > 0 {
-            if task.git_commits_ahead > 0 {
-                commit_spans.push(Span::styled("  ", *dim_style));
-            }
-            commit_spans.push(Span::styled(
-                format!("↓{} behind", task.git_commits_behind),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ));
-        }
+/// Parse and render git diff content with syntax highlighting
+fn render_git_diff_content<'a>(
+    lines: &mut Vec<Line<'a>>,
+    diff_content: &str,
+    scroll_offset: usize,
+    dim_style: &Style,
+) {
+    let diff_lines: Vec<&str> = diff_content.lines().collect();
+    let total_lines = diff_lines.len();
 
-        lines.push(Line::from(commit_spans));
+    if total_lines == 0 {
+        lines.push(Line::from(Span::styled("No diff content", *dim_style)));
+        return;
+    }
 
-        if task.git_commits_behind > 0 {
-            lines.push(Line::from(vec![
-                Span::styled("         ", *label_style),
-                Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
-                Span::styled("Main has new commits - press ", Style::default().fg(Color::Yellow)),
-                Span::styled("u", key_style.fg(Color::Cyan)),
-                Span::styled(" to update", Style::default().fg(Color::Yellow)),
-            ]));
-        }
-    } else if total_changes > 0 {
+    // Show scroll position indicator
+    if total_lines > 20 {
+        let percentage = if total_lines > 0 {
+            ((scroll_offset as f64 / total_lines as f64) * 100.0) as usize
+        } else {
+            0
+        };
         lines.push(Line::from(vec![
-            Span::styled("Commits: ", *label_style),
-            Span::styled("✓ Up to date with main", Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("Lines {}-{} of {} ({}%)",
+                    scroll_offset + 1,
+                    (scroll_offset + 30).min(total_lines),
+                    total_lines,
+                    percentage
+                ),
+                *dim_style,
+            ),
         ]));
+        lines.push(Line::from(""));
     }
 
-    // Changed files
-    if let Some(project) = app.model.active_project() {
-        if let Ok(files) = crate::worktree::get_worktree_changed_files(&project.working_dir, task.id) {
-            if !files.is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
-                lines.push(Line::from(Span::styled("Changed Files:", *label_style)));
-                lines.push(Line::from(""));
-
-                let max_files = 12;
-                for (i, file) in files.iter().take(max_files).enumerate() {
-                    let max_path_len = 35;
-                    let display_path = if file.path.len() > max_path_len {
-                        format!("...{}", &file.path[file.path.len() - max_path_len + 3..])
-                    } else {
-                        file.path.clone()
-                    };
-
-                    let status_indicator = if file.is_new {
-                        Span::styled(" (new)", Style::default().fg(Color::Green))
-                    } else if file.is_deleted {
-                        Span::styled(" (del)", Style::default().fg(Color::Red))
-                    } else if file.is_renamed {
-                        Span::styled(" (ren)", Style::default().fg(Color::Yellow))
-                    } else {
-                        Span::raw("")
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", *dim_style),
-                        Span::styled(display_path, *value_style),
-                        status_indicator,
-                        Span::styled(format!("  +{}", file.additions), Style::default().fg(Color::Green)),
-                        Span::styled("/", *dim_style),
-                        Span::styled(format!("-{}", file.deletions), Style::default().fg(Color::Red)),
-                    ]));
-
-                    if i == max_files - 1 && files.len() > max_files {
-                        lines.push(Line::from(vec![
-                            Span::styled("  ", *dim_style),
-                            Span::styled(format!("... and {} more files", files.len() - max_files), *dim_style),
-                        ]));
-                    }
-                }
-            }
-        }
+    // Render visible diff lines with colors
+    let visible_lines = 25; // How many lines to show
+    for line in diff_lines.iter().skip(scroll_offset).take(visible_lines) {
+        let styled_line = style_diff_line(line);
+        lines.push(styled_line);
     }
+
+    // Show "more below" indicator if there's more content
+    let remaining = total_lines.saturating_sub(scroll_offset + visible_lines);
+    if remaining > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("... {} more lines below ...", remaining),
+            *dim_style,
+        )));
+    }
+}
+
+/// Style a single diff line with appropriate colors
+fn style_diff_line(line: &str) -> Line<'static> {
+    let line_owned = line.to_string();
+
+    // File header lines (diff --git, index, ---, +++)
+    if line_owned.starts_with("diff --git") {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    if line_owned.starts_with("index ") {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    if line_owned.starts_with("--- ") {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    if line_owned.starts_with("+++ ") {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Hunk header (@@ ... @@)
+    if line_owned.starts_with("@@") {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Magenta),
+        ));
+    }
+
+    // Added lines
+    if line_owned.starts_with('+') {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Green),
+        ));
+    }
+
+    // Removed lines
+    if line_owned.starts_with('-') {
+        return Line::from(Span::styled(
+            line_owned,
+            Style::default().fg(Color::Red),
+        ));
+    }
+
+    // Context lines (unchanged)
+    Line::from(Span::styled(
+        line_owned,
+        Style::default().fg(Color::White),
+    ))
 }
 
 /// Render the Claude tab content (SDK logs)

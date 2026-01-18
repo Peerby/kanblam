@@ -1591,18 +1591,81 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         return vec![Message::ToggleTaskPreview];
     };
 
+    // Check if we're on the git tab for scroll handling
+    let on_git_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Git;
+
     match key.code {
         // Close modal only on Esc, Enter, Space
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
             vec![Message::ToggleTaskPreview]
         }
 
-        // Tab navigation: left/right/h/l
-        KeyCode::Left | KeyCode::Char('h') => {
+        // Tab navigation: left/right/h/l (but not h/l on git tab - those are for scrolling)
+        KeyCode::Left => {
             vec![Message::TaskDetailPrevTab]
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Right => {
             vec![Message::TaskDetailNextTab]
+        }
+        KeyCode::Char('h') => {
+            if on_git_tab {
+                vec![] // Reserved for future horizontal scroll
+            } else {
+                vec![Message::TaskDetailPrevTab]
+            }
+        }
+        KeyCode::Char('l') => {
+            if on_git_tab {
+                vec![] // Reserved for future horizontal scroll
+            } else {
+                vec![Message::TaskDetailNextTab]
+            }
+        }
+
+        // Scroll git diff (j/k on git tab, or arrow keys)
+        KeyCode::Char('j') | KeyCode::Down => {
+            if on_git_tab {
+                vec![Message::ScrollGitDiffDown(1)]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if on_git_tab {
+                vec![Message::ScrollGitDiffUp(1)]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::PageDown => {
+            if on_git_tab {
+                vec![Message::ScrollGitDiffDown(20)]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::PageUp => {
+            if on_git_tab {
+                vec![Message::ScrollGitDiffUp(20)]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::Home => {
+            if on_git_tab {
+                // Scroll to top by subtracting a large number
+                vec![Message::ScrollGitDiffUp(100000)]
+            } else {
+                vec![]
+            }
+        }
+        KeyCode::End => {
+            if on_git_tab {
+                // Scroll to bottom by adding a large number (will be capped)
+                vec![Message::ScrollGitDiffDown(100000)]
+            } else {
+                vec![]
+            }
         }
 
         // Open full help (closes modal, opens help)
