@@ -15,4 +15,6 @@ pub use session::{
     resize_pane, send_sigwinch, get_pane_size, open_popup,
     // CLI state detection
     ClaudeCliState, get_claude_cli_state, kill_claude_cli_session,
+    // Question detection for idle_prompt handling
+    claude_output_contains_question,
 };

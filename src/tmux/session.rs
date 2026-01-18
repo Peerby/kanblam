@@ -812,3 +812,63 @@ pub fn capture_task_output(project_slug: &str, window_name: &str, lines: u32) ->
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
+
+/// Check if Claude's last output in the tmux pane looks like a question
+/// This is used to determine if Claude is waiting for user input vs just finished.
+pub fn claude_output_contains_question(project_slug: &str, window_name: &str) -> bool {
+    // Capture the last 30 lines to get Claude's recent output
+    let content = match capture_task_output(project_slug, window_name, 30) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    // Look for question patterns in the content
+    // We check the last ~20 non-empty lines to find Claude's last message
+    let lines: Vec<&str> = content.lines()
+        .rev()
+        .filter(|l| !l.trim().is_empty())
+        .take(20)
+        .collect();
+
+    // Skip the prompt line (❯ or >) at the very end
+    let message_lines: Vec<&str> = lines.iter()
+        .skip_while(|l| {
+            let trimmed = l.trim();
+            trimmed.starts_with('❯') || (trimmed.starts_with('>') && trimmed.len() < 3)
+        })
+        .copied()
+        .collect();
+
+    // Check for question patterns in Claude's last output
+    for line in &message_lines {
+        let lower = line.to_lowercase();
+
+        // Direct question marks
+        if line.contains('?') {
+            return true;
+        }
+
+        // Question phrases
+        if lower.contains("would you like")
+            || lower.contains("should i ")
+            || lower.contains("do you want")
+            || lower.contains("shall i ")
+            || lower.contains("can you ")
+            || lower.contains("could you ")
+            || lower.contains("what would you")
+            || lower.contains("how would you")
+            || lower.contains("which option")
+            || lower.contains("let me know")
+            || lower.contains("please confirm")
+            || lower.contains("please provide")
+            || lower.contains("please specify")
+            || lower.contains("what do you think")
+            || lower.contains("your thoughts")
+            || lower.contains("your preference")
+        {
+            return true;
+        }
+    }
+
+    false
+}

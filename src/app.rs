@@ -3386,6 +3386,7 @@ impl App {
                         let was_applying = project.tasks[idx].status == TaskStatus::Applying;
                         let was_waiting_for_cli = project.tasks[idx].session_mode == crate::model::SessionMode::WaitingForCliExit;
                         let project_name = project.name.clone();
+                        let project_slug = project.slug();
 
                         let was_cli_actively_working = project.tasks[idx].session_mode == crate::model::SessionMode::CliActivelyWorking;
 
@@ -3497,23 +3498,39 @@ impl App {
                                 notify::set_attention_indicator(&project.name);
                             }
                             "needs-input" => {
-                                task.log_activity("Waiting for input...");
                                 // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
                                 if was_accepting || was_updating || was_applying {
                                     // Skip - we're in the middle of a rebase operation
                                 } else if signal.input_type == "permission" {
                                     // permission_prompt means Claude is blocked waiting for tool approval.
                                     // Always move to NeedsInput, even from Review - this is unambiguous.
+                                    task.log_activity("Waiting for permission...");
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
+                                } else if signal.input_type == "idle" && task.status == TaskStatus::Review {
+                                    // idle_prompt fires after 60+ seconds of Claude being idle.
+                                    // Task is already in Review (from Stop hook). Check if Claude
+                                    // actually asked a question by examining tmux pane content.
+                                    if let Some(ref window_name) = task.tmux_window {
+                                        if crate::tmux::claude_output_contains_question(&project_slug, window_name) {
+                                            task.log_activity("Waiting for answer...");
+                                            task.status = TaskStatus::NeedsInput;
+                                            task.session_state = crate::model::ClaudeSessionState::Paused;
+                                            project.needs_attention = true;
+                                            notify::play_attention_sound();
+                                            notify::set_attention_indicator(&project.name);
+                                        }
+                                        // Otherwise, Claude is just idle after finishing - stay in Review
+                                    }
                                 } else if task.status != TaskStatus::Review {
                                     // idle_prompt or unknown type - only move to NeedsInput if NOT
                                     // already in Review. The idle_prompt fires both when Claude asks
                                     // a question AND when Claude is done but sitting at an idle prompt.
                                     // We can't distinguish these cases, so trust the Review state.
+                                    task.log_activity("Waiting for input...");
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
