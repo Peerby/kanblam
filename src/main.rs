@@ -995,8 +995,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('l') | KeyCode::Right => vec![Message::NavigateRight],
         KeyCode::Char('j') | KeyCode::Down => vec![Message::NavigateDown],
         KeyCode::Char('k') | KeyCode::Up => vec![Message::NavigateUp],
-        KeyCode::Home => vec![Message::NavigateToStart],
-        KeyCode::End => vec![Message::NavigateToEnd],
+        KeyCode::Home | KeyCode::Char('g') => vec![Message::NavigateToStart],
+        KeyCode::End | KeyCode::Char('G') => vec![Message::NavigateToEnd],
 
         // Focus switching
         KeyCode::Tab => {
@@ -1473,12 +1473,12 @@ fn handle_queue_dialog_key(key: event::KeyEvent, _app: &App) -> Vec<Message> {
         }
 
         // Jump to start
-        KeyCode::Home => {
+        KeyCode::Home | KeyCode::Char('g') => {
             vec![Message::QueueDialogNavigateToStart]
         }
 
         // Jump to end
-        KeyCode::End => {
+        KeyCode::End | KeyCode::Char('G') => {
             vec![Message::QueueDialogNavigateToEnd]
         }
 
@@ -1688,7 +1688,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![]
             }
         }
-        KeyCode::Home => {
+        KeyCode::Home | KeyCode::Char('g') => {
             if on_git_tab {
                 // Scroll to top by subtracting a large number
                 vec![Message::ScrollGitDiffUp(100000)]
@@ -1696,7 +1696,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![]
             }
         }
-        KeyCode::End => {
+        KeyCode::End | KeyCode::Char('G') => {
             if on_git_tab {
                 // Scroll to bottom by adding a large number (will be capped)
                 vec![Message::ScrollGitDiffDown(100000)]
@@ -1954,7 +1954,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
         }
 
         // Jump to start of active column
-        KeyCode::Home => {
+        KeyCode::Home | KeyCode::Char('g') => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_to_start();
             }
@@ -1962,7 +1962,7 @@ fn handle_open_project_dialog_input(key: event::KeyEvent, app: &mut App) -> Vec<
         }
 
         // Jump to end of active column
-        KeyCode::End => {
+        KeyCode::End | KeyCode::Char('G') => {
             if let Some(ref mut browser) = app.model.ui_state.directory_browser {
                 browser.move_to_end();
             }
