@@ -18,7 +18,7 @@ KanBlam! is a terminal-based task manager that lets you run multiple Claude Code
 *Desktop view*
 ![KanBlam Screenshot](assets/screenshots/screenshot2.png)
 
-*Mobile view via SSH*
+*Mobile view via SSH on iPhone*
 ![KanBlam Mobile](assets/screenshots/screenshot-mobile.png)
 
 ### The Problem
