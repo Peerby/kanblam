@@ -254,6 +254,8 @@ pub enum Message {
     ConfirmAction,  // User pressed 'y'
     CancelAction,   // User pressed 'n' or Esc
     RestartConfirmationAnimation, // User pressed an unrecognized key - highlight the prompt
+    ScrollConfirmationUp,   // Scroll multiline confirmation modal up
+    ScrollConfirmationDown, // Scroll multiline confirmation modal down
     SetStatusMessage(Option<String>),
 
     // System

@@ -641,6 +641,7 @@ impl App {
                     match crate::worktree::has_uncommitted_changes(&project_dir) {
                         Ok(true) => {
                             // Main has uncommitted changes - ask user what to do
+                            self.model.ui_state.confirmation_scroll_offset = 0;
                             self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                                 message: "Main worktree has uncommitted changes.\n\n\
                                          c=commit changes, s=stash changes, n=cancel".to_string(),
@@ -723,6 +724,7 @@ impl App {
 
                 if is_already_applied {
                     // Changes already applied - show confirmation to commit them
+                    self.model.ui_state.confirmation_scroll_offset = 0;
                     self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                         message: "Task changes are already applied. Commit them to main and complete the task?".to_string(),
                         action: PendingAction::CommitAppliedChanges(task_id),
@@ -1705,6 +1707,7 @@ impl App {
                             // Check for stash conflict (user's uncommitted changes conflict with task)
                             if let Some(stash_sha) = err_msg.strip_prefix("STASH_CONFLICT:") {
                                 // Show confirmation dialog with options
+                                self.model.ui_state.confirmation_scroll_offset = 0;
                                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                                     message: format!(
                                         "Stash conflict detected.\n\
@@ -1719,6 +1722,32 @@ impl App {
                                     },
                                     animation_tick: 20,
                                 });
+                                return commands;
+                            }
+
+                            // Check for apply conflict (task changes conflict with main)
+                            if let Some(conflict_output) = err_msg.strip_prefix("APPLY_CONFLICT:") {
+                                // Show conflict details in scrollable modal
+                                self.model.ui_state.confirmation_scroll_offset = 0;
+                                self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                                    message: format!(
+                                        "=== Apply Conflict ===\n\n\
+                                        Task changes conflict with the main branch.\n\
+                                        The worktree needs to be rebased first.\n\n\
+                                        --- Conflict Details ---\n\
+                                        {}\n\n\
+                                        [Y] Smart apply with Claude  [N] Cancel",
+                                        conflict_output.trim()
+                                    ),
+                                    action: PendingAction::ApplyConflict {
+                                        task_id,
+                                        conflict_output: conflict_output.to_string(),
+                                    },
+                                    animation_tick: 20,
+                                });
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
                                 return commands;
                             }
 
@@ -1815,6 +1844,7 @@ impl App {
                             }
                             Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
                                 // Surgical reversal failed - ask user for confirmation before destructive reset
+                                self.model.ui_state.confirmation_scroll_offset = 0;
                                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                                     message: format!("{}\n\nThis will discard ALL uncommitted changes in main worktree.", reason),
                                     action: PendingAction::ForceUnapply(task_id),
@@ -2738,9 +2768,13 @@ impl App {
                     action,
                     animation_tick: 20, // Start sweep animation (same duration as startup hints)
                 });
+                // Reset scroll offset for new confirmation
+                self.model.ui_state.confirmation_scroll_offset = 0;
             }
 
             Message::ConfirmAction => {
+                // Reset scroll offset when confirmation is dismissed
+                self.model.ui_state.confirmation_scroll_offset = 0;
                 if let Some(confirmation) = self.model.ui_state.pending_confirmation.take() {
                     match confirmation.action {
                         PendingAction::DeleteTask(task_id) => {
@@ -3140,11 +3174,17 @@ impl App {
                                 }
                             }
                         }
+                        PendingAction::ApplyConflict { task_id, .. } => {
+                            // User chose to use smart apply with Claude
+                            commands.push(Message::StartApplySession { task_id });
+                        }
                     }
                 }
             }
 
             Message::CancelAction => {
+                // Reset scroll offset when confirmation is dismissed
+                self.model.ui_state.confirmation_scroll_offset = 0;
                 if let Some(confirmation) = self.model.ui_state.pending_confirmation.take() {
                     // Show manual instructions when user cancels
                     match confirmation.action {
@@ -3230,6 +3270,12 @@ impl App {
                                 "Project not opened. Create an initial commit to use with KanBlam.".to_string()
                             )));
                         }
+                        PendingAction::ApplyConflict { .. } => {
+                            // User cancelled smart apply - nothing to do
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Apply cancelled. Use 'p' to try again.".to_string()
+                            )));
+                        }
                     }
                 }
             }
@@ -3239,6 +3285,26 @@ impl App {
                 // This signals that they need to respond to the prompt first
                 if let Some(ref mut confirmation) = self.model.ui_state.pending_confirmation {
                     confirmation.animation_tick = 20;
+                }
+            }
+
+            Message::ScrollConfirmationUp => {
+                // Scroll up in multiline confirmation modal
+                if self.model.ui_state.pending_confirmation.is_some() {
+                    self.model.ui_state.confirmation_scroll_offset =
+                        self.model.ui_state.confirmation_scroll_offset.saturating_sub(1);
+                }
+            }
+
+            Message::ScrollConfirmationDown => {
+                // Scroll down in multiline confirmation modal
+                if let Some(ref confirmation) = self.model.ui_state.pending_confirmation {
+                    let line_count = confirmation.message.lines().count();
+                    // Allow scrolling up to line_count - 1 (so at least one line is visible)
+                    let max_offset = line_count.saturating_sub(1);
+                    if self.model.ui_state.confirmation_scroll_offset < max_offset {
+                        self.model.ui_state.confirmation_scroll_offset += 1;
+                    }
                 }
             }
 
@@ -4554,6 +4620,7 @@ impl App {
                     .map(|s| (s.stash_sha.clone(), s.description.clone()));
 
                 if let Some((sha, desc)) = stash_info {
+                    self.model.ui_state.confirmation_scroll_offset = 0;
                     self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                         message: format!("Delete stash '{}'?\nThis cannot be undone.", desc),
                         action: PendingAction::PopTrackedStash { stash_sha: sha },
@@ -4587,6 +4654,7 @@ impl App {
 
             Message::OfferPopStash { stash_sha, context } => {
                 // Show confirmation dialog to pop stash
+                self.model.ui_state.confirmation_scroll_offset = 0;
                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                     message: format!("{}\n\nRestore your stashed changes now? (y/n)", context),
                     action: PendingAction::PopTrackedStash { stash_sha },
@@ -4624,6 +4692,7 @@ impl App {
 
             Message::HandleStashPopConflict { stash_sha } => {
                 // Stash pop resulted in conflict - offer to resolve with Claude
+                self.model.ui_state.confirmation_scroll_offset = 0;
                 self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                     message: "Stash pop resulted in conflicts.\n\nResolve with Claude? (y=resolve, n=abort)".to_string(),
                     action: PendingAction::StashConflict {
@@ -5840,6 +5909,7 @@ impl App {
             Message::BuildFailed { error } => {
                 // Build failed - show error and ask to unapply if we have applied changes
                 if let Some(task_id) = self.model.active_project().and_then(|p| p.applied_task_id) {
+                    self.model.ui_state.confirmation_scroll_offset = 0;
                     self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
                         message: format!(
                             "Build failed:\n{}\n\nUnapply the changes?",

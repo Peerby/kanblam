@@ -1383,6 +1383,8 @@ pub struct UiState {
     /// Scroll offset for the help modal (lines scrolled from top)
     pub help_scroll_offset: usize,
     pub pending_confirmation: Option<PendingConfirmation>,
+    /// Scroll offset for confirmation modal (when content is large)
+    pub confirmation_scroll_offset: usize,
     pub status_message: Option<String>,
     /// Tick countdown for status message decay (clears when reaches 0)
     pub status_message_decay: u16,
@@ -1694,6 +1696,7 @@ impl Default for UiState {
             show_help: false,
             help_scroll_offset: 0,
             pending_confirmation: None,
+            confirmation_scroll_offset: 0,
             status_message: None,
             status_message_decay: 0,
             editing_task_id: None,
@@ -1837,6 +1840,9 @@ pub enum PendingAction {
     /// Git repository has no commits
     /// Options: y=create initial commit, n=cancel
     CreateInitialCommit { path: PathBuf, name: String, slot: usize },
+    /// Apply conflict - show conflict details in scrollable modal
+    /// Options: y=try smart apply with Claude, n=cancel
+    ApplyConflict { task_id: Uuid, conflict_output: String },
 }
 
 /// Which UI element has focus

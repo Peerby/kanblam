@@ -656,7 +656,16 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         if stash_ref.is_some() {
             log("Restored stashed changes successfully");
         }
-        return Err(anyhow!("Failed to apply changes. There may be conflicts."));
+        // Include conflict details in error for display in modal
+        // Format: APPLY_CONFLICT:<conflict_output>
+        let conflict_output = if !stderr.is_empty() {
+            stderr.to_string()
+        } else if !stdout.is_empty() {
+            stdout.to_string()
+        } else {
+            "Failed to apply changes. There may be conflicts.".to_string()
+        };
+        return Err(anyhow!("APPLY_CONFLICT:{}", conflict_output));
     }
 
     // After --3way, files may be in "unmerged" state even if resolved

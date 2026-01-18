@@ -826,8 +826,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     _ => vec![Message::RestartConfirmationAnimation],
                 }
             }
-            // 'k' key for keep markers - available for StashConflict dialogs
-            KeyCode::Char('k') | KeyCode::Char('K') => {
+            // 'K' key for keep markers - available for StashConflict dialogs
+            // (lowercase 'k' handled below with scroll, but also checks for StashConflict)
+            KeyCode::Char('K') => {
                 match &confirmation.action {
                     model::PendingAction::StashConflict { task_id, .. } => {
                         // Keep conflict markers for manual resolution
@@ -868,6 +869,26 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 } else {
                     // Invalid project number - restart animation to signal prompt is active
                     vec![Message::RestartConfirmationAnimation]
+                }
+            }
+            // Scroll keys for multiline confirmation modals (e.g., conflict details)
+            KeyCode::Char('j') | KeyCode::Down => {
+                if confirmation.message.contains('\n') {
+                    vec![Message::ScrollConfirmationDown]
+                } else {
+                    vec![Message::RestartConfirmationAnimation]
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                // 'k' is used for "keep markers" in StashConflict, so check action first
+                match &confirmation.action {
+                    model::PendingAction::StashConflict { task_id, .. } => {
+                        vec![Message::KeepStashConflictMarkers(*task_id)]
+                    }
+                    _ if confirmation.message.contains('\n') => {
+                        vec![Message::ScrollConfirmationUp]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
                 }
             }
             // Any other key: restart the highlight animation to signal the prompt is active

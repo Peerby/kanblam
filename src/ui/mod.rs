@@ -117,7 +117,7 @@ pub fn view(frame: &mut Frame, app: &mut App) {
     // Render confirmation modal if pending confirmation has multiline message
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         if confirmation.message.contains('\n') {
-            render_confirmation_modal(frame, &confirmation.message);
+            render_confirmation_modal(frame, &confirmation.message, app.model.ui_state.confirmation_scroll_offset, &confirmation.action);
         }
     }
 }
@@ -1880,17 +1880,23 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Render a confirmation modal for multiline messages (like merge check reports)
-fn render_confirmation_modal(frame: &mut Frame, message: &str) {
+/// Render a confirmation modal for multiline messages (like merge check reports or conflict details)
+fn render_confirmation_modal(frame: &mut Frame, message: &str, scroll_offset: usize, action: &crate::model::PendingAction) {
+    use crate::model::PendingAction;
+
     // Calculate size based on content
     let line_count = message.lines().count();
     let max_line_width = message.lines().map(|l| l.len()).max().unwrap_or(40);
 
-    // Size the modal to fit content with some padding
+    // Size the modal to fit content with some padding, but cap at 80% height
     let height_percent = ((line_count + 4) * 100 / frame.area().height as usize).min(80).max(30) as u16;
     let width_percent = ((max_line_width + 6) * 100 / frame.area().width as usize).min(90).max(50) as u16;
 
     let area = centered_rect(width_percent, height_percent, frame.area());
+
+    // Check if content is scrollable (more lines than visible area)
+    let visible_height = area.height.saturating_sub(2) as usize; // Account for borders
+    let is_scrollable = line_count > visible_height;
 
     // Build lines with styling
     let mut lines: Vec<Line> = Vec::new();
@@ -1899,6 +1905,12 @@ fn render_confirmation_modal(frame: &mut Frame, message: &str) {
     let verdict_merged = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
     let verdict_not_merged = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let warning_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+    let conflict_style = Style::default().fg(Color::Red);
+    let file_path_style = Style::default().fg(Color::Cyan);
+    let error_style = Style::default().fg(Color::LightRed);
+
+    // Determine if this is a conflict modal for special styling
+    let is_conflict_modal = matches!(action, PendingAction::ApplyConflict { .. });
 
     for line in message.lines() {
         let styled_line = if line.starts_with("===") {
@@ -1922,23 +1934,52 @@ fn render_confirmation_modal(frame: &mut Frame, message: &str) {
             }
         } else if line.starts_with("---") {
             Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
-        } else if line.contains("'y'") || line.contains("'n'") {
+        } else if line.contains("[Y]") || line.contains("[N]") || line.contains("'y'") || line.contains("'n'") {
             Line::from(Span::styled(line, Style::default().fg(Color::Yellow)))
+        } else if is_conflict_modal {
+            // Special styling for conflict output
+            if line.contains("error:") || line.contains("CONFLICT") {
+                Line::from(Span::styled(line, conflict_style))
+            } else if line.starts_with("Applying:") || line.contains("patch does not apply") || line.contains("Applied patch") {
+                Line::from(Span::styled(line, error_style))
+            } else if line.contains('/') && (line.ends_with(".rs") || line.ends_with(".ts") || line.ends_with(".js") || line.ends_with(".json") || line.ends_with(".toml") || line.ends_with(".md")) {
+                // Likely a file path
+                Line::from(Span::styled(line, file_path_style))
+            } else {
+                Line::from(Span::styled(line, value_style))
+            }
         } else {
             Line::from(Span::styled(line, value_style))
         };
         lines.push(styled_line);
     }
 
+    // Determine title based on action type
+    let title = if is_conflict_modal {
+        " Apply Conflict "
+    } else {
+        " Merge Check "
+    };
+
+    // Add scroll indicator to title if scrollable
+    let title_with_scroll = if is_scrollable {
+        let current_line = scroll_offset + 1;
+        let total_lines = line_count;
+        format!("{} [{}/{}] ↑↓ to scroll ", title.trim(), current_line, total_lines)
+    } else {
+        title.to_string()
+    };
+
     let modal = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow))
-                .title(" Merge Check ")
+                .title(title_with_scroll)
                 .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         )
-        .wrap(ratatui::widgets::Wrap { trim: false });
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll((scroll_offset as u16, 0));
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(modal, area);
