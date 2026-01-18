@@ -827,8 +827,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     _ => vec![Message::RestartConfirmationAnimation],
                 }
             }
-            // 'q' key for queue - store feedback to send when Claude finishes
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
+            // 'w' key for wait (queue) - store feedback to send when Claude finishes
+            KeyCode::Char('w') | KeyCode::Char('W') => {
                 match &confirmation.action {
                     model::PendingAction::InterruptSdkForFeedback { task_id, feedback } |
                     model::PendingAction::InterruptCliForFeedback { task_id, feedback } => {
@@ -947,28 +947,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
     // Normal mode keybindings
     match key.code {
-        // Queue task / Quit
-        // In Planned column with a task selected: open queue dialog
-        // Otherwise: quit
-        KeyCode::Char('q') => {
-            if app.model.ui_state.selected_column == TaskStatus::Planned {
-                if let Some(project) = app.model.active_project() {
-                    // Check if there are running sessions to queue for
-                    let running_sessions = project.tasks_with_active_sessions();
-                    if !running_sessions.is_empty() {
-                        // Get selected task
-                        let tasks = project.tasks_by_status(TaskStatus::Planned);
-                        if let Some(idx) = app.model.ui_state.selected_task_idx {
-                            if let Some(task) = tasks.get(idx) {
-                                return vec![Message::ShowQueueDialog(task.id)];
-                            }
-                        }
-                    }
-                }
-            }
-            // No running sessions or not in Planned - quit
-            vec![Message::Quit]
-        }
+        // Quit
+        KeyCode::Char('q') => vec![Message::Quit],
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::Quit],
 
         // Close current project (Ctrl+D)
@@ -1448,7 +1428,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 fn handle_queue_dialog_key(key: event::KeyEvent, _app: &App) -> Vec<Message> {
     match key.code {
         // Close dialog
-        KeyCode::Esc | KeyCode::Char('q') => {
+        KeyCode::Esc => {
             vec![Message::CloseQueueDialog]
         }
 

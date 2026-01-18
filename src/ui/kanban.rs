@@ -547,9 +547,7 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("e", key_style),
             Span::styled("dit ", desc_style),
             Span::styled("d", key_style),
-            Span::styled("el ", desc_style),
-            Span::styled("q", key_style),
-            Span::styled("ueue", desc_style),
+            Span::styled("el", desc_style),
         ],
         TaskStatus::Queued => vec![
             Span::styled("s", key_style),

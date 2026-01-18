@@ -4968,7 +4968,7 @@ impl App {
                         if session_mode == crate::model::SessionMode::CliActivelyWorking {
                             // CLI is actively working (hooks told us) - ask user what to do
                             commands.push(Message::ShowConfirmation {
-                                message: "CLI working. i=interrupt, q=queue, o=open CLI, n=cancel".to_string(),
+                                message: "CLI working. i=interrupt, w=wait, o=open CLI, n=cancel".to_string(),
                                 action: PendingAction::InterruptCliForFeedback { task_id, feedback },
                             });
                         } else {
@@ -4980,7 +4980,7 @@ impl App {
                         if session_state == crate::model::ClaudeSessionState::Working {
                             // SDK is actively working - ask user what to do
                             commands.push(Message::ShowConfirmation {
-                                message: "SDK working. i=interrupt, q=queue, n=cancel".to_string(),
+                                message: "SDK working. i=interrupt, w=wait, n=cancel".to_string(),
                                 action: PendingAction::InterruptSdkForFeedback { task_id, feedback },
                             });
                         } else {
@@ -6181,6 +6181,18 @@ impl App {
             Message::QuitAndSwitchPane(_) => {
                 // Legacy - just quit
                 self.should_quit = true;
+            }
+
+            Message::OpenClaudeCliPane => {
+                // Open a new pane to the right with a fresh Claude CLI session
+                if let Some(project) = self.model.active_project() {
+                    let working_dir = project.working_dir.clone();
+                    if let Err(e) = crate::tmux::split_pane_with_claude(&working_dir) {
+                        commands.push(Message::Error(format!("Failed to open Claude pane: {}", e)));
+                    }
+                } else {
+                    commands.push(Message::Error("No active project".to_string()));
+                }
             }
 
             Message::Error(err) => {

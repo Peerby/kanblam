@@ -1512,7 +1512,6 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
             Span::styled("Sessions", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
         Line::from("  o/O        Open Claude modal (O: detached)"),
-        Line::from("  q          Queue task (Planned) / Quit"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Git", Style::default().add_modifier(Modifier::UNDERLINED)),
@@ -1523,6 +1522,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from(vec![
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
+        Line::from("  q          Quit"),
         Line::from("  Ctrl-,     Settings (editor, commands)"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),

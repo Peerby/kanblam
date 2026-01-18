@@ -1868,10 +1868,10 @@ pub enum PendingAction {
     MergeOnlyTask(Uuid),
     /// Interrupt SDK session to open CLI terminal (y=interrupt, n=cancel)
     InterruptSdkForCli(Uuid),
-    /// SDK is working, user wants to send feedback (i=interrupt, q=queue, n=cancel)
+    /// SDK is working, user wants to send feedback (i=interrupt, w=wait, n=cancel)
     /// Stores task_id and the feedback text to send
     InterruptSdkForFeedback { task_id: Uuid, feedback: String },
-    /// CLI is working, user wants to send feedback (i=interrupt, q=queue, o=open CLI, n=cancel)
+    /// CLI is working, user wants to send feedback (i=interrupt, w=wait, o=open CLI, n=cancel)
     /// Stores task_id and the feedback text to send
     InterruptCliForFeedback { task_id: Uuid, feedback: String },
     /// Main worktree has uncommitted changes before merge

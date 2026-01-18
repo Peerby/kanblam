@@ -149,7 +149,7 @@ cargo run --release
 #### Other
 | Key | Action |
 |-----|--------|
-| `q` | Quit (or queue task if in Planned with running sessions) |
+| `q` | Quit |
 | `Ctrl+S` | Open settings |
 | `Ctrl+V` | Paste image from clipboard |
 | `Esc` (2x) | Show help hints |
