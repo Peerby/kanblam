@@ -2758,6 +2758,10 @@ impl App {
                         }
                         // Reset selection
                         self.model.ui_state.selected_task_idx = None;
+                        // Save global state so closed project doesn't reappear
+                        if let Err(e) = save_state(&self.model) {
+                            eprintln!("Warning: Failed to save state after closing project: {}", e);
+                        }
                     }
                 }
             }
@@ -2861,6 +2865,10 @@ impl App {
                                 }
                                 // Reset selection
                                 self.model.ui_state.selected_task_idx = None;
+                                // Save global state so closed project doesn't reappear
+                                if let Err(e) = save_state(&self.model) {
+                                    eprintln!("Warning: Failed to save state after closing project: {}", e);
+                                }
                             }
                         }
                         PendingAction::AcceptTask(task_id) => {
