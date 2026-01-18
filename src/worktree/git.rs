@@ -677,13 +677,9 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 log(&format!("Stash pop had conflicts: {}", stderr));
-                // Don't fail - changes are applied, user just needs to resolve stash conflicts
-                // Their stash is still there, they can manually handle it
-                return Ok(Some(format!(
-                    "STASH_CONFLICT: Your uncommitted changes conflicted with the applied patch. \
-                    Run 'git stash pop' to resolve, or 'git stash drop' to discard your changes. \
-                    Stash: {}", sha
-                )));
+                // Return error with stash SHA so caller can offer conflict resolution options
+                // The stash is still there (not dropped on conflict), user's changes are safe
+                return Err(anyhow!("STASH_CONFLICT:{}", sha));
             }
             Err(e) => {
                 log(&format!("Stash pop command failed: {}", e));
@@ -1251,6 +1247,79 @@ When complete, say "Ready for apply - build verified".
 After you finish, your changes will be applied to the main worktree for the user to test."#, main_branch)
 }
 
+/// Generate a prompt for Claude to resolve stash conflicts in the main worktree
+pub fn generate_stash_conflict_prompt(stash_sha: &str) -> String {
+    format!(r#"STASH CONFLICT RESOLUTION: There are merge conflict markers in the working directory that need to be resolved.
+
+WHAT HAPPENED:
+1. A task's changes were successfully applied to this main worktree
+2. The user had uncommitted changes that were stashed before the apply
+3. When restoring the user's stash, git found conflicts between the user's changes and the task's changes
+4. The conflict markers (<<<<<<, =======, >>>>>>>) are now in the working directory
+
+YOUR JOB:
+1. Find all files with conflict markers
+2. Resolve each conflict by combining BOTH sets of changes appropriately:
+   - "Updated upstream" or "HEAD" = the task's changes (keep these - they're the feature being applied)
+   - "Stashed changes" = the user's uncommitted work (preserve this intent too if possible)
+3. After resolving, verify the code compiles
+
+STEP 1 - FIND CONFLICTS:
+```
+git diff --check 2>/dev/null || grep -r "<<<<<<< " . --include="*.rs" --include="*.ts" --include="*.js" --include="*.tsx" --include="*.jsx" 2>/dev/null | head -20
+```
+
+STEP 2 - FOR EACH CONFLICTING FILE:
+1. Read the file to understand both sides of the conflict
+2. Edit to resolve - keep functionality from BOTH sides where possible
+3. Remove ALL conflict markers (the <<<<<<, =======, >>>>>>> lines)
+
+STEP 3 - VERIFY BUILD:
+```
+cargo build 2>&1 | head -50
+```
+
+STEP 4 - CONFIRM RESOLUTION:
+```
+git diff --check  # Should show no conflict markers
+cargo build       # Should succeed
+```
+
+IMPORTANT:
+- Do NOT commit the changes - leave them as uncommitted modifications
+- Do NOT run git stash commands - the stash ({}) is preserved for the user
+- If you cannot resolve a conflict sensibly, prefer the task's changes (Updated upstream/HEAD side)
+
+When complete, say "Conflicts resolved - build verified"."#, stash_sha)
+}
+
+/// Save all current uncommitted changes as a patch file for surgical reversal
+/// This captures the combined state: task changes + any conflict resolution edits
+pub fn save_current_changes_as_patch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
+    let patch_path = get_patch_file_path(task_id);
+
+    // Get diff of all uncommitted changes relative to HEAD
+    let diff_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "HEAD"])
+        .output()?;
+
+    if !diff_output.status.success() {
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        return Err(anyhow!("Failed to get diff: {}", stderr));
+    }
+
+    // Ensure parent directory exists
+    if let Some(parent) = patch_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Save the combined patch (overwrites any existing patch)
+    std::fs::write(&patch_path, &diff_output.stdout)?;
+
+    Ok(())
+}
+
 /// Check if a rebase is currently in progress in the worktree
 pub fn is_rebase_in_progress(worktree_path: &PathBuf) -> bool {
     let rebase_merge = worktree_path.join(".git/rebase-merge");
@@ -1687,6 +1756,268 @@ pub fn git_push(project_dir: &PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Stash tracking functions
+// ============================================================================
+
+use crate::model::TrackedStash;
+use chrono::Utc;
+
+/// Create a stash with a description and return tracking info
+/// Returns None if there's nothing to stash
+pub fn create_tracked_stash(project_dir: &PathBuf, description: &str) -> Result<Option<TrackedStash>> {
+    // Check if there are changes to stash
+    if !has_uncommitted_changes(project_dir)? {
+        return Ok(None);
+    }
+
+    // Get list of changed files before stashing (for summary)
+    let status_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()?;
+
+    let status = String::from_utf8_lossy(&status_output.stdout);
+    let files: Vec<&str> = status.lines()
+        .filter_map(|line| {
+            if line.len() > 3 {
+                Some(line[3..].trim())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let files_changed = files.len();
+    let files_summary = if files.len() <= 3 {
+        files.join(", ")
+    } else {
+        format!("{}, {} and {} more", files[0], files[1], files.len() - 2)
+    };
+
+    // Create the stash with a message
+    let stash_msg = format!("kanblam: {}", description);
+    let stash_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "push", "-m", &stash_msg])
+        .output()?;
+
+    if !stash_output.status.success() {
+        let stderr = String::from_utf8_lossy(&stash_output.stderr);
+        return Err(anyhow!("Failed to create stash: {}", stderr));
+    }
+
+    // Get the stash SHA (stash@{0} after we just created it)
+    let sha_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "stash@{0}"])
+        .output()?;
+
+    if !sha_output.status.success() {
+        return Err(anyhow!("Failed to get stash SHA"));
+    }
+
+    let stash_sha = String::from_utf8_lossy(&sha_output.stdout).trim().to_string();
+
+    Ok(Some(TrackedStash {
+        stash_ref: "stash@{0}".to_string(),
+        description: description.to_string(),
+        created_at: Utc::now(),
+        files_changed,
+        files_summary,
+        stash_sha,
+    }))
+}
+
+/// Find a stash by its SHA and return the current ref (stash index can change)
+fn find_stash_ref_by_sha(project_dir: &PathBuf, stash_sha: &str) -> Result<Option<String>> {
+    // List all stashes with their SHAs
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "list", "--format=%H %gd"])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    for line in output_str.lines() {
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() == 2 && parts[0] == stash_sha {
+            return Ok(Some(parts[1].to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Pop a tracked stash by its SHA
+/// Returns Ok(true) if popped cleanly, Err with "STASH_CONFLICT" prefix if conflicts
+pub fn pop_tracked_stash(project_dir: &PathBuf, stash_sha: &str) -> Result<bool> {
+    // Find the current ref for this stash SHA
+    let stash_ref = find_stash_ref_by_sha(project_dir, stash_sha)?
+        .ok_or_else(|| anyhow!("Stash not found (may have been dropped)"))?;
+
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "pop", &stash_ref])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Check for conflicts
+        if stderr.contains("CONFLICT") || stdout.contains("CONFLICT") {
+            return Err(anyhow!("STASH_CONFLICT:{}", stash_sha));
+        }
+
+        return Err(anyhow!("Failed to pop stash: {}", stderr));
+    }
+
+    Ok(true)
+}
+
+/// Drop a tracked stash by its SHA
+pub fn drop_tracked_stash(project_dir: &PathBuf, stash_sha: &str) -> Result<()> {
+    // Find the current ref for this stash SHA
+    let stash_ref = find_stash_ref_by_sha(project_dir, stash_sha)?
+        .ok_or_else(|| anyhow!("Stash not found (may have already been dropped)"))?;
+
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "drop", &stash_ref])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("Failed to drop stash: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Abort a conflicted stash pop while surgically preserving task changes
+/// This is called when user chooses "Stash my changes" during an apply conflict
+pub fn abort_stash_pop_keep_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
+    // The task patch file should already exist from the apply operation
+    let patch_path = get_patch_file_path(task_id);
+
+    if !patch_path.exists() {
+        return Err(anyhow!("Task patch file not found - cannot restore task changes"));
+    }
+
+    // Get list of files modified by the stash (the one we tried to pop, still at stash@{0})
+    let stash_files_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "show", "--name-only", "stash@{0}"])
+        .output()?;
+
+    let stash_files: Vec<String> = String::from_utf8_lossy(&stash_files_output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    // Read the task patch to know which files it modifies
+    let patch_content = std::fs::read_to_string(&patch_path)?;
+    let task_files: std::collections::HashSet<String> = patch_content
+        .lines()
+        .filter(|line| line.starts_with("+++ b/") || line.starts_with("--- a/"))
+        .filter_map(|line| {
+            line.strip_prefix("+++ b/")
+                .or_else(|| line.strip_prefix("--- a/"))
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    // First, resolve all conflicts in favor of "ours" (the task changes)
+    // This handles files that have conflict markers
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["checkout", "--ours", "."])
+        .output();
+
+    // Unstage everything (stash pop may have staged some changes)
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["reset", "HEAD"])
+        .output();
+
+    // For files that the stash touched but aren't in the task patch,
+    // restore them to HEAD (remove stash-only changes)
+    for file in &stash_files {
+        if !task_files.contains(file) {
+            let _ = Command::new("git")
+                .current_dir(project_dir)
+                .args(["checkout", "HEAD", "--", file])
+                .output();
+        }
+    }
+
+    // For files that are in the task patch, re-apply just the task's version
+    // This ensures we have exactly the task changes, not the merged result
+    for file in &task_files {
+        // Extract just this file's patch and apply it
+        // Reset the file to HEAD first
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["checkout", "HEAD", "--", file])
+            .output();
+    }
+
+    // Re-apply the entire task patch (now on a clean base)
+    let apply_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["apply", "--3way", patch_path.to_str().unwrap()])
+        .output()?;
+
+    if !apply_output.status.success() {
+        let stderr = String::from_utf8_lossy(&apply_output.stderr);
+        return Err(anyhow!("Failed to re-apply task patch: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Get info about a stash for display (without creating a TrackedStash)
+pub fn get_stash_details(project_dir: &PathBuf, stash_sha: &str) -> Result<(usize, String)> {
+    // Find the stash ref
+    let stash_ref = find_stash_ref_by_sha(project_dir, stash_sha)?
+        .ok_or_else(|| anyhow!("Stash not found"))?;
+
+    // Get file count
+    let show_output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["stash", "show", "--stat", &stash_ref])
+        .output()?;
+
+    let show_str = String::from_utf8_lossy(&show_output.stdout);
+    let lines: Vec<&str> = show_str.lines().collect();
+
+    // Last line usually shows summary like "3 files changed, 10 insertions(+), 5 deletions(-)"
+    let files_changed = lines.last()
+        .and_then(|line| {
+            line.split_whitespace().next()
+                .and_then(|n| n.parse::<usize>().ok())
+        })
+        .unwrap_or(0);
+
+    // Get file names (all but last line)
+    let file_summary = if lines.len() > 1 {
+        lines[..lines.len()-1]
+            .iter()
+            .take(3)
+            .map(|l| l.split('|').next().unwrap_or("").trim())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        String::new()
+    };
+
+    Ok((files_changed, file_summary))
 }
 
 #[cfg(test)]

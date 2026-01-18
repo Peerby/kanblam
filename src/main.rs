@@ -620,6 +620,7 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 project_dir,
                 timestamp: Utc::now(),
                 transcript_path: None,
+                input_type: String::new(),
             }))
         }
         WatcherEvent::SessionEnded { session_id, project_dir, .. } => {
@@ -629,15 +630,17 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 project_dir,
                 timestamp: Utc::now(),
                 transcript_path: None,
+                input_type: String::new(),
             }))
         }
-        WatcherEvent::NeedsInput { session_id, project_dir, .. } => {
+        WatcherEvent::NeedsInput { session_id, project_dir, input_type } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "needs-input".to_string(),
                 session_id,
                 project_dir,
                 timestamp: Utc::now(),
                 transcript_path: None,
+                input_type,
             }))
         }
         WatcherEvent::InputProvided { session_id, project_dir } => {
@@ -647,6 +650,7 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 project_dir,
                 timestamp: Utc::now(),
                 transcript_path: None,
+                input_type: String::new(),
             }))
         }
         WatcherEvent::Working { session_id, project_dir } => {
@@ -656,6 +660,7 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 project_dir,
                 timestamp: Utc::now(),
                 transcript_path: None,
+                input_type: String::new(),
             }))
         }
         WatcherEvent::Error(e) => {
@@ -817,6 +822,40 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     _ => vec![Message::RestartConfirmationAnimation],
                 }
             }
+            // 'k' key for keep markers - available for StashConflict dialogs
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                match &confirmation.action {
+                    model::PendingAction::StashConflict { task_id, .. } => {
+                        // Keep conflict markers for manual resolution
+                        vec![Message::KeepStashConflictMarkers(*task_id)]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
+            // 's' key for stash changes - available for StashConflict and DirtyMainBeforeMerge dialogs
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                match &confirmation.action {
+                    model::PendingAction::StashConflict { task_id, .. } => {
+                        // Stash user's changes and apply task cleanly
+                        vec![Message::StashUserChangesAndApply(*task_id)]
+                    }
+                    model::PendingAction::DirtyMainBeforeMerge { task_id } => {
+                        // Stash changes before merge, then proceed
+                        vec![Message::StashThenMerge { task_id: *task_id }]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
+            // 'c' key for commit changes - available for DirtyMainBeforeMerge dialogs
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                match &confirmation.action {
+                    model::PendingAction::DirtyMainBeforeMerge { .. } => {
+                        // Commit changes, then proceed with merge (handled via ConfirmAction)
+                        vec![Message::ConfirmAction]
+                    }
+                    _ => vec![Message::RestartConfirmationAnimation],
+                }
+            }
             // Allow 1-9 to cancel and switch to that project
             KeyCode::Char(c @ '1'..='9') => {
                 let project_idx = (c as usize) - ('1' as usize);
@@ -837,6 +876,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
     // Handle help overlay - scroll keys navigate, others close
     if app.model.ui_state.show_help {
         return handle_help_modal_key(key);
+    }
+
+    // Handle stash modal if open
+    if app.model.ui_state.show_stash_modal {
+        return handle_stash_modal_key(key);
     }
 
     // Handle task preview modal - allow action keys to work, only close on Esc/Enter/Space/?
@@ -900,6 +944,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('P') => vec![Message::StartGitPull],
         // p = Push to remote (lowercase)
         KeyCode::Char('p') => vec![Message::StartGitPush],
+
+        // Stash management
+        // S = Toggle stash modal (uppercase)
+        KeyCode::Char('S') => vec![Message::ToggleStashModal],
 
         // Navigation
         KeyCode::Char('h') | KeyCode::Left => vec![Message::NavigateLeft],
@@ -1492,6 +1540,40 @@ fn handle_help_modal_key(key: event::KeyEvent) -> Vec<Message> {
     }
 }
 
+/// Handle key events when the stash modal is open
+/// j/k/Up/Down navigate, p pops the selected stash, d deletes with confirmation
+/// Esc or S closes the modal
+fn handle_stash_modal_key(key: event::KeyEvent) -> Vec<Message> {
+    match key.code {
+        // Close modal
+        KeyCode::Esc | KeyCode::Char('S') | KeyCode::Char('q') => {
+            vec![Message::ToggleStashModal]
+        }
+
+        // Navigate up
+        KeyCode::Char('k') | KeyCode::Up => {
+            vec![Message::StashModalNavigate(-1)]
+        }
+
+        // Navigate down
+        KeyCode::Char('j') | KeyCode::Down => {
+            vec![Message::StashModalNavigate(1)]
+        }
+
+        // Pop selected stash
+        KeyCode::Char('p') | KeyCode::Enter => {
+            vec![Message::PopSelectedStash]
+        }
+
+        // Delete selected stash (with confirmation)
+        KeyCode::Char('d') => {
+            vec![Message::DropSelectedStash]
+        }
+
+        _ => vec![],
+    }
+}
+
 /// Handle key events when the task preview modal is open
 /// Actions work directly from within the modal, closing it first
 fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
@@ -1888,21 +1970,22 @@ fn handle_hook_signal(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Handle the signal subcommand for worktree-based hooks
-/// Format: kanclaude signal <event> <task-id>
+/// Format: kanclaude signal <event> <task-id> [input-type]
 fn handle_signal_command(args: &[String]) -> anyhow::Result<()> {
     if args.len() < 2 {
-        return Err(anyhow::anyhow!("Usage: kanclaude signal <event> <task-id>"));
+        return Err(anyhow::anyhow!("Usage: kanclaude signal <event> <task-id> [input-type]"));
     }
 
     let event = &args[0];
     let task_id = &args[1];
+    let input_type = args.get(2).map(|s| s.as_str());
 
     // Get current working directory (the worktree)
     let cwd = std::env::current_dir().unwrap_or_default();
 
     // Write signal file with task_id as the session identifier
     // The watcher will pick this up and process it
-    hooks::write_signal(event, task_id, &cwd, None)?;
+    hooks::write_signal(event, task_id, &cwd, input_type)?;
 
     Ok(())
 }

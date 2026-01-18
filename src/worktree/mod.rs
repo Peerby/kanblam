@@ -13,12 +13,16 @@ pub use git::{
     get_task_diff, apply_task_changes, unapply_task_changes, force_unapply_task_changes,
     UnapplyResult, cleanup_applied_state,
     needs_rebase, verify_rebase_success, generate_rebase_prompt,
-    generate_apply_prompt, is_rebase_in_progress, abort_rebase, try_fast_rebase,
+    generate_apply_prompt, generate_stash_conflict_prompt, save_current_changes_as_patch,
+    is_rebase_in_progress, abort_rebase, try_fast_rebase,
     commit_worktree_changes, has_changes_to_merge, commit_main_changes, commit_applied_changes,
     get_worktree_git_status, update_worktree_to_main, WorktreeGitStatus,
     get_worktree_changed_files, ChangedFile, is_branch_merged,
     has_uncommitted_changes,
     // Git remote operations
     git_fetch, git_pull, git_push, get_remote_status, RemoteStatus,
+    // Stash tracking
+    create_tracked_stash, pop_tracked_stash, drop_tracked_stash,
+    abort_stash_pop_keep_task_changes, get_stash_details,
 };
 pub use settings::{setup_claude_settings, merge_with_project_settings, pre_trust_worktree, remove_worktree_trust};

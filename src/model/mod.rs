@@ -313,9 +313,23 @@ impl AppModel {
         self.projects.get_mut(self.active_project_idx)
     }
 
-    pub fn projects_needing_attention(&self) -> usize {
-        self.projects.iter().filter(|p| p.needs_attention).count()
-    }
+}
+
+/// A stash that we created and are tracking for the user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackedStash {
+    /// The stash reference (e.g., "stash@{0}")
+    pub stash_ref: String,
+    /// Human-readable description of why this stash was created
+    pub description: String,
+    /// When the stash was created
+    pub created_at: DateTime<Utc>,
+    /// Number of files changed in this stash
+    pub files_changed: usize,
+    /// Summary of changed files (first few file names)
+    pub files_summary: String,
+    /// The stash's commit SHA (for stable identification even if index changes)
+    pub stash_sha: String,
 }
 
 /// A project represents a working directory with Claude Code sessions
@@ -338,6 +352,15 @@ pub struct Project {
     /// Stash ref created when applying task changes (to restore original work on unapply)
     #[serde(default)]
     pub applied_stash_ref: Option<String>,
+    /// Whether Claude resolved conflicts during apply (affects completion routing and unapply)
+    /// When true, the patch file contains the combined changes (task + resolution)
+    #[serde(default)]
+    pub applied_with_conflict_resolution: bool,
+
+    /// Stashes we created that the user may want to restore
+    /// Tracked so we can show an indicator and offer to pop/delete them
+    #[serde(default)]
+    pub tracked_stashes: Vec<TrackedStash>,
 
     // Main worktree lock state (prevents concurrent git operations)
     /// Task ID that currently has exclusive access to the main worktree
@@ -513,6 +536,8 @@ impl Project {
             captured_output: String::new(),
             applied_task_id: None,
             applied_stash_ref: None,
+            applied_with_conflict_resolution: false,
+            tracked_stashes: Vec::new(),
             main_worktree_lock: None,
             commands: ProjectCommands::default(), // Will auto-detect when needed
             remote_ahead: 0,
@@ -690,6 +715,20 @@ impl Project {
 
     pub fn needs_input_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsInput).count()
+    }
+
+    /// Count of tasks needing attention (Review column + NeedsInput) in this project
+    /// Includes Review, Accepting, Updating, Applying (all shown in Review column)
+    pub fn attention_count(&self) -> usize {
+        self.tasks.iter().filter(|t| {
+            matches!(t.status,
+                TaskStatus::Review |
+                TaskStatus::Accepting |
+                TaskStatus::Updating |
+                TaskStatus::Applying |
+                TaskStatus::NeedsInput
+            )
+        }).count()
     }
 }
 
@@ -1096,6 +1135,12 @@ pub struct UiState {
     // Configuration modal
     /// If set, the configuration modal is open
     pub config_modal: Option<ConfigModalState>,
+
+    // Stash modal
+    /// If true, the stash management modal is open
+    pub show_stash_modal: bool,
+    /// Selected index in the stash list
+    pub stash_modal_selected_idx: usize,
 }
 
 /// State for the interactive Claude terminal modal
@@ -1288,6 +1333,8 @@ impl Default for UiState {
             selected_project_tab_idx: 0,
             consecutive_esc_count: 0,
             config_modal: None,
+            show_stash_modal: false,
+            stash_modal_selected_idx: 0,
         }
     }
 }
@@ -1373,6 +1420,8 @@ pub enum PendingAction {
     ResetTask(Uuid),
     /// Force unapply using destructive reset (after surgical reversal failed)
     ForceUnapply(Uuid),
+    /// Stash conflict options: y=solve with Claude, n=unapply, k=keep markers
+    StashConflict { task_id: Uuid, stash_sha: String },
     /// Merge only: merge changes to main but keep worktree and task in Review
     MergeOnlyTask(Uuid),
     /// Interrupt SDK session to open CLI terminal (y=interrupt, n=cancel)
@@ -1383,6 +1432,12 @@ pub enum PendingAction {
     /// CLI is working, user wants to send feedback (i=interrupt, q=queue, o=open CLI, n=cancel)
     /// Stores task_id and the feedback text to send
     InterruptCliForFeedback { task_id: Uuid, feedback: String },
+    /// Main worktree has uncommitted changes before merge
+    /// Options: c=commit, s=stash, n=cancel
+    DirtyMainBeforeMerge { task_id: Uuid },
+    /// Offer to pop a tracked stash (after unapply or merge)
+    /// Options: y=pop, n=skip
+    PopTrackedStash { stash_sha: String },
 }
 
 /// Which UI element has focus
@@ -1403,6 +1458,9 @@ pub struct HookSignal {
     pub project_dir: PathBuf,
     pub timestamp: DateTime<Utc>,
     pub transcript_path: Option<PathBuf>,
+    /// For needs-input events: "idle" (from idle_prompt) or "permission" (from permission_prompt)
+    #[serde(default)]
+    pub input_type: String,
 }
 
 // ============================================================================

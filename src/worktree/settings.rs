@@ -197,17 +197,17 @@ pub fn merge_with_project_settings(
                     "matcher": "permission_prompt",
                     "hooks": [{
                         "type": "command",
-                        "command": format!("{} signal needs-input {}", kanclaude_bin, task_id)
+                        "command": format!("{} signal needs-input {} permission", kanclaude_bin, task_id)
                     }]
                 },
                 {
                     // idle_prompt fires after 60+ seconds of Claude being idle
-                    // Could be: (1) waiting for user to answer a question, or (2) finished
-                    // Send needs-input - the handler ignores it if already in Review (case 2)
+                    // This is our key signal that Claude is actually waiting for user input,
+                    // not just done. Pass "idle" type so handler can move from Review to NeedsInput.
                     "matcher": "idle_prompt",
                     "hooks": [{
                         "type": "command",
-                        "command": format!("{} signal needs-input {}", kanclaude_bin, task_id)
+                        "command": format!("{} signal needs-input {} idle", kanclaude_bin, task_id)
                     }]
                 }
             ],

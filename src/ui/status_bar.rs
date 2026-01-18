@@ -215,6 +215,33 @@ fn render_project_info(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
+    // Show stash indicator if there are tracked stashes (hidden when empty)
+    let stash_count = project.tracked_stashes.len();
+    if stash_count > 0 {
+        spans.push(Span::styled(
+            "  │ ",
+            Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::styled(
+            format!("📦{}", stash_count),
+            Style::default().fg(Color::Yellow),
+        ));
+        spans.push(Span::styled(
+            " stash",
+            Style::default().fg(Color::DarkGray),
+        ));
+        if stash_count > 1 {
+            spans.push(Span::styled(
+                "es",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        spans.push(Span::styled(
+            " [S]",
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+
     let info = Paragraph::new(ratatui::text::Line::from(spans));
     frame.render_widget(info, area);
 }
@@ -233,24 +260,31 @@ fn get_current_branch(working_dir: &std::path::Path) -> Option<String> {
 
 /// Render summary statistics
 fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
-    let review_count = app.model.projects_needing_attention();
+    // Show names of OTHER projects that need attention (not the current one)
+    let active_idx = app.model.active_project_idx;
+    let projects_needing_attention: Vec<&str> = app.model.projects.iter()
+        .enumerate()
+        .filter(|(idx, p)| *idx != active_idx && p.attention_count() > 0)
+        .map(|(_, p)| p.name.as_str())
+        .collect();
 
-    let summary = if review_count > 0 {
+    let summary = if !projects_needing_attention.is_empty() {
+        let names = projects_needing_attention.join(", ");
         Span::styled(
-            format!(" Review: {} ", review_count),
+            format!(" Review: {} ", names),
             Style::default()
                 .fg(Color::White)
-                .bg(Color::Magenta)
+                .bg(Color::Red)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(
-            " Ready ",
+            " ALL CLEAR ",
             Style::default().fg(Color::Green),
         )
     };
 
-    let summary_widget = Paragraph::new(summary).alignment(Alignment::Right);
+    let summary_widget = Paragraph::new(Line::from(vec![summary])).alignment(Alignment::Right);
     frame.render_widget(summary_widget, area);
 }
 

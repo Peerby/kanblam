@@ -50,6 +50,35 @@ pub enum Message {
     StartApplySession { task_id: Uuid },
     /// Complete apply after Claude generates clean patch (internal)
     CompleteApplyTask(Uuid),
+    /// Start a Claude session to resolve stash conflicts in main worktree
+    StartStashConflictSession { task_id: Uuid, stash_sha: String },
+    /// Complete stash conflict resolution (called when Claude session ends)
+    CompleteStashConflictResolution(Uuid),
+    /// Keep stash conflict markers for manual resolution (user pressed 'k')
+    KeepStashConflictMarkers(Uuid),
+    /// Stash user's changes and apply task cleanly (user pressed 's' on conflict)
+    StashUserChangesAndApply(Uuid),
+
+    // Stash management
+    /// Toggle the stash management modal
+    ToggleStashModal,
+    /// Navigate in stash modal
+    StashModalNavigate(i32),
+    /// Pop the selected stash
+    PopSelectedStash,
+    /// Drop the selected stash (with confirmation)
+    DropSelectedStash,
+    /// Confirm dropping a stash
+    ConfirmDropStash { stash_sha: String },
+    /// Offer to pop a tracked stash (shows confirmation dialog)
+    OfferPopStash { stash_sha: String, context: String },
+    /// Pop a specific tracked stash by SHA
+    PopTrackedStash { stash_sha: String },
+    /// Handle stash pop conflict (from popping a tracked stash)
+    HandleStashPopConflict { stash_sha: String },
+    /// Stash changes before merge, then proceed with merge
+    StashThenMerge { task_id: Uuid },
+
     /// Unapply/revert previously applied task changes
     UnapplyTaskChanges,
     /// Force unapply using destructive reset (after user confirms)

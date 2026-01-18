@@ -109,6 +109,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_config_modal(frame, app);
     }
 
+    // Render stash modal if active
+    if app.model.ui_state.show_stash_modal {
+        render_stash_modal(frame, app);
+    }
+
     // Render confirmation modal if pending confirmation has multiline message
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         if confirmation.message.contains('\n') {
@@ -218,13 +223,7 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
         let is_active = idx == app.model.active_project_idx;
         // Tab index is idx + 1 (since 0 is +project)
         let is_tab_selected = is_focused && selected_tab_idx == idx + 1;
-
-        // Build project name with attention indicator
-        let name = if project.needs_attention {
-            format!("{}*", project.name)
-        } else {
-            project.name.clone()
-        };
+        let attention_count = project.attention_count();
 
         let style = if is_tab_selected {
             // Highlighted selection (when navigating with arrows in ProjectTabs focus)
@@ -237,22 +236,30 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if project.needs_attention {
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
 
         // Keyboard shortcut: @ for first project, # for second, etc. (! is for +project)
         let tab_text = if idx + 1 < 10 {
-            format!(" [{}] {} ", shift_chars[idx + 1], name)
+            format!(" [{}] {} ", shift_chars[idx + 1], project.name)
         } else {
-            format!(" {} ", name)
+            format!(" {} ", project.name)
         };
 
         spans.push(Span::styled(tab_text, style));
+
+        // Add red badge for non-active projects with tasks needing attention
+        if !is_active && attention_count > 0 {
+            spans.push(Span::styled(
+                format!(" {} ", attention_count),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
     }
 
@@ -295,13 +302,7 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
         let is_active = idx == app.model.active_project_idx;
         // Tab index is idx + 1 (since 0 is +project)
         let is_tab_selected = is_focused && selected_tab_idx == idx + 1;
-
-        // Build project name with attention indicator
-        let name = if project.needs_attention {
-            format!("{}*", project.name)
-        } else {
-            project.name.clone()
-        };
+        let attention_count = project.attention_count();
 
         let style = if is_tab_selected {
             // Highlighted selection (when navigating with arrows in ProjectTabs focus)
@@ -314,22 +315,30 @@ fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-        } else if project.needs_attention {
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
 
         // Keyboard shortcut: @ for first project, # for second, etc. (! is for +project)
         let tab_text = if idx + 1 < 10 {
-            format!(" [{}] {} ", shift_chars[idx + 1], name)
+            format!(" [{}] {} ", shift_chars[idx + 1], project.name)
         } else {
-            format!(" {} ", name)
+            format!(" {} ", project.name)
         };
 
         spans.push(Span::styled(tab_text, style));
+
+        // Add red badge for non-active projects with tasks needing attention
+        if !is_active && attention_count > 0 {
+            spans.push(Span::styled(
+                format!(" {} ", attention_count),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
     }
 
@@ -1726,6 +1735,133 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         .style(Style::default().fg(Color::White));
 
     // Clear area first
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(modal, area);
+}
+
+/// Render the stash management modal
+fn render_stash_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 60, frame.area());
+
+    let Some(project) = app.model.active_project() else {
+        return;
+    };
+
+    let stashes = &project.tracked_stashes;
+    let selected_idx = app.model.ui_state.stash_modal_selected_idx;
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Tracked Stashes",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    if stashes.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No tracked stashes",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        let label_style = Style::default().fg(Color::DarkGray);
+        let value_style = Style::default().fg(Color::White);
+        let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+
+        for (idx, stash) in stashes.iter().enumerate() {
+            let is_selected = idx == selected_idx;
+            let prefix = if is_selected { "► " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            // Stash header: icon + short SHA + description
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled("📦 ", style),
+                Span::styled(&stash.stash_sha[..8.min(stash.stash_sha.len())], Style::default().fg(Color::Magenta)),
+                Span::styled(" ", style),
+                Span::styled(&stash.description, style),
+            ]));
+
+            // If selected, show details
+            if is_selected {
+                // Time since created
+                let elapsed = chrono::Utc::now().signed_duration_since(stash.created_at);
+                let time_ago = if elapsed.num_minutes() < 1 {
+                    "just now".to_string()
+                } else if elapsed.num_hours() < 1 {
+                    format!("{}m ago", elapsed.num_minutes())
+                } else if elapsed.num_hours() < 24 {
+                    format!("{}h ago", elapsed.num_hours())
+                } else {
+                    format!("{}d ago", elapsed.num_days())
+                };
+
+                lines.push(Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled("Created: ", label_style),
+                    Span::styled(time_ago, value_style),
+                    Span::styled("  │  ", label_style),
+                    Span::styled(format!("{} files changed", stash.files_changed), value_style),
+                ]));
+
+                if !stash.files_summary.is_empty() {
+                    // Show files summary, truncated if needed
+                    let summary = if stash.files_summary.len() > 40 {
+                        format!("{}...", &stash.files_summary[..37])
+                    } else {
+                        stash.files_summary.clone()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::raw("      "),
+                        Span::styled("Files: ", label_style),
+                        Span::styled(summary, Style::default().fg(Color::Gray)),
+                    ]));
+                }
+
+                lines.push(Line::from(""));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("─".repeat(40), Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(""));
+
+    // Key hints
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    if !stashes.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("p", key_style),
+            Span::styled(" pop  ", hint_style),
+            Span::styled("d", key_style),
+            Span::styled(" drop  ", hint_style),
+            Span::styled("j/k", key_style),
+            Span::styled(" navigate  ", hint_style),
+            Span::styled("Esc/S/q", key_style),
+            Span::styled(" close", hint_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Esc/S/q", key_style),
+            Span::styled(" close", hint_style),
+        ]));
+    }
+
+    let modal = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Stash Manager ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .style(Style::default().fg(Color::White));
+
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(modal, area);
 }

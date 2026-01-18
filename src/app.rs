@@ -615,14 +615,27 @@ impl App {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
-                    // Commit any uncommitted changes on main first
-                    // This ensures merge_branch has a clean working directory
-                    if let Err(e) = crate::worktree::commit_main_changes(&project_dir) {
-                        commands.push(Message::Error(format!(
-                            "Failed to commit main changes: {}",
-                            e
-                        )));
-                        return commands;
+                    // Check for uncommitted changes on main - ask user what to do
+                    match crate::worktree::has_uncommitted_changes(&project_dir) {
+                        Ok(true) => {
+                            // Main has uncommitted changes - ask user what to do
+                            self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                                message: "Main worktree has uncommitted changes.\n\n\
+                                         c=commit changes, s=stash changes, n=cancel".to_string(),
+                                action: PendingAction::DirtyMainBeforeMerge { task_id },
+                                animation_tick: 20,
+                            });
+                            return commands;
+                        }
+                        Ok(false) => {
+                            // No uncommitted changes, proceed
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!(
+                                "Failed to check main status: {}", e
+                            )));
+                            return commands;
+                        }
                     }
 
                     // Kill any detached Claude/test sessions for this task
@@ -973,11 +986,23 @@ impl App {
                         project.release_main_worktree_lock(task_id);
                     }
 
-                    commands.push(Message::SetStatusMessage(Some(
-                        "Task accepted and merged to main.".to_string()
-                    )));
                     // Trigger celebratory logo shimmer animation
                     commands.push(Message::TriggerLogoShimmer);
+
+                    // Check if there are tracked stashes to offer popping
+                    let offer_stash = self.model.active_project()
+                        .and_then(|p| p.tracked_stashes.first().cloned());
+
+                    if let Some(stash) = offer_stash {
+                        commands.push(Message::OfferPopStash {
+                            stash_sha: stash.stash_sha,
+                            context: "merge".to_string(),
+                        });
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Task accepted and merged to main.".to_string()
+                        )));
+                    }
                 }
             }
 
@@ -1105,9 +1130,20 @@ impl App {
                         project.release_main_worktree_lock(task_id);
                     }
 
-                    commands.push(Message::SetStatusMessage(Some(
-                        "Changes merged to main. Worktree preserved for continued work.".to_string()
-                    )));
+                    // Check if there are tracked stashes to offer popping
+                    let offer_stash = self.model.active_project()
+                        .and_then(|p| p.tracked_stashes.first().cloned());
+
+                    if let Some(stash) = offer_stash {
+                        commands.push(Message::OfferPopStash {
+                            stash_sha: stash.stash_sha,
+                            context: "merge".to_string(),
+                        });
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Changes merged to main. Worktree preserved for continued work.".to_string()
+                        )));
+                    }
                 }
             }
 
@@ -1627,6 +1663,26 @@ impl App {
                                 return commands;
                             }
 
+                            // Check for stash conflict (user's uncommitted changes conflict with task)
+                            if let Some(stash_sha) = err_msg.strip_prefix("STASH_CONFLICT:") {
+                                // Show confirmation dialog with options
+                                self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                                    message: format!(
+                                        "Stash conflict detected.\n\
+                                        Your uncommitted changes conflict with the task's changes.\n\
+                                        (Your original changes are safely stored in stash {})\n\n\
+                                        [Y] Solve with Claude  [N] Unapply  [K] Keep markers",
+                                        &stash_sha[..8.min(stash_sha.len())]
+                                    ),
+                                    action: PendingAction::StashConflict {
+                                        task_id,
+                                        stash_sha: stash_sha.to_string(),
+                                    },
+                                    animation_tick: 20,
+                                });
+                                return commands;
+                            }
+
                             // Fast apply failed - check if we need to rebase first
                             let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
 
@@ -1696,13 +1752,27 @@ impl App {
                     Some((project_dir, Some(task_id), _stash_ref)) => {
                         match crate::worktree::unapply_task_changes(&project_dir, task_id) {
                             Ok(crate::worktree::UnapplyResult::Success) => {
+                                // Check for tracked stashes before clearing state
+                                let offer_stash = self.model.active_project()
+                                    .and_then(|p| p.tracked_stashes.first().cloned());
+
                                 if let Some(project) = self.model.active_project_mut() {
                                     project.applied_task_id = None;
                                     project.applied_stash_ref = None;
+                                    project.applied_with_conflict_resolution = false;
                                 }
-                                commands.push(Message::SetStatusMessage(Some(
-                                    "Changes unapplied. Original work restored.".to_string()
-                                )));
+
+                                // If there are tracked stashes, offer to pop one
+                                if let Some(stash) = offer_stash {
+                                    commands.push(Message::OfferPopStash {
+                                        stash_sha: stash.stash_sha,
+                                        context: "unapply".to_string(),
+                                    });
+                                } else {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Changes unapplied. Original work restored.".to_string()
+                                    )));
+                                }
                             }
                             Ok(crate::worktree::UnapplyResult::NeedsConfirmation(reason)) => {
                                 // Surgical reversal failed - ask user for confirmation before destructive reset
@@ -1727,13 +1797,27 @@ impl App {
                 if let Some(project_dir) = project_dir {
                     match crate::worktree::force_unapply_task_changes(&project_dir, task_id) {
                         Ok(()) => {
+                            // Check for tracked stashes before clearing state
+                            let offer_stash = self.model.active_project()
+                                .and_then(|p| p.tracked_stashes.first().cloned());
+
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = None;
                                 project.applied_stash_ref = None;
+                                project.applied_with_conflict_resolution = false;
                             }
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Changes force-unapplied via destructive reset.".to_string()
-                            )));
+
+                            // If there are tracked stashes, offer to pop one
+                            if let Some(stash) = offer_stash {
+                                commands.push(Message::OfferPopStash {
+                                    stash_sha: stash.stash_sha,
+                                    context: "unapply".to_string(),
+                                });
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Changes force-unapplied via destructive reset.".to_string()
+                                )));
+                            }
                         }
                         Err(e) => {
                             commands.push(Message::Error(format!("Failed to force unapply: {}", e)));
@@ -2676,6 +2760,7 @@ impl App {
                                         if let Some(project) = self.model.active_project_mut() {
                                             project.applied_task_id = None;
                                             project.applied_stash_ref = None;
+                                            project.applied_with_conflict_resolution = false;
                                         }
 
                                         // Kill tmux window if exists
@@ -2739,6 +2824,10 @@ impl App {
                             // User confirmed destructive unapply
                             commands.push(Message::ForceUnapplyTaskChanges(task_id));
                         }
+                        PendingAction::StashConflict { task_id, stash_sha } => {
+                            // User pressed 'y' - solve conflicts with Claude
+                            commands.push(Message::StartStashConflictSession { task_id, stash_sha });
+                        }
                         PendingAction::InterruptSdkForCli(task_id) => {
                             // User confirmed interrupting SDK to open CLI
                             commands.push(Message::DoOpenInteractiveModal(task_id));
@@ -2750,6 +2839,25 @@ impl App {
                         PendingAction::InterruptCliForFeedback { task_id, feedback } => {
                             // User confirmed interrupting CLI to send feedback via SDK (i=interrupt)
                             commands.push(Message::DoSendFeedback { task_id, feedback });
+                        }
+                        PendingAction::DirtyMainBeforeMerge { task_id } => {
+                            // User chose to commit (y) - commit changes then proceed with merge
+                            let project_dir = self.model.active_project()
+                                .map(|p| p.working_dir.clone());
+                            if let Some(project_dir) = project_dir {
+                                if let Err(e) = crate::worktree::commit_main_changes(&project_dir) {
+                                    commands.push(Message::Error(format!(
+                                        "Failed to commit changes: {}", e
+                                    )));
+                                } else {
+                                    // Now proceed with the merge
+                                    commands.push(Message::AcceptTask(task_id));
+                                }
+                            }
+                        }
+                        PendingAction::PopTrackedStash { stash_sha } => {
+                            // User confirmed popping the stash
+                            commands.push(Message::PopTrackedStash { stash_sha });
                         }
                     }
                 }
@@ -2795,6 +2903,10 @@ impl App {
                                 "Changes still applied. Use 'u' to try surgical unapply again.".to_string()
                             )));
                         }
+                        PendingAction::StashConflict { task_id, .. } => {
+                            // User pressed 'n' - unapply the changes
+                            commands.push(Message::ForceUnapplyTaskChanges(task_id));
+                        }
                         PendingAction::InterruptSdkForCli(_) => {
                             // User cancelled opening CLI - SDK continues running
                             commands.push(Message::SetStatusMessage(Some(
@@ -2811,6 +2923,18 @@ impl App {
                             // User cancelled sending feedback - CLI continues
                             commands.push(Message::SetStatusMessage(Some(
                                 "Cancelled. Press 'o' to view CLI.".to_string()
+                            )));
+                        }
+                        PendingAction::DirtyMainBeforeMerge { .. } => {
+                            // User cancelled merge due to dirty worktree
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Merge cancelled. Commit or stash your changes first.".to_string()
+                            )));
+                        }
+                        PendingAction::PopTrackedStash { .. } => {
+                            // User declined to pop stash - no action needed
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Stash preserved. Press 'S' to manage stashes.".to_string()
                             )));
                         }
                     }
@@ -3009,16 +3133,28 @@ impl App {
                             "needs-input" => {
                                 task.log_activity("Waiting for input...");
                                 // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                // or already in Review (Stop hook already fired - this is
-                                // likely idle_prompt firing after completion, not a real question)
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Review {
+                                if was_accepting || was_updating || was_applying {
+                                    // Skip - we're in the middle of a rebase operation
+                                } else if signal.input_type == "idle" {
+                                    // idle_prompt fires after 60+ seconds of Claude being idle.
+                                    // This is our most reliable signal that Claude is waiting for input.
+                                    // Move to NeedsInput even if already in Review - the Stop hook
+                                    // fires for both "done" and "asking a question" cases, but
+                                    // idle_prompt only fires when Claude is genuinely waiting.
+                                    task.status = TaskStatus::NeedsInput;
+                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                    project.needs_attention = true;
+                                    notify::play_attention_sound();
+                                    notify::set_attention_indicator(&project.name);
+                                } else if task.status != TaskStatus::Review {
+                                    // permission_prompt or unknown type - only move to NeedsInput
+                                    // if not already in Review (Stop hook may have already fired)
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
                                 }
-                                // If already in Review, ignore - Stop hook already handled it
                             }
                             "input-provided" => {
                                 task.log_activity("Input received, continuing...");
@@ -3419,7 +3555,16 @@ impl App {
                 }
                 // If an Applying task's session stopped/ended, complete the apply
                 if was_applying && matches!(event.event_type, SessionEventType::Stopped | SessionEventType::Ended) {
-                    commands.push(Message::CompleteApplyTask(task_id));
+                    // Check if this was a stash conflict resolution (runs in main worktree)
+                    let is_conflict_resolution = self.model.active_project()
+                        .map(|p| p.applied_with_conflict_resolution)
+                        .unwrap_or(false);
+
+                    if is_conflict_resolution {
+                        commands.push(Message::CompleteStashConflictResolution(task_id));
+                    } else {
+                        commands.push(Message::CompleteApplyTask(task_id));
+                    }
                 }
             }
 
@@ -3913,6 +4058,311 @@ impl App {
                                 project.release_main_worktree_lock(task_id);
                             }
                             commands.push(Message::Error(format!("Error verifying rebase: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::StartStashConflictSession { task_id, stash_sha } => {
+                // Start a Claude session to resolve stash conflicts in the main worktree
+                let project_info = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_info {
+                    // Generate the stash conflict prompt
+                    let prompt = crate::worktree::generate_stash_conflict_prompt(&stash_sha);
+
+                    // Start session in MAIN worktree (not task worktree)
+                    if let Some(client) = &self.sidecar_client {
+                        match client.start_session(task_id, &project_dir, &prompt, None) {
+                            Ok(session_id) => {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    // Track that we're in conflict resolution mode
+                                    project.applied_task_id = Some(task_id);
+                                    project.applied_with_conflict_resolution = true;
+
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.status = TaskStatus::Applying;
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                                        task.claude_session_id = Some(session_id);
+                                        task.log_activity("Resolving stash conflicts in main worktree...");
+                                    }
+                                }
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Claude is resolving conflicts...".to_string()
+                                )));
+                            }
+                            Err(e) => {
+                                // Release lock on error
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                    project.applied_task_id = None;
+                                    project.applied_with_conflict_resolution = false;
+                                }
+                                commands.push(Message::Error(format!(
+                                    "Failed to start conflict resolution session: {}", e
+                                )));
+                            }
+                        }
+                    } else {
+                        commands.push(Message::Error("Sidecar not connected".to_string()));
+                    }
+                }
+            }
+
+            Message::CompleteStashConflictResolution(task_id) => {
+                // Complete stash conflict resolution - check if conflicts are resolved and save combined patch
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_dir {
+                    // Check if conflicts are resolved (no conflict markers)
+                    let conflict_check = std::process::Command::new("git")
+                        .current_dir(&project_dir)
+                        .args(["diff", "--check"])
+                        .output();
+
+                    let has_conflicts = match conflict_check {
+                        Ok(output) => !output.status.success(),
+                        Err(_) => true, // Assume conflicts if check fails
+                    };
+
+                    if has_conflicts {
+                        // Conflicts not resolved - return to Review with error
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
+                            }
+                            project.release_main_worktree_lock(task_id);
+                        }
+                        commands.push(Message::Error(
+                            "Conflict resolution incomplete. Some conflict markers remain.".to_string()
+                        ));
+                    } else {
+                        // Conflicts resolved!
+                        // CRITICAL: Save combined patch for surgical unapply
+                        if let Err(e) = crate::worktree::save_current_changes_as_patch(&project_dir, task_id) {
+                            // Log warning but don't fail - surgical unapply just won't work
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Warning: Could not save patch for surgical unapply: {}", e)
+                            )));
+                        }
+
+                        // Proceed with build check
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Review;
+                                task.session_state = crate::model::ClaudeSessionState::Paused;
+                            }
+                            project.release_main_worktree_lock(task_id);
+                            // Keep applied_task_id and applied_with_conflict_resolution set
+                        }
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Conflicts resolved. Building...".to_string()
+                        )));
+                        commands.push(Message::RefreshGitStatus);
+                        commands.push(Message::TriggerRestart);
+                    }
+                }
+            }
+
+            Message::KeepStashConflictMarkers(task_id) => {
+                // User chose to keep conflict markers for manual resolution
+                if let Some(project) = self.model.active_project_mut() {
+                    project.applied_task_id = Some(task_id);
+                    project.applied_with_conflict_resolution = true; // Track that conflicts exist
+                    project.release_main_worktree_lock(task_id);
+                }
+                self.model.ui_state.pending_confirmation = None;
+                commands.push(Message::SetStatusMessage(Some(
+                    "Conflict markers kept. Resolve manually, then press 'a' to re-apply or 'u' to unapply.".to_string()
+                )));
+            }
+
+            Message::StashUserChangesAndApply(task_id) => {
+                // User chose to stash their changes and apply task cleanly
+                let project_info = self.model.active_project()
+                    .map(|p| (p.working_dir.clone(), p.applied_stash_ref.clone()));
+
+                if let Some((project_dir, stash_ref)) = project_info {
+                    // Abort the stash pop while keeping task changes
+                    match crate::worktree::abort_stash_pop_keep_task_changes(&project_dir, task_id) {
+                        Ok(()) => {
+                            // The stash already exists from the failed pop - track it
+                            if let Some(ref sha) = stash_ref {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    // Add to tracked stashes with info from the apply stash
+                                    if let Ok((files_changed, files_summary)) =
+                                        crate::worktree::get_stash_details(&project_dir, sha)
+                                    {
+                                        project.tracked_stashes.push(crate::model::TrackedStash {
+                                            stash_ref: "stash@{0}".to_string(),
+                                            description: "Uncommitted changes before task apply".to_string(),
+                                            created_at: chrono::Utc::now(),
+                                            files_changed,
+                                            files_summary,
+                                            stash_sha: sha.clone(),
+                                        });
+                                    }
+                                    project.applied_task_id = Some(task_id);
+                                    project.applied_with_conflict_resolution = false;
+                                    project.release_main_worktree_lock(task_id);
+                                }
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Changes stashed. Task applied cleanly. Press 'S' to manage stashes.".to_string()
+                            )));
+                            commands.push(Message::TriggerRestart);
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!(
+                                "Failed to abort stash pop: {}", e
+                            )));
+                        }
+                    }
+                }
+            }
+
+            Message::ToggleStashModal => {
+                self.model.ui_state.show_stash_modal = !self.model.ui_state.show_stash_modal;
+                if self.model.ui_state.show_stash_modal {
+                    self.model.ui_state.stash_modal_selected_idx = 0;
+                }
+            }
+
+            Message::StashModalNavigate(delta) => {
+                if let Some(project) = self.model.active_project() {
+                    let count = project.tracked_stashes.len();
+                    if count > 0 {
+                        let current = self.model.ui_state.stash_modal_selected_idx as i32;
+                        let new_idx = (current + delta).rem_euclid(count as i32) as usize;
+                        self.model.ui_state.stash_modal_selected_idx = new_idx;
+                    }
+                }
+            }
+
+            Message::PopSelectedStash => {
+                let stash_sha = self.model.active_project()
+                    .and_then(|p| p.tracked_stashes.get(self.model.ui_state.stash_modal_selected_idx))
+                    .map(|s| s.stash_sha.clone());
+
+                if let Some(sha) = stash_sha {
+                    commands.push(Message::PopTrackedStash { stash_sha: sha });
+                    self.model.ui_state.show_stash_modal = false;
+                }
+            }
+
+            Message::DropSelectedStash => {
+                let stash_info = self.model.active_project()
+                    .and_then(|p| p.tracked_stashes.get(self.model.ui_state.stash_modal_selected_idx))
+                    .map(|s| (s.stash_sha.clone(), s.description.clone()));
+
+                if let Some((sha, desc)) = stash_info {
+                    self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                        message: format!("Delete stash '{}'?\nThis cannot be undone.", desc),
+                        action: PendingAction::PopTrackedStash { stash_sha: sha },
+                        animation_tick: 20,
+                    });
+                    self.model.ui_state.show_stash_modal = false;
+                }
+            }
+
+            Message::ConfirmDropStash { stash_sha } => {
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::drop_tracked_stash(&project_dir, &stash_sha) {
+                        Ok(()) => {
+                            // Remove from tracked stashes
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.tracked_stashes.retain(|s| s.stash_sha != stash_sha);
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Stash deleted.".to_string()
+                            )));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!("Failed to drop stash: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::OfferPopStash { stash_sha, context } => {
+                // Show confirmation dialog to pop stash
+                self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                    message: format!("{}\n\nRestore your stashed changes now? (y/n)", context),
+                    action: PendingAction::PopTrackedStash { stash_sha },
+                    animation_tick: 20,
+                });
+            }
+
+            Message::PopTrackedStash { stash_sha } => {
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::pop_tracked_stash(&project_dir, &stash_sha) {
+                        Ok(_) => {
+                            // Remove from tracked stashes
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.tracked_stashes.retain(|s| s.stash_sha != stash_sha);
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Stashed changes restored.".to_string()
+                            )));
+                        }
+                        Err(e) => {
+                            let err_msg = e.to_string();
+                            if err_msg.starts_with("STASH_CONFLICT:") {
+                                // Stash pop had conflicts
+                                commands.push(Message::HandleStashPopConflict { stash_sha });
+                            } else {
+                                commands.push(Message::Error(format!("Failed to pop stash: {}", e)));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Message::HandleStashPopConflict { stash_sha } => {
+                // Stash pop resulted in conflict - offer to resolve with Claude
+                self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                    message: "Stash pop resulted in conflicts.\n\nResolve with Claude? (y=resolve, n=abort)".to_string(),
+                    action: PendingAction::StashConflict {
+                        task_id: uuid::Uuid::nil(), // No task involved, just stash conflict
+                        stash_sha,
+                    },
+                    animation_tick: 20,
+                });
+            }
+
+            Message::StashThenMerge { task_id } => {
+                // Stash uncommitted changes, track them, then proceed with merge
+                let project_dir = self.model.active_project()
+                    .map(|p| p.working_dir.clone());
+
+                if let Some(project_dir) = project_dir {
+                    match crate::worktree::create_tracked_stash(&project_dir, "Uncommitted changes before merge") {
+                        Ok(Some(tracked)) => {
+                            // Track the stash
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.tracked_stashes.push(tracked);
+                            }
+                            // Now proceed with the merge
+                            commands.push(Message::AcceptTask(task_id));
+                        }
+                        Ok(None) => {
+                            // Nothing to stash, proceed directly
+                            commands.push(Message::AcceptTask(task_id));
+                        }
+                        Err(e) => {
+                            commands.push(Message::Error(format!(
+                                "Failed to stash changes: {}", e
+                            )));
                         }
                     }
                 }
