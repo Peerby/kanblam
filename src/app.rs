@@ -5813,9 +5813,22 @@ impl App {
             Message::TriggerRestart => {
                 // Only build and restart for bootstrap mode (developing KanBlam itself)
                 // For other projects, just show success - no need to restart the TUI
-                let is_bootstrap = self.model.active_project()
-                    .map(|p| is_bootstrap_project(p))
-                    .unwrap_or(false);
+                let (is_bootstrap, debug_info) = self.model.active_project()
+                    .map(|p| {
+                        let exe_path = std::env::current_exe().ok();
+                        let exe_canonical = exe_path.as_ref().and_then(|p| p.canonicalize().ok());
+                        let project_canonical = p.working_dir.canonicalize().ok();
+                        let is_boot = is_bootstrap_project(p);
+                        let info = format!(
+                            "exe={:?}, project={:?}, is_bootstrap={}",
+                            exe_canonical, project_canonical, is_boot
+                        );
+                        (is_boot, info)
+                    })
+                    .unwrap_or((false, "no active project".to_string()));
+
+                // Temporary debug: log to file
+                let _ = std::fs::write("/tmp/kanblam-bootstrap-debug.txt", &debug_info);
 
                 if !is_bootstrap {
                     // Not bootstrap mode - just show success, no build/restart needed
