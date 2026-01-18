@@ -1896,13 +1896,14 @@ impl App {
             }
 
             Message::ForceUnapplyWithStashRestore { task_id, stash_sha } => {
-                // Force unapply task changes, then try to restore user's stashed work
+                // Surgical unapply: only reset the files from the task patch, then restore stash
                 let project_dir = self.model.active_project()
                     .map(|p| p.working_dir.clone());
 
                 if let Some(project_dir) = project_dir {
-                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id) {
-                        Ok(()) => {
+                    // Step 1: Surgically reset only the files that the task modified
+                    match crate::worktree::surgical_unapply_for_stash_conflict(&project_dir, task_id) {
+                        Ok(files_reset) => {
                             // Clear applied state
                             if let Some(project) = self.model.active_project_mut() {
                                 project.applied_task_id = None;
@@ -1910,43 +1911,41 @@ impl App {
                                 project.applied_with_conflict_resolution = false;
                             }
 
-                            // Now try to restore the user's original stashed changes
-                            // Use 'apply' instead of 'pop' so we don't lose the stash if it fails
-                            let apply_result = std::process::Command::new("git")
+                            // Step 2: Pop the stash (not apply - pop removes it on success)
+                            // Task changes are gone, so stash should apply cleanly now
+                            let pop_result = std::process::Command::new("git")
                                 .current_dir(&project_dir)
-                                .args(["stash", "apply", &stash_sha])
+                                .args(["stash", "pop", &stash_sha])
                                 .output();
 
-                            match apply_result {
+                            match pop_result {
                                 Ok(output) if output.status.success() => {
-                                    // Successfully restored - now drop the stash
-                                    let _ = std::process::Command::new("git")
-                                        .current_dir(&project_dir)
-                                        .args(["stash", "drop", &stash_sha])
-                                        .output();
+                                    // Success! Repo is exactly as before apply was attempted
                                     commands.push(Message::SetStatusMessage(Some(
-                                        "Task unapplied. Your original changes restored.".to_string()
+                                        format!("Unapplied ({} files reset). Your changes restored.", files_reset.len())
                                     )));
                                 }
-                                Ok(_) => {
-                                    // Stash apply failed - drop it since it's now orphaned/corrupted
-                                    let _ = std::process::Command::new("git")
-                                        .current_dir(&project_dir)
-                                        .args(["stash", "drop", &stash_sha])
-                                        .output();
+                                Ok(output) => {
+                                    // Stash pop failed - DON'T auto-drop! Stash is still safe.
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
                                     commands.push(Message::SetStatusMessage(Some(
-                                        "Task unapplied. Could not restore stashed changes (dropped).".to_string()
+                                        format!("Files reset but stash restore failed: {}. Stash preserved.", stderr.trim())
                                     )));
                                 }
-                                Err(_) => {
+                                Err(e) => {
+                                    // Git command failed - stash is still safe
                                     commands.push(Message::SetStatusMessage(Some(
-                                        "Task unapplied. Stash restore failed.".to_string()
+                                        format!("Files reset but stash command failed: {}. Stash preserved.", e)
                                     )));
                                 }
                             }
                         }
                         Err(e) => {
-                            commands.push(Message::Error(format!("Failed to force unapply: {}", e)));
+                            // Surgical unapply failed - don't touch the stash, ask user
+                            commands.push(Message::Error(format!(
+                                "Surgical unapply failed: {}. Stash '{}' preserved. Manual cleanup may be needed.",
+                                e, &stash_sha[..8.min(stash_sha.len())]
+                            )));
                         }
                     }
                 }
@@ -3502,20 +3501,19 @@ impl App {
                                 // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
                                 if was_accepting || was_updating || was_applying {
                                     // Skip - we're in the middle of a rebase operation
-                                } else if signal.input_type == "idle" {
-                                    // idle_prompt fires after 60+ seconds of Claude being idle.
-                                    // This is our most reliable signal that Claude is waiting for input.
-                                    // Move to NeedsInput even if already in Review - the Stop hook
-                                    // fires for both "done" and "asking a question" cases, but
-                                    // idle_prompt only fires when Claude is genuinely waiting.
+                                } else if signal.input_type == "permission" {
+                                    // permission_prompt means Claude is blocked waiting for tool approval.
+                                    // Always move to NeedsInput, even from Review - this is unambiguous.
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
                                 } else if task.status != TaskStatus::Review {
-                                    // permission_prompt or unknown type - only move to NeedsInput
-                                    // if not already in Review (Stop hook may have already fired)
+                                    // idle_prompt or unknown type - only move to NeedsInput if NOT
+                                    // already in Review. The idle_prompt fires both when Claude asks
+                                    // a question AND when Claude is done but sitting at an idle prompt.
+                                    // We can't distinguish these cases, so trust the Review state.
                                     task.status = TaskStatus::NeedsInput;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;

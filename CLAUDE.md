@@ -81,3 +81,30 @@ Vim-style navigation between: `KanbanBoard` | `TaskInput` | `ProjectTabs` | `Out
 ## Protected Files
 
 **NEVER modify the `.kanblam/` directory or its contents.** This directory stores KanBlam's task state and is managed exclusively by the TUI application. Changes made in worktrees are automatically excluded from merges to prevent stale task data from overwriting current state.
+
+## Git Operations Principles
+
+When working with git repositories, follow these principles strictly:
+
+1. **Surgical Precision** - Never use global resets or discard uncommitted changes blindly. Undo exactly what was done, file by file, line by line. We're dealing with many moving parts and cannot assume anything about repo state beyond what we ourselves changed.
+
+2. **Ask Permission for Destructive Actions** - Any destructive action requires explicit user confirmation. Never auto-destroy data.
+
+3. **Default = Restore Original State** - If an operation fails or user aborts, undo precisely and restore what was there before. The user should end up exactly where they started.
+
+4. **Stashes Are Sacred** - Only remove stashes after successful restore or explicit user confirmation. Stashes exist to keep user's work safe - treat them responsibly.
+
+### Apply/Unapply Pattern
+
+When applying task changes to main worktree:
+- Stash user's uncommitted changes before applying
+- Apply task patch surgically
+- Restore user's changes via stash pop
+
+If stash pop conflicts and user aborts:
+1. Surgically reverse the task patch (`git apply -R <patch>`) - only touches task's files
+2. Clear conflict state on affected files only
+3. Pop the stash (now works because task changes are gone)
+4. Result: Repo exactly as before
+
+If surgical reversal fails: Don't auto-destroy. Show user what went wrong, ask what to do. Stash remains safe.

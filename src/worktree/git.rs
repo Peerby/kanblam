@@ -516,6 +516,40 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     log(&format!("=== apply_task_changes START: task={} ===", task_id));
     log(&format!("project_dir={:?}, branch={}", project_dir, branch_name));
 
+    // Check for corrupted state (unmerged files from previous failed operation)
+    let unmerged_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["ls-files", "-u"])
+        .output()?;
+
+    if !unmerged_check.stdout.is_empty() {
+        let unmerged_files = String::from_utf8_lossy(&unmerged_check.stdout);
+        log(&format!("ERROR: Unmerged files detected: {}", unmerged_files));
+        return Err(anyhow!(
+            "Repository has unmerged files from a previous conflict. \
+             Please resolve manually or run: git reset --hard HEAD"
+        ));
+    }
+
+    // Check for conflict markers in tracked files (another sign of corrupted state)
+    let conflict_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--check"])
+        .output();
+
+    if let Ok(output) = conflict_check {
+        if !output.status.success() {
+            let conflicts = String::from_utf8_lossy(&output.stdout);
+            if conflicts.contains("conflict") || conflicts.contains("<<<<<<") {
+                log(&format!("ERROR: Conflict markers detected: {}", conflicts));
+                return Err(anyhow!(
+                    "Repository has conflict markers from a previous failed merge. \
+                     Please resolve manually before applying."
+                ));
+            }
+        }
+    }
+
     // Check if there are local changes that need to be stashed
     // Only check for TRACKED file changes - untracked files don't need stashing
     // (git stash doesn't stash untracked files by default anyway)
@@ -808,6 +842,58 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
     Ok(UnapplyResult::NeedsConfirmation(
         "No saved patch found. Use destructive reset to unapply?".to_string()
     ))
+}
+
+/// Surgical unapply for stash conflict recovery.
+/// Only resets the specific files that the task patch modified, leaving other changes intact.
+/// After this, the stash can be popped cleanly because task changes are gone.
+/// Returns Ok(files_reset) on success, Err if patch file not found or reset failed.
+pub fn surgical_unapply_for_stash_conflict(project_dir: &PathBuf, task_id: Uuid) -> Result<Vec<String>> {
+    let patch_path = get_patch_file_path(task_id);
+
+    if !patch_path.exists() {
+        return Err(anyhow!("No patch file found for task {}. Cannot perform surgical unapply.", task_id));
+    }
+
+    // Read the patch to extract the list of files it modifies
+    let patch_content = std::fs::read_to_string(&patch_path)?;
+
+    // Parse patch to get file paths (lines starting with "diff --git a/")
+    let mut files_to_reset: Vec<String> = Vec::new();
+    for line in patch_content.lines() {
+        if line.starts_with("diff --git a/") {
+            // Format: "diff --git a/path/to/file b/path/to/file"
+            // Extract the path after "a/"
+            if let Some(path_part) = line.strip_prefix("diff --git a/") {
+                if let Some(space_idx) = path_part.find(" b/") {
+                    let file_path = &path_part[..space_idx];
+                    files_to_reset.push(file_path.to_string());
+                }
+            }
+        }
+    }
+
+    if files_to_reset.is_empty() {
+        return Err(anyhow!("Could not parse any files from patch"));
+    }
+
+    // Reset each file to HEAD (removes task changes and clears any conflict state)
+    for file_path in &files_to_reset {
+        let checkout_result = Command::new("git")
+            .current_dir(project_dir)
+            .args(["checkout", "HEAD", "--", file_path])
+            .output()?;
+
+        if !checkout_result.status.success() {
+            let stderr = String::from_utf8_lossy(&checkout_result.stderr);
+            return Err(anyhow!("Failed to reset file '{}': {}", file_path, stderr));
+        }
+    }
+
+    // Clean up the patch file
+    let _ = std::fs::remove_file(&patch_path);
+
+    Ok(files_to_reset)
 }
 
 /// Force unapply using destructive reset (only call after user confirmation!).
