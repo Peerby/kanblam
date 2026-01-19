@@ -749,90 +749,110 @@ impl App {
                         return commands;
                     }
 
+                    // Need worktree path
+                    let Some(wt_path) = worktree_path else {
+                        commands.push(Message::Error("No worktree path for task".to_string()));
+                        return commands;
+                    };
+
                     // Try to acquire exclusive lock on main worktree
                     if let Some(project) = self.model.active_project_mut() {
                         if let Err(reason) = project.try_lock_main_worktree(task_id, MainWorktreeOperation::Accepting) {
                             commands.push(Message::Error(reason));
                             return commands;
                         }
+                        // Set status to Accepting and show progress
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.status = TaskStatus::Accepting;
+                        }
                     }
 
-                    // CRITICAL: Commit any uncommitted changes in the worktree FIRST
-                    // This ensures we don't lose work that Claude did but didn't commit
-                    if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
-                            Ok(_) => {
-                                // Changes committed (or nothing to commit)
+                    commands.push(Message::SetStatusMessage(Some("Preparing merge...".to_string())));
+                    // Defer to async handler
+                    commands.push(Message::StartSmartAcceptGitOps {
+                        task_id,
+                        worktree_path: wt_path,
+                        project_dir,
+                        has_branch: git_branch.is_some(),
+                    });
+                }
+            }
+
+            Message::StartSmartAcceptGitOps { task_id, worktree_path, project_dir, has_branch } => {
+                // Run git operations in background to keep UI responsive
+                let sender = match self.async_sender.clone() {
+                    Some(s) => s,
+                    None => {
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.release_main_worktree_lock(task_id);
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Review;
                             }
-                            Err(e) => {
-                                commands.push(Message::Error(format!(
-                                    "Failed to commit worktree changes: {}. Changes preserved in worktree.",
-                                    e
-                                )));
-                                return commands;
-                            }
                         }
+                        commands.push(Message::Error("Internal error: async_sender not configured.".to_string()));
+                        return commands;
                     }
+                };
 
-                    // Commit any uncommitted changes on main BEFORE checking rebase
-                    // This ensures the worktree properly detects it needs to integrate
-                    // with main's latest state (including uncommitted work)
-                    match crate::worktree::commit_main_changes(&project_dir) {
-                        Ok(true) => {
-                            // Main had uncommitted changes that are now committed
-                            // The rebase check below will detect the worktree is behind
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+                        // Commit any uncommitted changes in the worktree
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                            return Err(format!("Failed to commit worktree changes: {}", e));
                         }
-                        Ok(false) => {
-                            // Nothing to commit on main, that's fine
-                        }
-                        Err(e) => {
-                            commands.push(Message::Error(format!(
-                                "Failed to commit main changes: {}",
-                                e
-                            )));
-                            return commands;
-                        }
-                    }
 
-                    // Check if rebase is needed
-                    let needs_rebase = git_branch.is_some() &&
-                        crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+                        // Commit any uncommitted changes on main
+                        if let Err(e) = crate::worktree::commit_main_changes(&project_dir) {
+                            return Err(format!("Failed to commit main changes: {}", e));
+                        }
 
-                    if needs_rebase {
-                        // Try fast rebase first (no Claude needed)
-                        if let Some(ref wt_path) = worktree_path {
-                            match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
-                                Ok(true) => {
-                                    // Fast rebase succeeded, proceed to merge
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "✓ Fast rebase succeeded, merging...".to_string()
-                                    )));
-                                    commands.push(Message::CompleteAcceptTask(task_id));
-                                }
-                                Ok(false) => {
-                                    // Conflicts detected, need Claude to resolve
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        "Conflicts detected, starting smart merge...".to_string()
-                                    )));
-                                    commands.push(Message::StartRebaseSession { task_id });
-                                }
-                                Err(e) => {
-                                    // Error during rebase attempt, fallback to Claude
-                                    commands.push(Message::SetStatusMessage(Some(
-                                        format!("Fast rebase failed ({}), trying smart merge...", e)
-                                    )));
-                                    commands.push(Message::StartRebaseSession { task_id });
-                                }
+                        // Check if rebase is needed
+                        let needs_rebase = has_branch &&
+                            crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+
+                        if needs_rebase {
+                            // Try fast rebase
+                            match crate::worktree::try_fast_rebase(&worktree_path, &project_dir) {
+                                Ok(true) => Ok(true),   // Fast rebase succeeded, ready to merge
+                                Ok(false) => Ok(false), // Conflicts, needs Claude
+                                Err(e) => Err(format!("Fast rebase failed: {}", e)),
                             }
                         } else {
-                            // No worktree path, fallback to Claude
-                            commands.push(Message::StartRebaseSession { task_id });
+                            // No rebase needed, ready to merge
+                            Ok(true)
                         }
-                    } else {
-                        // No rebase needed - go straight to accept
-                        commands.push(Message::CompleteAcceptTask(task_id));
+                    }).await;
+
+                    let msg = match result {
+                        Ok(Ok(true)) => Message::SmartAcceptReadyToMerge { task_id },
+                        Ok(Ok(false)) => Message::SmartAcceptNeedsClaude { task_id },
+                        Ok(Err(e)) => Message::SmartAcceptFailed { task_id, error: e },
+                        Err(e) => Message::SmartAcceptFailed { task_id, error: format!("Task panicked: {}", e) },
+                    };
+
+                    let _ = sender.send(msg);
+                });
+            }
+
+            Message::SmartAcceptReadyToMerge { task_id } => {
+                commands.push(Message::SetStatusMessage(Some("✓ Ready to merge...".to_string())));
+                commands.push(Message::CompleteAcceptTask(task_id));
+            }
+
+            Message::SmartAcceptNeedsClaude { task_id } => {
+                commands.push(Message::SetStatusMessage(Some("Conflicts detected, starting smart merge...".to_string())));
+                commands.push(Message::StartRebaseSession { task_id });
+            }
+
+            Message::SmartAcceptFailed { task_id, error } => {
+                // Release lock and revert status
+                if let Some(project) = self.model.active_project_mut() {
+                    project.release_main_worktree_lock(task_id);
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.status = TaskStatus::Review;
                     }
                 }
+                commands.push(Message::Error(error));
             }
 
             Message::CompleteAcceptTask(task_id) => {
@@ -1047,6 +1067,12 @@ impl App {
                         return commands;
                     }
 
+                    // Need worktree path
+                    let Some(wt_path) = worktree_path else {
+                        commands.push(Message::Error("No worktree path for task".to_string()));
+                        return commands;
+                    };
+
                     // Try to acquire exclusive lock on main worktree
                     if let Some(project) = self.model.active_project_mut() {
                         if let Err(reason) = project.try_lock_main_worktree(task_id, MainWorktreeOperation::Accepting) {
@@ -1055,155 +1081,158 @@ impl App {
                         }
                     }
 
-                    // Commit any uncommitted changes in the worktree FIRST
-                    if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
-                            Ok(_) => {
-                                // Changes committed (or nothing to commit)
-                            }
-                            Err(e) => {
-                                if let Some(project) = self.model.active_project_mut() {
-                                    project.release_main_worktree_lock(task_id);
-                                }
-                                commands.push(Message::Error(format!(
-                                    "Failed to commit worktree changes: {}. Changes preserved in worktree.",
-                                    e
-                                )));
-                                return commands;
-                            }
-                        }
-                    }
+                    commands.push(Message::SetStatusMessage(Some("Merging...".to_string())));
+                    // Defer to async handler
+                    commands.push(Message::StartMergeOnlyGitOps {
+                        task_id,
+                        worktree_path: wt_path,
+                        project_dir,
+                    });
+                }
+            }
 
-                    // Commit any uncommitted changes on main BEFORE checking rebase
-                    match crate::worktree::commit_main_changes(&project_dir) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            if let Some(project) = self.model.active_project_mut() {
-                                project.release_main_worktree_lock(task_id);
-                            }
-                            commands.push(Message::Error(format!(
-                                "Failed to commit main changes: {}",
-                                e
-                            )));
-                            return commands;
-                        }
-                    }
-
-                    // Check if rebase is needed
-                    let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
-
-                    if needs_rebase {
-                        // Try fast rebase first
-                        if let Some(ref wt_path) = worktree_path {
-                            match crate::worktree::try_fast_rebase(wt_path, &project_dir) {
-                                Ok(true) => {
-                                    // Fast rebase succeeded
-                                }
-                                Ok(false) | Err(_) => {
-                                    // Conflicts or error - cannot auto-merge
-                                    if let Some(project) = self.model.active_project_mut() {
-                                        project.release_main_worktree_lock(task_id);
-                                    }
-                                    commands.push(Message::Error(
-                                        "Rebase conflicts detected. Use 'm' to merge with conflict resolution.".to_string()
-                                    ));
-                                    return commands;
-                                }
-                            }
-                        }
-                    }
-
-                    // Verify there are changes to merge
-                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
-                        Ok(true) => {
-                            // Good, there are changes
-                        }
-                        Ok(false) => {
-                            if let Some(project) = self.model.active_project_mut() {
-                                project.release_main_worktree_lock(task_id);
-                            }
-                            commands.push(Message::SetStatusMessage(Some(
-                                "Nothing to merge - worktree is up to date with main.".to_string()
-                            )));
-                            return commands;
-                        }
-                        Err(e) => {
-                            if let Some(project) = self.model.active_project_mut() {
-                                project.release_main_worktree_lock(task_id);
-                            }
-                            commands.push(Message::Error(format!("Failed to check for changes: {}", e)));
-                            return commands;
-                        }
-                    }
-
-                    // Merge branch to main (should be fast-forward now)
-                    if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+            Message::StartMergeOnlyGitOps { task_id, worktree_path, project_dir } => {
+                // Run git operations in background to keep UI responsive
+                let sender = match self.async_sender.clone() {
+                    Some(s) => s,
+                    None => {
                         if let Some(project) = self.model.active_project_mut() {
                             project.release_main_worktree_lock(task_id);
                         }
-                        commands.push(Message::Error(format!(
-                            "Merge failed: {}. Try 'm' to merge with conflict resolution.",
-                            e
-                        )));
+                        commands.push(Message::Error("Internal error: async_sender not configured.".to_string()));
                         return commands;
                     }
+                };
 
-                    // Release the lock - merge completed successfully
-                    if let Some(project) = self.model.active_project_mut() {
-                        project.release_main_worktree_lock(task_id);
-                    }
-
-                    // Clean up applied state - changes are now committed to main
-                    // This prevents unapply from trying to reverse committed changes
-                    crate::worktree::cleanup_applied_state(task_id);
-
-                    // If there was a stash created during apply, track it so user can restore their changes
-                    let stash_to_track = self.model.active_project()
-                        .and_then(|p| p.applied_stash_ref.clone())
-                        .and_then(|sha| {
-                            let project_dir = self.model.active_project()
-                                .map(|p| p.working_dir.clone())?;
-                            // Get stash details to create a TrackedStash entry
-                            if let Ok((files_changed, files_summary)) =
-                                crate::worktree::get_stash_details(&project_dir, &sha)
-                            {
-                                Some(crate::model::TrackedStash {
-                                    stash_ref: "stash@{0}".to_string(),
-                                    description: "Uncommitted changes before task apply".to_string(),
-                                    created_at: chrono::Utc::now(),
-                                    files_changed,
-                                    files_summary,
-                                    stash_sha: sha,
-                                })
-                            } else {
-                                None
-                            }
-                        });
-
-                    if let Some(project) = self.model.active_project_mut() {
-                        // Track the stash if there was one
-                        if let Some(tracked) = stash_to_track {
-                            project.tracked_stashes.push(tracked);
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+                        // Commit any uncommitted changes in the worktree
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                            return Err(format!("Failed to commit worktree changes: {}", e));
                         }
-                        project.applied_task_id = None;
-                        project.applied_stash_ref = None;
-                        project.applied_with_conflict_resolution = false;
-                    }
 
-                    // Check if there are tracked stashes to offer popping
-                    let offer_stash = self.model.active_project()
-                        .and_then(|p| p.tracked_stashes.first().cloned());
+                        // Commit any uncommitted changes on main
+                        if let Err(e) = crate::worktree::commit_main_changes(&project_dir) {
+                            return Err(format!("Failed to commit main changes: {}", e));
+                        }
 
-                    if let Some(stash) = offer_stash {
-                        commands.push(Message::OfferPopStash {
-                            stash_sha: stash.stash_sha,
-                            context: "merge".to_string(),
-                        });
-                    } else {
-                        commands.push(Message::SetStatusMessage(Some(
-                            "Changes merged to main. Worktree preserved for continued work.".to_string()
-                        )));
+                        // Check if rebase is needed
+                        let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+
+                        if needs_rebase {
+                            // Try fast rebase
+                            match crate::worktree::try_fast_rebase(&worktree_path, &project_dir) {
+                                Ok(true) => {} // Fast rebase succeeded
+                                Ok(false) => return Err("CONFLICTS".to_string()),
+                                Err(e) => return Err(format!("Fast rebase failed: {}", e)),
+                            }
+                        }
+
+                        // Verify there are changes to merge
+                        match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                            Ok(true) => {} // Good, there are changes
+                            Ok(false) => return Err("NOTHING_TO_MERGE".to_string()),
+                            Err(e) => return Err(format!("Failed to check for changes: {}", e)),
+                        }
+
+                        // Merge branch to main (should be fast-forward now)
+                        if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                            return Err(format!("Merge failed: {}", e));
+                        }
+
+                        // Clean up applied state
+                        crate::worktree::cleanup_applied_state(task_id);
+
+                        Ok(())
+                    }).await;
+
+                    let msg = match result {
+                        Ok(Ok(())) => Message::MergeOnlyReadyToMerge { task_id },
+                        Ok(Err(e)) if e == "CONFLICTS" => Message::MergeOnlyConflicts { task_id },
+                        Ok(Err(e)) if e == "NOTHING_TO_MERGE" => Message::MergeOnlyFailed {
+                            task_id,
+                            error: "Nothing to merge - worktree is up to date with main.".to_string()
+                        },
+                        Ok(Err(e)) => Message::MergeOnlyFailed { task_id, error: e },
+                        Err(e) => Message::MergeOnlyFailed { task_id, error: format!("Task panicked: {}", e) },
+                    };
+
+                    let _ = sender.send(msg);
+                });
+            }
+
+            Message::MergeOnlyReadyToMerge { task_id } => {
+                // Release the lock - merge completed successfully
+                if let Some(project) = self.model.active_project_mut() {
+                    project.release_main_worktree_lock(task_id);
+                }
+
+                // If there was a stash created during apply, track it so user can restore their changes
+                let stash_to_track = self.model.active_project()
+                    .and_then(|p| p.applied_stash_ref.clone())
+                    .and_then(|sha| {
+                        let project_dir = self.model.active_project()
+                            .map(|p| p.working_dir.clone())?;
+                        // Get stash details to create a TrackedStash entry
+                        if let Ok((files_changed, files_summary)) =
+                            crate::worktree::get_stash_details(&project_dir, &sha)
+                        {
+                            Some(crate::model::TrackedStash {
+                                stash_ref: "stash@{0}".to_string(),
+                                description: "Uncommitted changes before task apply".to_string(),
+                                created_at: chrono::Utc::now(),
+                                files_changed,
+                                files_summary,
+                                stash_sha: sha,
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(project) = self.model.active_project_mut() {
+                    // Track the stash if there was one
+                    if let Some(tracked) = stash_to_track {
+                        project.tracked_stashes.push(tracked);
                     }
+                    project.applied_task_id = None;
+                    project.applied_stash_ref = None;
+                    project.applied_with_conflict_resolution = false;
+                }
+
+                // Check if there are tracked stashes to offer popping
+                let offer_stash = self.model.active_project()
+                    .and_then(|p| p.tracked_stashes.first().cloned());
+
+                if let Some(stash) = offer_stash {
+                    commands.push(Message::OfferPopStash {
+                        stash_sha: stash.stash_sha,
+                        context: "merge".to_string(),
+                    });
+                } else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Changes merged to main. Worktree preserved for continued work.".to_string()
+                    )));
+                }
+            }
+
+            Message::MergeOnlyConflicts { task_id } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.release_main_worktree_lock(task_id);
+                }
+                commands.push(Message::Error(
+                    "Rebase conflicts detected. Use 'm' to merge with conflict resolution.".to_string()
+                ));
+            }
+
+            Message::MergeOnlyFailed { task_id, error } => {
+                if let Some(project) = self.model.active_project_mut() {
+                    project.release_main_worktree_lock(task_id);
+                }
+                if error.contains("Nothing to merge") {
+                    commands.push(Message::SetStatusMessage(Some(error)));
+                } else {
+                    commands.push(Message::Error(error));
                 }
             }
 

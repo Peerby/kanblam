@@ -177,6 +177,26 @@ pub enum Message {
     /// Fast rebase failed with error (from background task)
     FastRebaseFailed { task_id: Uuid, error: String },
 
+    // Async smart accept (merge task)
+    /// Start smart accept git operations in background
+    StartSmartAcceptGitOps { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf, has_branch: bool },
+    /// Smart accept git ops done - ready to merge (no rebase needed or fast rebase succeeded)
+    SmartAcceptReadyToMerge { task_id: Uuid },
+    /// Smart accept needs Claude for conflict resolution
+    SmartAcceptNeedsClaude { task_id: Uuid },
+    /// Smart accept git ops failed
+    SmartAcceptFailed { task_id: Uuid, error: String },
+
+    // Async merge-only (M command)
+    /// Start merge-only git operations in background
+    StartMergeOnlyGitOps { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    /// Merge-only git ops done - ready to merge
+    MergeOnlyReadyToMerge { task_id: Uuid },
+    /// Merge-only failed (conflicts - needs full 'm' for Claude resolution)
+    MergeOnlyConflicts { task_id: Uuid },
+    /// Merge-only git ops failed
+    MergeOnlyFailed { task_id: Uuid, error: String },
+
     // Async build before restart
     /// Start build in background before restarting
     StartBuildForRestart,
