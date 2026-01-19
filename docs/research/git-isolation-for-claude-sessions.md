@@ -23,10 +23,10 @@ We need a system where:
 **Commands:**
 ```bash
 # Create worktree for a task
-git worktree add ../kanclaude-task-{uuid} -b claude/{task-id}
+git worktree add ../kanblam-task-{uuid} -b claude/{task-id}
 
 # Claude works in that directory
-cd ../kanclaude-task-{uuid} && claude
+cd ../kanblam-task-{uuid} && claude
 
 # Review changes
 git log claude/{task-id}
@@ -36,7 +36,7 @@ git diff main..claude/{task-id}
 git checkout main && git merge claude/{task-id}
 
 # Discard: remove worktree and branch
-git worktree remove ../kanclaude-task-{uuid}
+git worktree remove ../kanblam-task-{uuid}
 git branch -D claude/{task-id}
 ```
 
@@ -84,7 +84,7 @@ git branch -D claude/{task-id}
 **How it works:**
 - Claude sessions commit to temporary branches
 - Extract changes as patch files: `git format-patch main..claude/{task-id}`
-- Store patches in `.kanclaude/patches/{task-id}/`
+- Store patches in `.kanblam/patches/{task-id}/`
 - Apply patches for review: `git apply --check patch.patch` then `git am patch.patch`
 
 **Pros:**
@@ -116,7 +116,7 @@ git branch -D claude/{task-id}
 
 ---
 
-## Recommended Architecture for KanClaude
+## Recommended Architecture for Kanblam
 
 Based on the research, we recommend **Approach 1 (Worktrees)** with some elements of **Approach 2 (Hooks)**:
 
@@ -150,25 +150,25 @@ Based on the research, we recommend **Approach 1 (Worktrees)** with some element
 ### Key Commands to Implement
 
 ```bash
-# Start task (KanClaude does this)
-kanclaude worktree create {task-id}
-# → git worktree add ~/.kanclaude/worktrees/{task-id} -b claude/{task-id}
+# Start task (Kanblam does this)
+kanblam worktree create {task-id}
+# → git worktree add ~/.kanblam/worktrees/{task-id} -b claude/{task-id}
 
 # Preview changes
-kanclaude review {task-id}
+kanblam review {task-id}
 # → git diff main..claude/{task-id}
 
 # Apply to main for testing (temporary)
-kanclaude apply {task-id}
+kanblam apply {task-id}
 # → git stash && git cherry-pick --no-commit claude/{task-id}
 
 # Accept and integrate
-kanclaude accept {task-id}
+kanblam accept {task-id}
 # → git checkout main && git merge --squash claude/{task-id}
 # → git worktree remove ... && git branch -D claude/{task-id}
 
 # Discard completely
-kanclaude discard {task-id}
+kanblam discard {task-id}
 # → git worktree remove ... && git branch -D claude/{task-id}
 ```
 
@@ -177,8 +177,8 @@ kanclaude discard {task-id}
 ## Implementation Considerations
 
 ### Worktree Location
-- Option A: `~/.kanclaude/worktrees/{project}/{task-id}/`
-- Option B: `{project}/../.kanclaude-worktrees/{task-id}/`
+- Option A: `~/.kanblam/worktrees/{project}/{task-id}/`
+- Option B: `{project}/../.kanblam-worktrees/{task-id}/`
 - Option C: User-configurable
 
 ### Branch Naming Convention
@@ -191,7 +191,7 @@ kanclaude discard {task-id}
 - Let Claude commit naturally?
 - Use hooks to track changes?
 
-### Review UI in KanClaude
+### Review UI in Kanblam
 - Show diff in preview pane when task is in Review
 - Allow "apply temporarily" to test changes
 - Show commit log for the task branch

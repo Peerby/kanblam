@@ -14,7 +14,7 @@ Thumbs.db
 *.log
 .claude/
 
-# Task worktrees (created by KanClaude for isolated Claude sessions)
+# Task worktrees (created by Kanblam for isolated Claude sessions)
 worktrees/
 
 # Sidecar build artifacts

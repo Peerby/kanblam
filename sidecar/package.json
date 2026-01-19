@@ -1,7 +1,7 @@
 {
-  "name": "kanclaude-sidecar",
+  "name": "kanblam-sidecar",
   "version": "0.1.0",
-  "description": "Claude Code Agent SDK sidecar for KanClaude",
+  "description": "Claude Code Agent SDK sidecar for Kanblam",
   "type": "module",
   "main": "dist/main.cjs",
   "scripts": {

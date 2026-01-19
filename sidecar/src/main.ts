@@ -1,5 +1,5 @@
 /**
- * KanClaude Sidecar - Claude Code Agent SDK IPC server
+ * Kanblam Sidecar - Claude Code Agent SDK IPC server
  *
  * Communicates with the Rust TUI via Unix domain socket using JSON-RPC 2.0
  */
@@ -32,7 +32,7 @@ import {
 } from './protocol.js';
 
 // Socket path - in user's runtime directory
-const SOCKET_DIR = path.join(os.homedir(), '.kanclaude');
+const SOCKET_DIR = path.join(os.homedir(), '.kanblam');
 const SOCKET_PATH = path.join(SOCKET_DIR, 'sidecar.sock');
 
 class SidecarServer {

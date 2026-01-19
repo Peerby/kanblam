@@ -20,7 +20,7 @@ fn play_sound_internal() -> anyhow::Result<()> {
     // Try custom sound file first
     let sound_path = dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("kanclaude")
+        .join("kanblam")
         .join("sounds")
         .join("attention.mp3");
 

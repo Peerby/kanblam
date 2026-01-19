@@ -1,5 +1,5 @@
 [package]
-name = "kanclaude"
+name = "kanblam"
 version = "0.1.0"
 edition = "2021"
 description = "TUI Kanban board for orchestrating parallel Claude Code sessions"
@@ -53,5 +53,5 @@ vt100 = "0.15"
 tempfile = "3"
 
 [[bin]]
-name = "kanclaude"
+name = "kanblam"
 path = "src/main.rs"

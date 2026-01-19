@@ -95,7 +95,7 @@ pub fn remove_worktree_trust(worktree_path: &PathBuf) -> Result<()> {
 /// Set up Claude Code settings in a worktree
 ///
 /// Creates `.claude/settings.json` with:
-/// - Hooks to notify KanClaude of session events
+/// - Hooks to notify Kanblam of session events
 /// - Auto-accept for common tools (Bash, Read, Edit, Write)
 /// - Co-authored-by attribution
 pub fn setup_claude_settings(
@@ -106,9 +106,9 @@ pub fn setup_claude_settings(
     let claude_dir = worktree_path.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
 
-    // Get the absolute path to the kanclaude binary
-    let kanclaude_bin = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("kanclaude"))
+    // Get the absolute path to the kanblam binary
+    let kanblam_bin = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("kanblam"))
         .to_string_lossy()
         .to_string();
 
@@ -132,13 +132,13 @@ pub fn setup_claude_settings(
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal stop {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal stop {}", kanblam_bin, task_id)
                 }]
             }],
             "PreToolUse": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal working {}", kanblam_bin, task_id)
                 }]
             }]
         }
@@ -153,7 +153,7 @@ pub fn setup_claude_settings(
     let claudeignore_path = worktree_path.join(".claudeignore");
     if !claudeignore_path.exists() {
         // Ignore parent directories that might be symlinked
-        std::fs::write(&claudeignore_path, "# KanClaude worktree - stay within this directory\n")?;
+        std::fs::write(&claudeignore_path, "# Kanblam worktree - stay within this directory\n")?;
     }
 
     Ok(())
@@ -167,9 +167,9 @@ pub fn merge_with_project_settings(
 ) -> Result<()> {
     let project_settings_path = project_dir.join(".claude").join("settings.json");
 
-    // Get the absolute path to the kanclaude binary
-    let kanclaude_bin = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("kanclaude"))
+    // Get the absolute path to the kanblam binary
+    let kanblam_bin = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("kanblam"))
         .to_string_lossy()
         .to_string();
 
@@ -191,13 +191,13 @@ pub fn merge_with_project_settings(
             "Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal stop {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal stop {}", kanblam_bin, task_id)
                 }]
             }],
             "SessionEnd": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal end {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal end {}", kanblam_bin, task_id)
                 }]
             }],
             "Notification": [
@@ -205,7 +205,7 @@ pub fn merge_with_project_settings(
                     "matcher": "permission_prompt",
                     "hooks": [{
                         "type": "command",
-                        "command": format!("{} signal needs-input {} permission", kanclaude_bin, task_id)
+                        "command": format!("{} signal needs-input {} permission", kanblam_bin, task_id)
                     }]
                 },
                 {
@@ -215,20 +215,20 @@ pub fn merge_with_project_settings(
                     "matcher": "idle_prompt",
                     "hooks": [{
                         "type": "command",
-                        "command": format!("{} signal needs-input {} idle", kanclaude_bin, task_id)
+                        "command": format!("{} signal needs-input {} idle", kanblam_bin, task_id)
                     }]
                 }
             ],
             "UserPromptSubmit": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal input-provided {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal input-provided {}", kanblam_bin, task_id)
                 }]
             }],
             "PreToolUse": [{
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{} signal working {}", kanclaude_bin, task_id)
+                    "command": format!("{} signal working {}", kanblam_bin, task_id)
                 }]
             }]
         }

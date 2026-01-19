@@ -6782,7 +6782,7 @@ pub fn load_state() -> Result<AppModel> {
 
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanclaude");
+        .join("kanblam");
 
     let state_file = data_dir.join("state.json");
 
@@ -6812,7 +6812,7 @@ pub fn load_state() -> Result<AppModel> {
 pub fn save_state(model: &AppModel) -> Result<()> {
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanclaude");
+        .join("kanblam");
 
     std::fs::create_dir_all(&data_dir)?;
 

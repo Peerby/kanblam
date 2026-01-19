@@ -18,7 +18,7 @@ use super::protocol::*;
 fn socket_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".kanclaude")
+        .join(".kanblam")
         .join("sidecar.sock")
 }
 

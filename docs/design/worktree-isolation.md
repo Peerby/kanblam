@@ -5,12 +5,12 @@
 Each task runs in an isolated git worktree with its own Claude Code session in tmux. This provides:
 - Complete filesystem isolation between concurrent tasks
 - Clean git history per task for review/accept/discard
-- Persistent sessions that survive KanClaude restarts
+- Persistent sessions that survive Kanblam restarts
 
 ## Architecture
 
 ```
-~/.kanclaude/
+~/.kanblam/
 ├── worktrees/
 │   └── {project-slug}/
 │       ├── task-abc123/          ← Git worktree (branch: claude/abc123)
@@ -139,7 +139,7 @@ Create `.claude/settings.json` in each worktree:
   "hooks": {
     "Stop": [{
       "type": "command",
-      "command": "kanclaude signal stop $CLAUDE_SESSION_ID"
+      "command": "kanblam signal stop $CLAUDE_SESSION_ID"
     }]
   }
 }
@@ -149,8 +149,8 @@ Create `.claude/settings.json` in each worktree:
 Set these when spawning Claude:
 ```bash
 CLAUDE_WORKING_DIR=/path/to/worktree
-KANCLAUDE_TASK_ID=abc123
-KANCLAUDE_PROJECT=my-project
+KANBLAM_TASK_ID=abc123
+KANBLAM_PROJECT=my-project
 ```
 
 ### Trust Boundary
@@ -162,7 +162,7 @@ We trust Claude to:
 We enforce:
 - Worktree is the cwd
 - Git branch is task-specific
-- Hooks notify KanClaude of completion
+- Hooks notify Kanblam of completion
 
 ## Key Operations
 

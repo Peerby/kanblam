@@ -486,11 +486,11 @@ fn get_stash_sha(project_dir: &PathBuf) -> Result<String> {
 
 /// Get the path where we save the applied patch for surgical reversal
 fn get_patch_file_path(task_id: Uuid) -> PathBuf {
-    let kanclaude_dir = dirs::home_dir()
+    let kanblam_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".kanclaude")
+        .join(".kanblam")
         .join("patches");
-    kanclaude_dir.join(format!("{}.patch", task_id))
+    kanblam_dir.join(format!("{}.patch", task_id))
 }
 
 /// Parse file paths from unified diff patch content.
@@ -595,7 +595,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     if has_tracked_changes {
         let stash_output = Command::new("git")
             .current_dir(project_dir)
-            .args(["stash", "push", "-m", &format!("kanclaude: before applying task {}", task_id), "--", ".", ":!.kanblam"])
+            .args(["stash", "push", "-m", &format!("kanblam: before applying task {}", task_id), "--", ".", ":!.kanblam"])
             .output()?;
 
         if !stash_output.status.success() {
@@ -808,7 +808,7 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
         let did_stash = if has_unstaged {
             let stash_result = Command::new("git")
                 .current_dir(project_dir)
-                .args(["stash", "push", "--keep-index", "-m", "kanclaude: unapply temp stash", "--", ".", ":!.kanblam"])
+                .args(["stash", "push", "--keep-index", "-m", "kanblam: unapply temp stash", "--", ".", ":!.kanblam"])
                 .output()?;
             stash_result.status.success()
         } else {

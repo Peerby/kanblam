@@ -1669,7 +1669,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
 
     let help_text = vec![
         Line::from(Span::styled(
-            "KanClaude Keyboard Shortcuts",
+            "Kanblam Keyboard Shortcuts",
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),

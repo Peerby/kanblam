@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     if args.len() > 1 && args[1] == "hook-signal" {
         return handle_hook_signal(&args[2..]);
     }
-    // New signal subcommand for worktree-based hooks: kanclaude signal <event> <task-id>
+    // New signal subcommand for worktree-based hooks: kanblam signal <event> <task-id>
     if args.len() > 1 && args[1] == "signal" {
         return handle_signal_command(&args[2..]);
     }
@@ -361,7 +361,7 @@ fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
 
     // Create temp file with current content
     let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join(format!("kanclaude_input_{}.txt", std::process::id()));
+    let temp_file = temp_dir.join(format!("kanblam_input_{}.txt", std::process::id()));
 
     // Write current content to temp file
     if let Err(e) = fs::write(&temp_file, &current_text) {
@@ -2208,10 +2208,10 @@ fn handle_hook_signal(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Handle the signal subcommand for worktree-based hooks
-/// Format: kanclaude signal <event> <task-id> [input-type]
+/// Format: kanblam signal <event> <task-id> [input-type]
 fn handle_signal_command(args: &[String]) -> anyhow::Result<()> {
     if args.len() < 2 {
-        return Err(anyhow::anyhow!("Usage: kanclaude signal <event> <task-id> [input-type]"));
+        return Err(anyhow::anyhow!("Usage: kanblam signal <event> <task-id> [input-type]"));
     }
 
     let event = &args[0];

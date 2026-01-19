@@ -294,7 +294,7 @@ impl HookWatcher {
 /// Get the signal directory path
 pub fn get_signal_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
-    Ok(home.join(".kanclaude").join("signals"))
+    Ok(home.join(".kanblam").join("signals"))
 }
 
 /// Write a signal file (called by hook script via CLI)

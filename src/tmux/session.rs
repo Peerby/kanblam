@@ -107,7 +107,7 @@ pub fn start_claude_task(pane_id: &str, task_description: &str, images: &[PathBu
 // Worktree-based task session management
 // ============================================================================
 
-/// Get or create the KanClaude tmux session for a project
+/// Get or create the Kanblam tmux session for a project
 /// This session will contain windows for each active task.
 pub fn get_or_create_project_session(project_slug: &str) -> Result<String> {
     let session_name = format!("kc-{}", project_slug);

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub fn get_image_dir() -> Result<PathBuf> {
     let data_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanclaude")
+        .join("kanblam")
         .join("images");
 
     std::fs::create_dir_all(&data_dir)?;

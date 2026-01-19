@@ -2,11 +2,11 @@
 
 use std::process::Command;
 
-const TMUX_OPTION_NAME: &str = "@kanclaude_attention";
+const TMUX_OPTION_NAME: &str = "@kanblam_attention";
 
 /// Set the attention indicator in tmux status bar
 /// This sets a user option that can be used in the status-right config:
-/// set -g status-right '#{?#{!=:#{@kanclaude_attention},},#[fg=green]● ,}'
+/// set -g status-right '#{?#{!=:#{@kanblam_attention},},#[fg=green]● ,}'
 pub fn set_attention_indicator(project_name: &str) {
     let _ = Command::new("tmux")
         .args(["set-option", "-g", TMUX_OPTION_NAME, project_name])
@@ -52,6 +52,6 @@ pub fn get_attention_project() -> Option<String> {
 
 /// Setup hint - returns the tmux config line to add to .tmux.conf
 pub fn get_tmux_config_hint() -> &'static str {
-    r#"# KanClaude attention indicator - add to status-right:
-# set -g status-right '#{?#{!=:#{@kanclaude_attention},},#[fg=green]● #{@kanclaude_attention} ,}'"#
+    r#"# Kanblam attention indicator - add to status-right:
+# set -g status-right '#{?#{!=:#{@kanblam_attention},},#[fg=green]● #{@kanblam_attention} ,}'"#
 }

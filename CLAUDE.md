@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-KanClaude is a TUI Kanban task manager for orchestrating parallel Claude Code sessions. It manages multiple isolated Claude sessions through git worktrees, with a Rust TUI for task management and a TypeScript sidecar for Claude Code Agent SDK integration.
+Kanblam is a TUI Kanban task manager for orchestrating parallel Claude Code sessions. It manages multiple isolated Claude sessions through git worktrees, with a Rust TUI for task management and a TypeScript sidecar for Claude Code Agent SDK integration.
 
 ## Build & Development Commands
 
@@ -44,7 +44,7 @@ Each task runs in its own git worktree (`src/worktree/`):
 
 ### Sidecar Architecture
 TypeScript process (`sidecar/`) communicates with Rust TUI via Unix socket:
-- JSON-RPC 2.0 protocol over `~/.kanclaude/sidecar.sock`
+- JSON-RPC 2.0 protocol over `~/.kanblam/sidecar.sock`
 - Rust client: `src/sidecar/client.rs` + `src/sidecar/protocol.rs`
 - TypeScript server: `sidecar/src/main.ts`
 - Session management: `sidecar/src/session-manager.ts` wraps `@anthropic-ai/claude-code` SDK
@@ -75,7 +75,7 @@ Vim-style navigation between: `KanbanBoard` | `TaskInput` | `ProjectTabs` | `Out
 
 - Task selection tracked by both index and UUID (`selected_task_idx`, `selected_task_id`)
 - State persisted to `.kanblam/tasks.json` per project
-- Hook signals processed via filesystem watch (`~/.kanclaude/signals/`)
+- Hook signals processed via filesystem watch (`~/.kanblam/signals/`)
 - Tmux session per project: `kc-{project-slug}`
 
 ## Protected Files
