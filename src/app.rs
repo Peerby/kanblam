@@ -689,6 +689,19 @@ impl App {
                         )));
                     }
 
+                    // Capture celebration info BEFORE moving the task
+                    let celebration_info = self.model.active_project().and_then(|project| {
+                        let tasks_in_review = project.tasks_by_status(TaskStatus::Review);
+                        tasks_in_review.iter().enumerate()
+                            .find(|(_, t)| t.id == task_id)
+                            .map(|(idx, t)| {
+                                let task_id_short = &t.id.to_string()[..4];
+                                let title = t.short_title.as_ref().unwrap_or(&t.title);
+                                let display_text = format!("[{}] {}", task_id_short, title);
+                                (display_text, idx)
+                            })
+                    });
+
                     // Update task and move to end of list (bottom of Done column)
                     if let Some(project) = self.model.active_project_mut() {
                         if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
@@ -705,6 +718,17 @@ impl App {
                         if !project.needs_attention {
                             notify::clear_attention_indicator();
                         }
+                    }
+
+                    // Trigger celebratory animations
+                    commands.push(Message::TriggerLogoShimmer);
+                    if let Some((display_text, task_index)) = celebration_info {
+                        commands.push(Message::TriggerMergeCelebration {
+                            task_id,
+                            display_text,
+                            column_status: TaskStatus::Review,
+                            task_index,
+                        });
                     }
 
                     commands.push(Message::SetStatusMessage(Some(
@@ -1009,6 +1033,21 @@ impl App {
                         )));
                     }
 
+                    // Capture celebration info BEFORE moving the task
+                    // Note: Task might be in Accepting status (shown in Review column)
+                    let celebration_info = self.model.active_project().and_then(|project| {
+                        // For Accepting tasks, they appear in Review column
+                        let tasks_in_review = project.tasks_by_status(TaskStatus::Review);
+                        tasks_in_review.iter().enumerate()
+                            .find(|(_, t)| t.id == task_id)
+                            .map(|(idx, t)| {
+                                let task_id_short = &t.id.to_string()[..4];
+                                let title = t.short_title.as_ref().unwrap_or(&t.title);
+                                let display_text = format!("[{}] {}", task_id_short, title);
+                                (display_text, idx)
+                            })
+                    });
+
                     // Update task and move to end of list (bottom of Done column)
                     if let Some(project) = self.model.active_project_mut() {
                         if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
@@ -1029,8 +1068,16 @@ impl App {
                         project.release_main_worktree_lock(task_id);
                     }
 
-                    // Trigger celebratory logo shimmer animation
+                    // Trigger celebratory animations
                     commands.push(Message::TriggerLogoShimmer);
+                    if let Some((display_text, task_index)) = celebration_info {
+                        commands.push(Message::TriggerMergeCelebration {
+                            task_id,
+                            display_text,
+                            column_status: TaskStatus::Review,
+                            task_index,
+                        });
+                    }
 
                     // Check if there are tracked stashes to offer popping
                     let offer_stash = self.model.active_project()
@@ -3504,6 +3551,17 @@ impl App {
                 self.model.ui_state.eye_animation_ticks_remaining = 10;
             }
 
+            Message::TriggerMergeCelebration { task_id, display_text, column_status, task_index } => {
+                // Start the "gold dust sweep" celebration animation
+                self.model.ui_state.merge_celebration = Some(crate::model::MergeCelebrationState {
+                    task_id,
+                    original_text: display_text,
+                    frame: 0,
+                    column_status,
+                    task_index,
+                });
+            }
+
             Message::TriggerMascotBlink => {
                 // Trigger a random eye animation when clicking the mascot
                 self.model.ui_state.eye_animation = EyeAnimation::random();
@@ -5895,6 +5953,15 @@ impl App {
                     self.model.ui_state.logo_shimmer_frame += 1;
                     if self.model.ui_state.logo_shimmer_frame > 5 {
                         self.model.ui_state.logo_shimmer_frame = 0; // Animation complete
+                    }
+                }
+
+                // Advance merge celebration "gold dust sweep" animation if active
+                if let Some(ref mut celebration) = self.model.ui_state.merge_celebration {
+                    celebration.frame += 1;
+                    if celebration.is_complete() {
+                        // Animation complete - clear it
+                        self.model.ui_state.merge_celebration = None;
                     }
                 }
 

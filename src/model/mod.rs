@@ -1576,6 +1576,100 @@ pub struct UiState {
     pub show_watcher_insight_modal: bool,
     /// Scroll offset for the insight modal content
     pub watcher_insight_scroll_offset: usize,
+
+    // Merge celebration animation ("Gold dust sweep")
+    /// If set, a merge celebration animation is playing for this task
+    /// Contains the task ID being animated and the original display text
+    pub merge_celebration: Option<MergeCelebrationState>,
+}
+
+/// State for the merge celebration "gold dust sweep" animation
+/// Phase 1: Confirmation pulse (green/cyan tint) - frames 0-4
+/// Phase 2: Sparkle substitution right→left - frames 5-N (N depends on text length)
+/// Phase 3: Fade out sweep - continues until all sparkles evaporate
+#[derive(Debug, Clone)]
+pub struct MergeCelebrationState {
+    /// The task being celebrated (used to identify which row to animate)
+    pub task_id: Uuid,
+    /// The original display text (e.g., "[abc1] Task title")
+    pub original_text: String,
+    /// Current animation frame (increments each tick)
+    pub frame: usize,
+    /// Index of the column where the task is (for rendering)
+    pub column_status: TaskStatus,
+    /// Index within the column's task list
+    pub task_index: usize,
+}
+
+impl MergeCelebrationState {
+    /// Total frames for phase 1 (confirmation pulse) - 300ms
+    pub const PHASE1_FRAMES: usize = 3;
+    /// Frames per character during sparkle substitution (phase 2) - 100ms per char
+    pub const FRAMES_PER_CHAR: usize = 1;
+    /// Number of trailing sparkle characters to show before evaporating
+    pub const SPARKLE_TRAIL_LEN: usize = 4;
+
+    /// Sparkle characters (from light to absent)
+    /// Uses ✧ for initial sparkle, · for fading, then space for gone
+    pub const SPARKLE_CHARS: [char; 4] = ['✧', '·', '·', ' '];
+
+    /// Check if the animation is complete (all text has evaporated)
+    pub fn is_complete(&self) -> bool {
+        // Phase 2+3 together: we need (text_len + SPARKLE_TRAIL_LEN) * FRAMES_PER_CHAR frames
+        // after phase 1 to fully sweep and fade
+        let text_len = self.original_text.chars().count();
+        let total_sweep_frames = (text_len + Self::SPARKLE_TRAIL_LEN) * Self::FRAMES_PER_CHAR;
+        self.frame >= Self::PHASE1_FRAMES + total_sweep_frames
+    }
+
+    /// Get the current animation phase
+    pub fn phase(&self) -> u8 {
+        if self.frame < Self::PHASE1_FRAMES {
+            1 // Confirmation pulse
+        } else if !self.is_complete() {
+            2 // Sparkle substitution + fade out sweep
+        } else {
+            3 // Complete
+        }
+    }
+
+    /// Get the number of characters from the right that have been converted to sparkles
+    pub fn sparkle_chars_count(&self) -> usize {
+        if self.frame < Self::PHASE1_FRAMES {
+            0
+        } else {
+            (self.frame - Self::PHASE1_FRAMES) / Self::FRAMES_PER_CHAR
+        }
+    }
+
+    /// Render the animated text for the current frame
+    /// Returns a vec of (char, is_sparkle, sparkle_age) for rendering
+    #[allow(dead_code)]
+    pub fn render_chars(&self) -> Vec<(char, bool, usize)> {
+        let chars: Vec<char> = self.original_text.chars().collect();
+        let text_len = chars.len();
+        let sparkle_count = self.sparkle_chars_count();
+
+        let mut result = Vec::with_capacity(text_len);
+
+        for (i, &ch) in chars.iter().enumerate() {
+            let pos_from_right = text_len.saturating_sub(i + 1);
+
+            if pos_from_right < sparkle_count {
+                // This character has been replaced by a sparkle
+                let sparkle_age = sparkle_count - pos_from_right - 1;
+                // Pick sparkle character based on age
+                let sparkle_idx = sparkle_age.min(Self::SPARKLE_CHARS.len() - 1);
+                let sparkle_char = Self::SPARKLE_CHARS[sparkle_idx];
+                result.push((sparkle_char, true, sparkle_age));
+            } else {
+                // Original character (possibly dimmed)
+                result.push((ch, false, 0));
+            }
+        }
+
+        result
+    }
 }
 
 /// State for the interactive Claude terminal modal
@@ -1881,6 +1975,8 @@ impl Default for UiState {
             // Watcher insight modal
             show_watcher_insight_modal: false,
             watcher_insight_scroll_offset: 0,
+            // Merge celebration animation
+            merge_celebration: None,
         }
     }
 }

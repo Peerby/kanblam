@@ -287,6 +287,9 @@ pub enum Message {
     Tick,
     /// Trigger the logo shimmer animation with star eyes (called on successful merge/commit)
     TriggerLogoShimmer,
+    /// Trigger the merge celebration "gold dust sweep" animation for a task
+    /// The task will be visually swept away with sparkles from right to left
+    TriggerMergeCelebration { task_id: Uuid, display_text: String, column_status: TaskStatus, task_index: usize },
     /// Trigger a blink animation (called when clicking the mascot)
     TriggerMascotBlink,
     /// Trigger an immediate watcher observation (called when clicking mascot with watcher enabled)
