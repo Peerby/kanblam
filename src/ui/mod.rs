@@ -907,33 +907,32 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // FOOTER: Navigation and close hints
-    // ═══════════════════════════════════════════════════════════════════════
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
+    // Build title: [phase] short_title
+    let short_title = task.short_title.as_ref().unwrap_or(&task.title);
+    let title = format!(" [{}] {} ", phase_label, truncate_string(short_title, 40));
+
+    // Build footer key hints (right-aligned on bottom border)
+    let footer = Line::from(vec![
         Span::styled("←/h", key_style),
         Span::styled(" ", dim_style),
         Span::styled("→/l", key_style),
-        Span::styled(" tabs    ", dim_style),
+        Span::styled(" tabs  ", dim_style),
         Span::styled("Esc", key_style),
         Span::styled("/", dim_style),
         Span::styled("Enter", key_style),
         Span::styled("/", dim_style),
         Span::styled("Space", key_style),
-        Span::styled(" close", dim_style),
-    ]));
-
-    // Build title: [phase] short_title
-    let short_title = task.short_title.as_ref().unwrap_or(&task.title);
-    let title = format!(" [{}] {} ", phase_label, truncate_string(short_title, 40));
+        Span::styled(" close ", dim_style),
+    ]).right_aligned();
 
     let preview = Paragraph::new(lines)
         .block(
             Block::default()
                 .title(Span::styled(title, Style::default().fg(Color::White)))
+                .title_bottom(footer)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(column_color)),
+                .border_style(Style::default().fg(column_color))
+                .padding(ratatui::widgets::Padding::uniform(1)),
         )
         .style(Style::default().fg(Color::White))
         .wrap(ratatui::widgets::Wrap { trim: false });
