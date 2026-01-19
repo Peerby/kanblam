@@ -1,6 +1,7 @@
 // Core application modules
 // See CLAUDE.md for architecture overview and development commands
 // This application follows The Elm Architecture (TEA) pattern
+// Entry point for the KanBlam TUI application
 mod app;
 mod hooks;
 mod image;
