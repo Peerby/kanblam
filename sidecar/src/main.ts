@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 import { SessionManager } from './session-manager.js';
+import { WatcherSession, type WatcherComment } from './watcher.js';
 import {
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -19,8 +20,14 @@ import {
   type SendPromptParams,
   type StopSessionParams,
   type SummarizeTitleParams,
+  type StartWatcherParams,
+  type StopWatcherParams,
+  type WatcherCommentParams,
+  type WatcherObservingParams,
   createResponse,
   createSessionEvent,
+  createWatcherComment,
+  createWatcherObserving,
   ErrorCodes,
 } from './protocol.js';
 
@@ -31,6 +38,7 @@ const SOCKET_PATH = path.join(SOCKET_DIR, 'sidecar.sock');
 class SidecarServer {
   private server: net.Server;
   private sessionManager: SessionManager;
+  private watchers: Map<string, WatcherSession> = new Map();
   private clients: Set<net.Socket> = new Set();
 
   constructor() {
@@ -201,6 +209,80 @@ class SidecarServer {
           return createResponse(id, { pong: true });
         }
 
+        case 'start_watcher': {
+          const p = params as StartWatcherParams;
+          if (!p?.project_path) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required param: project_path',
+            });
+          }
+
+          // Stop existing watcher for this project if any
+          const existing = this.watchers.get(p.project_path);
+          if (existing) {
+            existing.stop();
+          }
+
+          // Create new watcher
+          const watcher = new WatcherSession(
+            p.project_path,
+            (comment) => this.broadcastWatcherComment(p.project_path, comment),
+            {
+              intervalMinutes: p.interval_minutes,
+              onObserving: (isObserving) => this.broadcastWatcherObserving(p.project_path, isObserving),
+            }
+          );
+          this.watchers.set(p.project_path, watcher);
+          await watcher.start();
+
+          return createResponse(id, { success: true });
+        }
+
+        case 'stop_watcher': {
+          const p = params as StopWatcherParams;
+          if (!p?.project_path) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required param: project_path',
+            });
+          }
+
+          const watcher = this.watchers.get(p.project_path);
+          if (watcher) {
+            watcher.stop();
+            this.watchers.delete(p.project_path);
+          }
+
+          return createResponse(id, { success: true });
+        }
+
+        case 'trigger_watcher': {
+          // Force an immediate observation - fire and forget, don't await
+          const p = params as StopWatcherParams;
+          if (!p?.project_path) {
+            return createResponse(id, undefined, {
+              code: ErrorCodes.INVALID_PARAMS,
+              message: 'Missing required param: project_path',
+            });
+          }
+
+          const watcher = this.watchers.get(p.project_path);
+          if (watcher) {
+            // Don't await - let observation run in background
+            // Response is sent immediately, notifications come async
+            watcher.observeNow().catch(err => {
+              console.error('[Watcher] Background observation failed:', err);
+            });
+            return createResponse(id, { success: true });
+          }
+
+          return createResponse(id, undefined, {
+            code: ErrorCodes.SESSION_NOT_FOUND,
+            message: `No watcher for project ${p.project_path}`,
+          });
+        }
+
         default:
           return createResponse(id, undefined, {
             code: ErrorCodes.METHOD_NOT_FOUND,
@@ -225,6 +307,45 @@ class SidecarServer {
         client.write(message);
       } catch (err) {
         console.error('Failed to send to client:', err);
+        this.clients.delete(client);
+      }
+    }
+  }
+
+  private broadcastWatcherComment(projectPath: string, comment: WatcherComment): void {
+    const params: WatcherCommentParams = {
+      project_path: projectPath,
+      comment: comment.comment,
+      mood: comment.mood || 'happy',
+      timestamp: comment.timestamp.toISOString(),
+      insight: comment.insight,
+    };
+    const notification = createWatcherComment(params);
+    const message = JSON.stringify(notification) + '\n';
+
+    for (const client of this.clients) {
+      try {
+        client.write(message);
+      } catch (err) {
+        console.error('Failed to send watcher comment to client:', err);
+        this.clients.delete(client);
+      }
+    }
+  }
+
+  private broadcastWatcherObserving(projectPath: string, isObserving: boolean): void {
+    const params: WatcherObservingParams = {
+      project_path: projectPath,
+      is_observing: isObserving,
+    };
+    const notification = createWatcherObserving(params);
+    const message = JSON.stringify(notification) + '\n';
+
+    for (const client of this.clients) {
+      try {
+        client.write(message);
+      } catch (err) {
+        console.error('Failed to send watcher observing to client:', err);
         this.clients.delete(client);
       }
     }

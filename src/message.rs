@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::model::{FocusArea, HookSignal, PendingAction, TaskStatus};
+use crate::sidecar::protocol::{WatcherComment, WatcherObserving};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -268,6 +269,8 @@ pub enum Message {
     TriggerLogoShimmer,
     /// Trigger a blink animation (called when clicking the mascot)
     TriggerMascotBlink,
+    /// Trigger an immediate watcher observation (called when clicking mascot with watcher enabled)
+    TriggerWatcher,
     /// Show the startup hints bar again (triggered by pressing ESC multiple times)
     ShowStartupHints,
     /// Focus the welcome speech bubble (triggered by pressing down on welcome screen)
@@ -287,6 +290,30 @@ pub enum Message {
     // Quick Claude CLI pane
     /// Open a fresh Claude CLI session in a pane to the right (Ctrl-T)
     OpenClaudeCliPane,
+
+    // Watcher
+    /// Start the watcher for the current project
+    StartWatcher,
+    /// Stop the watcher for the current project
+    StopWatcher,
+    /// Watcher comment received from sidecar
+    WatcherCommentReceived(WatcherComment),
+    /// Watcher observation status changed (Claude SDK started/stopped running)
+    WatcherObservingChanged(WatcherObserving),
+    /// Dismiss the current watcher comment
+    DismissWatcherComment,
+    /// Open the watcher insight modal (Ctrl+I when comment is visible)
+    OpenWatcherInsightModal,
+    /// Close the watcher insight modal
+    CloseWatcherInsightModal,
+    /// Create a task from the watcher insight (p key in modal)
+    CreateTaskFromWatcherInsight,
+    /// Start a task immediately from the watcher insight (Ctrl+S in modal)
+    StartTaskFromWatcherInsight,
+    /// Scroll watcher insight modal up
+    ScrollWatcherInsightUp,
+    /// Scroll watcher insight modal down
+    ScrollWatcherInsightDown,
 
     // Configuration modal
     /// Open the configuration modal

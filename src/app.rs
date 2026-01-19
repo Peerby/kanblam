@@ -3479,6 +3479,12 @@ impl App {
                 // Trigger a random eye animation when clicking the mascot
                 self.model.ui_state.eye_animation = EyeAnimation::random();
                 self.model.ui_state.eye_animation_ticks_remaining = 2;
+                // Also trigger watcher observation if enabled
+                if let Some(project) = self.model.active_project() {
+                    if project.watcher_enabled {
+                        commands.push(Message::TriggerWatcher);
+                    }
+                }
             }
 
             Message::ShowStartupHints => {
@@ -5927,6 +5933,100 @@ impl App {
                     }
                 }
 
+                // Auto-scroll long watcher comments horizontally (like title scrolling)
+                // No auto-decay - requires user dismissal
+                let modal_open = self.model.ui_state.show_watcher_insight_modal;
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(ref mut comment) = project.watcher_comment {
+                        if !modal_open {
+                            // Auto-scroll long comments horizontally
+                            // Wait ~1 second before starting, then scroll smoothly in a cycle
+                            use unicode_width::UnicodeWidthStr;
+                            const SCROLL_DELAY_TICKS: usize = 10;
+
+                            // Use display width (not char count) - emojis count as 2 columns
+                            let comment_display_width = comment.comment.width();
+                            let separator_width = 3; // " * " separator
+
+                            // Estimate visible width - the actual rendering adapts to terminal width,
+                            // but we use a reasonable estimate here (typical balloon is ~35 chars content)
+                            let visible_width = 35;
+
+                            // Only scroll if comment doesn't fit in the balloon
+                            if comment_display_width > visible_width {
+                                if comment.scroll_delay < SCROLL_DELAY_TICKS {
+                                    // Wait before starting to scroll (only once at the start)
+                                    comment.scroll_delay += 1;
+                                } else {
+                                    // Increment scroll - rendering uses modulo so it cycles smoothly
+                                    // Cycle length = comment display width + separator width
+                                    let cycle_length = comment_display_width + separator_width;
+                                    comment.scroll_offset = (comment.scroll_offset + 1) % cycle_length;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Initialize watcher for active project if needed
+                // Check every ~1 second (10 ticks) to avoid constant checks
+                if self.model.ui_state.animation_frame % 10 == 0 {
+                    let mascot_enabled = self.model.global_settings.mascot_advice_enabled;
+                    if let Some(project) = self.model.active_project_mut() {
+                        // Check if we need to initialize the watcher for this project
+                        if !project.watcher_intro_shown && project.watcher_comment.is_none() {
+                            match mascot_enabled {
+                                None => {
+                                    // First time - wait 1 minute before showing intro
+                                    // Initialize startup time if not set
+                                    if project.watcher_startup_time.is_none() {
+                                        project.watcher_startup_time = Some(std::time::Instant::now());
+                                    }
+                                    // Check if 1 minute (60 seconds) has passed
+                                    let elapsed = project.watcher_startup_time
+                                        .map(|t| t.elapsed().as_secs())
+                                        .unwrap_or(0);
+                                    if elapsed >= 60 {
+                                        // Show intro message after 1 minute
+                                        project.watcher_intro_shown = true;
+                                        project.watcher_enabled = true;
+                                        project.watcher_comment = Some(crate::model::WatcherCommentDisplay::intro());
+                                        project.watcher_awaiting_dismissal = true;
+                                    }
+                                }
+                                Some(true) => {
+                                    // Mascot advice is enabled - start watcher if not already
+                                    project.watcher_intro_shown = true;
+                                    if !project.watcher_enabled {
+                                        project.watcher_enabled = true;
+                                        // Will start watcher below
+                                    }
+                                }
+                                Some(false) => {
+                                    // Mascot advice is disabled - do nothing
+                                    project.watcher_intro_shown = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Start watcher for newly enabled projects (separate borrow scope)
+                    let should_start = self.model.active_project()
+                        .map(|p| p.watcher_enabled && !p.watcher_observing && p.watcher_comment.is_none() && !p.watcher_awaiting_dismissal)
+                        .unwrap_or(false);
+                    if should_start {
+                        // Check if enough time has passed since last interaction (15 min = 900 sec)
+                        let should_trigger = self.model.active_project()
+                            .and_then(|p| p.watcher_last_interaction)
+                            .map(|t| t.elapsed().as_secs() >= 900)
+                            .unwrap_or(true); // No interaction yet = trigger immediately after intro
+
+                        if should_trigger {
+                            commands.push(Message::TriggerWatcher);
+                        }
+                    }
+                }
+
                 // Animate scroll for long task titles (every tick = ~100ms)
                 // Wait ~1 second (10 ticks) before starting to scroll so user can read the first word
                 const SCROLL_DELAY_TICKS: usize = 10;
@@ -6000,6 +6100,7 @@ impl App {
                     .map(|p| p.commands.clone())
                     .unwrap_or_default();
                 let temp_editor = self.model.global_settings.default_editor;
+                let temp_mascot_advice = self.model.global_settings.mascot_advice_enabled;
 
                 self.model.ui_state.config_modal = Some(ConfigModalState {
                     selected_field: ConfigField::default(),
@@ -6007,6 +6108,7 @@ impl App {
                     edit_buffer: String::new(),
                     temp_commands,
                     temp_editor,
+                    temp_mascot_advice,
                 });
             }
 
@@ -6040,6 +6142,9 @@ impl App {
                             // Enter edit mode
                             config.editing = true;
                         }
+                    } else if config.selected_field == ConfigField::MascotAdvice {
+                        // Toggle on/off (None becomes Some(true), Some(true) becomes Some(false), Some(false) becomes Some(true))
+                        config.temp_mascot_advice = Some(!config.temp_mascot_advice.unwrap_or(true));
                     } else {
                         // Command field - enter text edit mode
                         if !config.editing {
@@ -6050,7 +6155,7 @@ impl App {
                                 ConfigField::TestCommand => config.temp_commands.test.clone().unwrap_or_default(),
                                 ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
                                 ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
-                                ConfigField::DefaultEditor => String::new(),
+                                ConfigField::DefaultEditor | ConfigField::MascotAdvice => String::new(),
                             };
                             config.editing = true;
                         }
@@ -6084,6 +6189,8 @@ impl App {
                     if config.selected_field == ConfigField::DefaultEditor {
                         // Editor field - just exit edit mode (cycling is done via h/l)
                         config.editing = false;
+                    } else if config.selected_field == ConfigField::MascotAdvice {
+                        // MascotAdvice is toggled directly, no edit mode
                     } else {
                         // Command field - save buffer to temp_commands
                         let value = if config.edit_buffer.is_empty() {
@@ -6098,7 +6205,7 @@ impl App {
                             ConfigField::TestCommand => config.temp_commands.test = value,
                             ConfigField::FormatCommand => config.temp_commands.format = value,
                             ConfigField::LintCommand => config.temp_commands.lint = value,
-                            ConfigField::DefaultEditor => {}
+                            ConfigField::DefaultEditor | ConfigField::MascotAdvice => {}
                         }
 
                         config.editing = false;
@@ -6116,18 +6223,35 @@ impl App {
 
             Message::ConfigSave => {
                 // Extract values before borrowing mutably
-                let (temp_editor, temp_commands) = if let Some(ref config) = self.model.ui_state.config_modal {
-                    (config.temp_editor, config.temp_commands.clone())
+                let (temp_editor, temp_commands, temp_mascot_advice) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice)
                 } else {
-                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default())
+                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled)
                 };
+
+                // Check if mascot advice setting changed
+                let mascot_changed = self.model.global_settings.mascot_advice_enabled != temp_mascot_advice;
+                let mascot_enabled = temp_mascot_advice.unwrap_or(true);
 
                 // Save global settings
                 self.model.global_settings.default_editor = temp_editor;
+                self.model.global_settings.mascot_advice_enabled = temp_mascot_advice;
 
                 // Save project commands
                 if let Some(project) = self.model.active_project_mut() {
                     project.commands = temp_commands;
+                }
+
+                // If mascot advice setting changed, update all projects and start/stop watcher
+                if mascot_changed {
+                    for project in &mut self.model.projects {
+                        project.watcher_enabled = mascot_enabled;
+                    }
+                    if mascot_enabled {
+                        commands.push(Message::StartWatcher);
+                    } else {
+                        commands.push(Message::StopWatcher);
+                    }
                 }
 
                 self.model.ui_state.config_modal = None;
@@ -6283,6 +6407,256 @@ impl App {
             Message::QuitAndSwitchPane(_) => {
                 // Legacy - just quit
                 self.should_quit = true;
+            }
+
+            // Watcher messages
+            Message::StartWatcher => {
+                // Update global setting to remember preference
+                self.model.global_settings.mascot_advice_enabled = Some(true);
+
+                if let Some(project) = self.model.active_project_mut() {
+                    project.watcher_enabled = true;
+                    // Reset timer to trigger soon
+                    project.watcher_last_interaction = Some(std::time::Instant::now() - std::time::Duration::from_secs(900));
+                    let working_dir = project.working_dir.clone();
+
+                    // Start watcher via sidecar (15 minute interval)
+                    if let Some(ref client) = self.sidecar_client {
+                        if let Err(e) = client.start_watcher(&working_dir, Some(15)) {
+                            commands.push(Message::Error(format!("Failed to start watcher: {}", e)));
+                        } else {
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Mascot advice enabled".to_string()
+                            )));
+                        }
+                    }
+                }
+            }
+
+            Message::StopWatcher => {
+                // Update global setting to remember preference
+                self.model.global_settings.mascot_advice_enabled = Some(false);
+
+                if let Some(project) = self.model.active_project_mut() {
+                    project.watcher_enabled = false;
+                    project.watcher_comment = None;
+                    project.watcher_awaiting_dismissal = false;
+                    let working_dir = project.working_dir.clone();
+
+                    // Stop watcher via sidecar
+                    if let Some(ref client) = self.sidecar_client {
+                        let _ = client.stop_watcher(&working_dir);
+                    }
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Mascot advice disabled".to_string()
+                    )));
+                }
+            }
+
+            Message::TriggerWatcher => {
+                // Trigger an immediate watcher observation (e.g., when clicking mascot)
+                // Only if not already observing (prevent concurrent observations)
+                let mut working_dir = None;
+                if let Some(project) = self.model.active_project_mut() {
+                    if project.watcher_enabled && !project.watcher_observing {
+                        project.watcher_observing = true; // Start animation immediately
+                        working_dir = Some(project.working_dir.clone());
+                    }
+                }
+
+                // Now trigger sidecar (separate borrow scope)
+                if let Some(dir) = working_dir {
+                    if let Some(ref client) = self.sidecar_client {
+                        if let Err(e) = client.trigger_watcher(&dir) {
+                            // Revert animation on error
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.watcher_observing = false;
+                            }
+                            commands.push(Message::Error(format!("Failed to trigger watcher: {}", e)));
+                        }
+                    }
+                }
+            }
+
+            Message::WatcherCommentReceived(comment) => {
+                // Helper function to compare paths robustly (handles symlinks, trailing slashes)
+                fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+                    if a == b {
+                        return true;
+                    }
+                    if let (Ok(a_canon), Ok(b_canon)) = (a.canonicalize(), b.canonicalize()) {
+                        if a_canon == b_canon {
+                            return true;
+                        }
+                    }
+                    let a_str = a.to_string_lossy();
+                    let b_str = b.to_string_lossy();
+                    a_str.trim_end_matches('/') == b_str.trim_end_matches('/')
+                }
+
+                // Find the project that matches this comment's path
+                for project in &mut self.model.projects {
+                    if paths_match(&project.working_dir, &comment.project_path) {
+                        project.watcher_comment = Some(crate::model::WatcherCommentDisplay::new(
+                            comment.comment.clone(),
+                            comment.mood,
+                            comment.insight.clone(),
+                        ));
+                        project.watcher_observing = false;
+                        // Wait for user to dismiss/open before generating next comment
+                        project.watcher_awaiting_dismissal = true;
+                        break;
+                    }
+                }
+            }
+
+            Message::WatcherObservingChanged(status) => {
+                // Update the observing status for the matching project
+                // Using same robust path matching as WatcherCommentReceived
+                fn paths_match_observing(a: &std::path::Path, b: &std::path::Path) -> bool {
+                    if a == b {
+                        return true;
+                    }
+                    if let (Ok(a_canon), Ok(b_canon)) = (a.canonicalize(), b.canonicalize()) {
+                        if a_canon == b_canon {
+                            return true;
+                        }
+                    }
+                    let a_str = a.to_string_lossy();
+                    let b_str = b.to_string_lossy();
+                    let a_trimmed = a_str.trim_end_matches('/');
+                    let b_trimmed = b_str.trim_end_matches('/');
+                    a_trimmed == b_trimmed
+                }
+                for project in &mut self.model.projects {
+                    if paths_match_observing(&project.working_dir, &status.project_path) {
+                        project.watcher_observing = status.is_observing;
+                        break;
+                    }
+                }
+            }
+
+            Message::DismissWatcherComment => {
+                // Check if this was the intro message being dismissed
+                let was_intro = self.model.active_project()
+                    .and_then(|p| p.watcher_comment.as_ref())
+                    .map(|c| c.is_intro)
+                    .unwrap_or(false);
+
+                if let Some(project) = self.model.active_project_mut() {
+                    project.watcher_comment = None;
+                    // Mark interaction to restart 15min timer
+                    project.watcher_awaiting_dismissal = false;
+                    project.watcher_last_interaction = Some(std::time::Instant::now());
+                }
+
+                // If intro was dismissed, enable mascot advice
+                if was_intro && self.model.global_settings.mascot_advice_enabled.is_none() {
+                    self.model.global_settings.mascot_advice_enabled = Some(true);
+                }
+
+                // Also close the insight modal if open
+                self.model.ui_state.show_watcher_insight_modal = false;
+            }
+
+            Message::OpenWatcherInsightModal => {
+                // Only open if we have a watcher comment
+                if self.model.active_project().and_then(|p| p.watcher_comment.as_ref()).is_some() {
+                    self.model.ui_state.show_watcher_insight_modal = true;
+                    self.model.ui_state.watcher_insight_scroll_offset = 0;
+                    // Mark interaction to restart 15min timer
+                    if let Some(project) = self.model.active_project_mut() {
+                        project.watcher_awaiting_dismissal = false;
+                        project.watcher_last_interaction = Some(std::time::Instant::now());
+                    }
+                }
+            }
+
+            Message::CloseWatcherInsightModal => {
+                self.model.ui_state.show_watcher_insight_modal = false;
+                // Also dismiss the watcher comment when modal is closed
+                if let Some(project) = self.model.active_project_mut() {
+                    project.watcher_comment = None;
+                    // Timer already restarted when modal was opened
+                }
+            }
+
+            Message::ScrollWatcherInsightUp => {
+                if self.model.ui_state.watcher_insight_scroll_offset > 0 {
+                    self.model.ui_state.watcher_insight_scroll_offset -= 1;
+                }
+            }
+
+            Message::ScrollWatcherInsightDown => {
+                // Just increment - the UI will clamp it
+                self.model.ui_state.watcher_insight_scroll_offset += 1;
+            }
+
+            Message::CreateTaskFromWatcherInsight => {
+                // Get the insight data and create a task
+                if let Some(insight) = self.model.active_project()
+                    .and_then(|p| p.watcher_comment.as_ref())
+                    .and_then(|c| c.insight.clone())
+                {
+                    // Create the task using the insight
+                    let task_title = insight.task.clone();
+
+                    // Close modal and dismiss comment
+                    self.model.ui_state.show_watcher_insight_modal = false;
+                    if let Some(project) = self.model.active_project_mut() {
+                        project.watcher_comment = None;
+                    }
+
+                    // Create a new task with the insight task instructions
+                    commands.push(Message::CreateTask(task_title));
+                }
+            }
+
+            Message::StartTaskFromWatcherInsight => {
+                // Get the insight data and start a task immediately
+                let insight_and_git_info = self.model.active_project()
+                    .and_then(|p| {
+                        p.watcher_comment.as_ref()
+                            .and_then(|c| c.insight.clone())
+                            .map(|i| (i, p.is_git_repo()))
+                    });
+
+                if let Some((insight, is_git_repo)) = insight_and_git_info {
+                    // Create the task using the insight
+                    let task_title = insight.task.clone();
+
+                    // Close modal and dismiss comment
+                    self.model.ui_state.show_watcher_insight_modal = false;
+
+                    // Create task inline and get its ID
+                    let task_id;
+                    let title_len = task_title.len();
+                    if let Some(project) = self.model.active_project_mut() {
+                        project.watcher_comment = None;
+                        let task = Task::new(task_title);
+                        task_id = task.id;
+                        project.tasks.insert(0, task);
+                    } else {
+                        return commands;
+                    }
+
+                    // Focus on the kanban board and select the new task
+                    self.model.ui_state.focus = FocusArea::KanbanBoard;
+                    self.model.ui_state.selected_column = TaskStatus::Planned;
+                    self.model.ui_state.selected_task_idx = Some(0);
+
+                    // Request title summarization if title is long
+                    if title_len > 40 {
+                        commands.push(Message::RequestTitleSummary { task_id });
+                    }
+
+                    // Start the task
+                    if is_git_repo {
+                        commands.push(Message::StartTaskWithWorktree(task_id));
+                    } else {
+                        commands.push(Message::StartTask(task_id));
+                    }
+                }
             }
 
             Message::Error(err) => {

@@ -1160,6 +1160,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tmux_interface",
  "tokio",
+ "unicode-width 0.1.14",
  "uuid",
  "vt100",
 ]

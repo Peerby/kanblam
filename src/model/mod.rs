@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::sidecar::protocol::{WatcherMood, WatcherInsight};
 use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
 use edtui::{
@@ -72,12 +73,16 @@ pub struct GlobalSettings {
     /// Preferred editor for external editing (Ctrl-G in input mode)
     #[serde(default)]
     pub default_editor: Editor,
+    /// Mascot advice enabled (None = never set, show intro; Some(true/false) = user preference)
+    #[serde(default)]
+    pub mascot_advice_enabled: Option<bool>,
 }
 
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             default_editor: Editor::Vim,
+            mascot_advice_enabled: None, // Will show intro message on first run
         }
     }
 }
@@ -712,6 +717,29 @@ pub struct Project {
     /// Whether a git operation (fetch/pull/push) is currently in progress
     #[serde(skip)]
     pub git_operation_in_progress: Option<GitOperation>,
+
+    // Watcher state (transient - not persisted)
+    /// Whether the watcher is enabled for this project
+    #[serde(skip)]
+    pub watcher_enabled: bool,
+    /// Current watcher comment to display (None if no recent comment)
+    #[serde(skip)]
+    pub watcher_comment: Option<WatcherCommentDisplay>,
+    /// Whether the watcher is currently running an observation (Claude SDK active)
+    #[serde(skip)]
+    pub watcher_observing: bool,
+    /// Whether we're awaiting user to dismiss/open the current comment before generating next
+    #[serde(skip)]
+    pub watcher_awaiting_dismissal: bool,
+    /// Timestamp when user last interacted (dismissed/opened) - resets the 15min timer
+    #[serde(skip)]
+    pub watcher_last_interaction: Option<std::time::Instant>,
+    /// Whether the intro message has been shown for this session
+    #[serde(skip)]
+    pub watcher_intro_shown: bool,
+    /// Startup time for this session (used to delay intro by 1 minute)
+    #[serde(skip)]
+    pub watcher_startup_time: Option<std::time::Instant>,
 }
 
 /// Custom commands for a project. All fields are optional - when None,
@@ -829,6 +857,53 @@ pub enum MainWorktreeOperation {
     Applying,
 }
 
+/// A watcher comment displayed next to the mascot
+#[derive(Debug, Clone)]
+pub struct WatcherCommentDisplay {
+    /// The comment text (remark for display)
+    pub comment: String,
+    /// Mood/expression for the mascot
+    pub mood: WatcherMood,
+    /// When the comment was received
+    pub received_at: DateTime<Utc>,
+    /// Full insight data if available (for modal display)
+    pub insight: Option<WatcherInsight>,
+    /// Horizontal scroll offset for long comments in the balloon
+    pub scroll_offset: usize,
+    /// Delay ticks before scrolling starts (like title scroll)
+    pub scroll_delay: usize,
+    /// Whether this is the intro message (shows different hints)
+    pub is_intro: bool,
+}
+
+impl WatcherCommentDisplay {
+    /// Create a new watcher comment display
+    pub fn new(comment: String, mood: WatcherMood, insight: Option<WatcherInsight>) -> Self {
+        Self {
+            comment,
+            mood,
+            received_at: Utc::now(),
+            insight,
+            scroll_offset: 0,
+            scroll_delay: 0,
+            is_intro: false,
+        }
+    }
+
+    /// Create an intro message for first-time users
+    pub fn intro() -> Self {
+        Self {
+            comment: "I'll try to give helpful advice every now and then, using up your precious Claude tokens. Turn me off with Ctrl-W or in Preferences.".to_string(),
+            mood: WatcherMood::Happy,
+            received_at: Utc::now(),
+            insight: None,
+            scroll_offset: 0,
+            scroll_delay: 0,
+            is_intro: true,
+        }
+    }
+}
+
 /// Git remote operations (fetch/pull/push)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitOperation {
@@ -870,6 +945,13 @@ impl Project {
             remote_behind: 0,
             has_remote: false,
             git_operation_in_progress: None,
+            watcher_enabled: false,
+            watcher_comment: None,
+            watcher_observing: false,
+            watcher_awaiting_dismissal: false,
+            watcher_last_interaction: None,
+            watcher_intro_shown: false,
+            watcher_startup_time: None,
         }
     }
 
@@ -1488,6 +1570,12 @@ pub struct UiState {
     // Signal replay state
     /// True while replaying signals on startup (suppresses audio notifications)
     pub replaying_signals: bool,
+
+    // Watcher insight modal
+    /// If true, show the watcher insight modal (Ctrl+I to open)
+    pub show_watcher_insight_modal: bool,
+    /// Scroll offset for the insight modal content
+    pub watcher_insight_scroll_offset: usize,
 }
 
 /// State for the interactive Claude terminal modal
@@ -1508,6 +1596,7 @@ pub struct InteractiveModal {
 pub enum ConfigField {
     #[default]
     DefaultEditor,
+    MascotAdvice,
     CheckCommand,
     RunCommand,
     TestCommand,
@@ -1520,6 +1609,7 @@ impl ConfigField {
     pub fn all() -> &'static [ConfigField] {
         &[
             ConfigField::DefaultEditor,
+            ConfigField::MascotAdvice,
             ConfigField::CheckCommand,
             ConfigField::RunCommand,
             ConfigField::TestCommand,
@@ -1591,6 +1681,7 @@ impl ConfigField {
     pub fn label(&self) -> &'static str {
         match self {
             ConfigField::DefaultEditor => "Default Editor",
+            ConfigField::MascotAdvice => "Mascot Advice",
             ConfigField::CheckCommand => "Check Command",
             ConfigField::RunCommand => "Run Command",
             ConfigField::TestCommand => "Test Command",
@@ -1603,6 +1694,7 @@ impl ConfigField {
     pub fn hint(&self) -> &'static str {
         match self {
             ConfigField::DefaultEditor => "External editor for Ctrl-G (global setting)",
+            ConfigField::MascotAdvice => "Toggle with Ctrl-W (uses Claude tokens)",
             ConfigField::CheckCommand => "e.g. cargo check, npm run build, tsc --noEmit",
             ConfigField::RunCommand => "e.g. cargo run, npm start, python main.py",
             ConfigField::TestCommand => "e.g. cargo test, npm test, pytest",
@@ -1613,7 +1705,7 @@ impl ConfigField {
 
     /// Whether this field is a global setting (vs project-specific)
     pub fn is_global(&self) -> bool {
-        matches!(self, ConfigField::DefaultEditor)
+        matches!(self, ConfigField::DefaultEditor | ConfigField::MascotAdvice)
     }
 
     /// Get the next field (wrapping)
@@ -1644,6 +1736,8 @@ pub struct ConfigModalState {
     pub temp_commands: ProjectCommands,
     /// Temporary global settings (edited before save)
     pub temp_editor: Editor,
+    /// Temporary mascot advice setting (None = show intro, Some(true/false) = enabled/disabled)
+    pub temp_mascot_advice: Option<bool>,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -1784,6 +1878,9 @@ impl Default for UiState {
             welcome_bubble_focused: false,
             // Signal replay: starts false, set to true during startup signal replay
             replaying_signals: false,
+            // Watcher insight modal
+            show_watcher_insight_modal: false,
+            watcher_insight_scroll_offset: 0,
         }
     }
 }

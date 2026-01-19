@@ -209,6 +209,52 @@ impl SidecarClient {
         client.summarize_title(task_id, &title)
     }
 
+    /// Start the watcher for a project
+    pub fn start_watcher(&self, project_path: &std::path::PathBuf, interval_minutes: Option<u32>) -> Result<()> {
+        let params = StartWatcherParams {
+            project_path: project_path.to_string_lossy().to_string(),
+            interval_minutes,
+        };
+
+        let response = self.send_request("start_watcher", Some(serde_json::to_value(params)?))?;
+
+        if let Some(error) = response.error {
+            return Err(anyhow!("Sidecar error: {} (code {})", error.message, error.code));
+        }
+
+        Ok(())
+    }
+
+    /// Stop the watcher for a project
+    pub fn stop_watcher(&self, project_path: &std::path::PathBuf) -> Result<()> {
+        let params = StopWatcherParams {
+            project_path: project_path.to_string_lossy().to_string(),
+        };
+
+        let response = self.send_request("stop_watcher", Some(serde_json::to_value(params)?))?;
+
+        if let Some(error) = response.error {
+            return Err(anyhow!("Sidecar error: {} (code {})", error.message, error.code));
+        }
+
+        Ok(())
+    }
+
+    /// Trigger an immediate watcher observation (for testing)
+    pub fn trigger_watcher(&self, project_path: &std::path::PathBuf) -> Result<()> {
+        let params = StopWatcherParams {
+            project_path: project_path.to_string_lossy().to_string(),
+        };
+
+        let response = self.send_request("trigger_watcher", Some(serde_json::to_value(params)?))?;
+
+        if let Some(error) = response.error {
+            return Err(anyhow!("Sidecar error: {} (code {})", error.message, error.code));
+        }
+
+        Ok(())
+    }
+
     /// Send a request and wait for response
     fn send_request(
         &self,
@@ -258,9 +304,20 @@ impl SidecarClient {
     }
 }
 
+/// Types of notifications from the sidecar
+#[derive(Debug)]
+pub enum SidecarNotification {
+    /// Session event (started, stopped, working, etc.)
+    SessionEvent(SidecarEvent),
+    /// Watcher comment from the background observer
+    WatcherComment(WatcherComment),
+    /// Watcher observation status (when Claude SDK starts/stops running)
+    WatcherObserving(WatcherObserving),
+}
+
 /// Event receiver for async notifications from sidecar
 pub struct SidecarEventReceiver {
-    stream: UnixStream,
+    reader: BufReader<UnixStream>,
 }
 
 impl SidecarEventReceiver {
@@ -270,29 +327,82 @@ impl SidecarEventReceiver {
         let stream = UnixStream::connect(&path)
             .with_context(|| format!("Failed to connect to sidecar at {:?}", path))?;
 
-        Ok(Self { stream })
+        Ok(Self {
+            reader: BufReader::new(stream),
+        })
     }
 
-    /// Read the next event (blocking)
-    pub fn recv(&mut self) -> Result<SidecarEvent> {
-        let mut reader = BufReader::new(&self.stream);
+    /// Read the next notification (blocking) - can be session event or watcher comment
+    pub fn recv_notification(&mut self) -> Result<SidecarNotification> {
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        self.reader.read_line(&mut line)?;
 
         let notification: JsonRpcNotification = serde_json::from_str(&line)?;
 
-        if notification.method != "session_event" {
-            return Err(anyhow!("Unexpected notification method: {}", notification.method));
+        match notification.method.as_str() {
+            "session_event" => {
+                let params: SessionEventParams = serde_json::from_value(
+                    notification.params.ok_or_else(|| anyhow!("No params in notification"))?,
+                )?;
+                let event = params.try_into().map_err(|e| anyhow!("Invalid task_id: {}", e))?;
+                Ok(SidecarNotification::SessionEvent(event))
+            }
+            "watcher_comment" => {
+                let params: WatcherCommentParams = serde_json::from_value(
+                    notification.params.ok_or_else(|| anyhow!("No params in notification"))?,
+                )?;
+                let comment = params.try_into().map_err(|e| anyhow!("Invalid watcher comment: {}", e))?;
+                Ok(SidecarNotification::WatcherComment(comment))
+            }
+            "watcher_observing" => {
+                let params: WatcherObservingParams = serde_json::from_value(
+                    notification.params.ok_or_else(|| anyhow!("No params in notification"))?,
+                )?;
+                Ok(SidecarNotification::WatcherObserving(params.into()))
+            }
+            _ => Err(anyhow!("Unexpected notification method: {}", notification.method)),
         }
-
-        let params: SessionEventParams = serde_json::from_value(
-            notification.params.ok_or_else(|| anyhow!("No params in notification"))?,
-        )?;
-
-        params.try_into().map_err(|e| anyhow!("Invalid task_id: {}", e))
     }
 
-    /// Try to read an event with timeout
+    /// Read the next event (blocking) - for backwards compatibility, ignores watcher notifications
+    pub fn recv(&mut self) -> Result<SidecarEvent> {
+        loop {
+            match self.recv_notification()? {
+                SidecarNotification::SessionEvent(event) => return Ok(event),
+                SidecarNotification::WatcherComment(_) => continue, // Skip watcher comments
+                SidecarNotification::WatcherObserving(_) => continue, // Skip observing status
+            }
+        }
+    }
+
+    /// Try to read a notification with timeout
+    pub fn try_recv_notification(&mut self, timeout: Duration) -> Result<Option<SidecarNotification>> {
+        // Use minimum 1ms timeout to avoid issues with zero timeout
+        let actual_timeout = if timeout.is_zero() {
+            Duration::from_millis(1)
+        } else {
+            timeout
+        };
+        self.reader.get_ref().set_read_timeout(Some(actual_timeout))?;
+
+        match self.recv_notification() {
+            Ok(notif) => Ok(Some(notif)),
+            Err(e) => {
+                let err_str = e.to_string().to_lowercase();
+                // Check if it was a timeout or would-block error
+                if err_str.contains("timed out")
+                    || err_str.contains("would block")
+                    || err_str.contains("resource temporarily unavailable")
+                {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Try to read an event with timeout - for backwards compatibility
     pub fn try_recv(&mut self, timeout: Duration) -> Result<Option<SidecarEvent>> {
         // Use minimum 1ms timeout to avoid issues with zero timeout
         let actual_timeout = if timeout.is_zero() {
@@ -300,7 +410,7 @@ impl SidecarEventReceiver {
         } else {
             timeout
         };
-        self.stream.set_read_timeout(Some(actual_timeout))?;
+        self.reader.get_ref().set_read_timeout(Some(actual_timeout))?;
 
         match self.recv() {
             Ok(event) => Ok(Some(event)),

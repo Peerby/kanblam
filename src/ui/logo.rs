@@ -39,11 +39,38 @@ pub enum EyeAnimation {
     Sleepy,
     /// KB - branded eyes (K B)
     KB,
+    /// Reading - eyes looking around (animated: ◐ ◑ → ◑ ◐ → ◒ ◒ → ◓ ◓)
+    Reading,
 }
 
 /// Animated star eye frames for celebratory animations
 /// Cycles through: ✦ → ✧ → ★ → ✧ → ✦ → · (sparkle effect)
 pub const STAR_EYE_FRAMES: [&str; 6] = ["✦", "✧", "★", "✧", "✦", "·"];
+
+/// Number of frames in the reading/thinking animation cycle
+pub const READING_ANIMATION_FRAMES: usize = 24;
+
+/// Reading eye animation colors - smooth pulse from dim to bright and back
+/// At ~100ms per frame, full cycle takes ~2.4 seconds
+/// Uses cosine interpolation for smooth breathing effect
+fn reading_eye_color(animation_frame: usize) -> Color {
+    let frame = animation_frame % READING_ANIMATION_FRAMES;
+
+    // Cosine interpolation for smooth in-out: 0.0 at dim, 1.0 at bright
+    // cos goes from 1 to -1 to 1, we remap to 0 to 1 to 0
+    let progress = (frame as f32 / READING_ANIMATION_FRAMES as f32) * std::f32::consts::PI * 2.0;
+    let t = (1.0 - progress.cos()) / 2.0; // 0 → 1 → 0
+
+    // Dim green (semi-transparent look) to bright green (solid)
+    let dim = (30.0, 80.0, 50.0);
+    let bright = (80.0, 200.0, 120.0);
+
+    let r = (dim.0 + (bright.0 - dim.0) * t) as u8;
+    let g = (dim.1 + (bright.1 - dim.1) * t) as u8;
+    let b = (dim.2 + (bright.2 - dim.2) * t) as u8;
+
+    Color::Rgb(r, g, b)
+}
 
 impl EyeAnimation {
     /// Get the left and right eye characters for this animation state
@@ -62,7 +89,20 @@ impl EyeAnimation {
             EyeAnimation::Dizzy => ("@", "@"),
             EyeAnimation::Sleepy => ("˘", "˘"),
             EyeAnimation::KB => ("K", "B"),
+            EyeAnimation::Reading => ("≡", "≡"), // Glowing/scanning eyes while observing
         }
+    }
+
+    /// Get animated reading eye characters - returns scanning symbol with pulsing color
+    /// Returns (left_eye, right_eye) - "≡" for glowing scanner effect
+    pub fn reading_eyes_animated(_animation_frame: usize) -> (&'static str, &'static str) {
+        ("≡", "≡")
+    }
+
+    /// Get the animated color for reading eyes based on animation frame
+    /// Returns Color that pulses from dim (semi-transparent look) to bright (solid)
+    pub fn reading_eyes_color(animation_frame: usize) -> Color {
+        reading_eye_color(animation_frame)
     }
 
     /// Get animated star eye characters based on animation frame
@@ -106,7 +146,8 @@ impl EyeAnimation {
 }
 
 /// The full ASCII art logo width (mascot + KANBLAM text)
-pub const FULL_LOGO_WIDTH: u16 = 58;
+/// Mascot (10) + gap (4) + "KANBLAM" text (~30) + trailing space (1) = 45
+pub const FULL_LOGO_WIDTH: u16 = 45;
 
 /// The medium ASCII art logo width (mascot + KB text)
 /// Mascot (10) + gap (2) + "KB" text (7) + trailing space (1) = 20
@@ -225,15 +266,19 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animat
     let green = Color::Rgb(80, 200, 120);
     let text_style = Style::default().fg(green);
 
-    // Eye style - same green as KANBLAM text
-    let eye_style = Style::default().fg(green);
+    // Eye style - dynamic for Reading animation (pulsing dim to bright), static green for others
+    let eye_color = match eye_animation {
+        EyeAnimation::Reading => EyeAnimation::reading_eyes_color(animation_frame),
+        _ => green,
+    };
+    let eye_style = Style::default().fg(eye_color);
 
     // Get eye characters based on animation state
-    // StarEyes uses animated frames, others use static chars
-    let (left_eye, right_eye) = if eye_animation == EyeAnimation::StarEyes {
-        EyeAnimation::star_eyes_animated(animation_frame)
-    } else {
-        eye_animation.eye_chars()
+    // StarEyes and Reading use animated frames, others use static chars
+    let (left_eye, right_eye) = match eye_animation {
+        EyeAnimation::StarEyes => EyeAnimation::star_eyes_animated(animation_frame),
+        EyeAnimation::Reading => EyeAnimation::reading_eyes_animated(animation_frame),
+        _ => eye_animation.eye_chars(),
     };
 
     let lines = vec![
@@ -245,12 +290,12 @@ fn render_full_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_animat
             Span::styled("▄ █   ▄▀█ █▀▄▀█", text_style),
             Span::styled(" ", Style::default()),       // Shift left by 1
         ]),
-        // Face row with green eyes in the negative space
+        // Face row with eyes (color pulses for Reading animation)
         Line::from(vec![
             Span::styled("  ▓", mascot_styles[1]),      // Left edge
-            Span::styled(left_eye, eye_style),          // Left eye (animated)
+            Span::styled(left_eye, eye_style),          // Left eye (color animated for Reading)
             Span::styled("▀▀", mascot_styles[1]),       // Nose/brow
-            Span::styled(right_eye, eye_style),         // Right eye (animated)
+            Span::styled(right_eye, eye_style),         // Right eye (color animated for Reading)
             Span::styled("▓▒▒", mascot_styles[1]),      // Right edge + shadow
             Span::styled("    ", Style::default()),
             Span::styled("█▀▄ █▀█ █ ▀█ █▀▄ █   █▀█ █ ▀ █", text_style),
@@ -281,15 +326,19 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_anim
     let green = Color::Rgb(80, 200, 120);
     let text_style = Style::default().fg(green);
 
-    // Eye style - same green as KB text
-    let eye_style = Style::default().fg(green);
+    // Eye style - dynamic for Reading animation (pulsing dim to bright), static green for others
+    let eye_color = match eye_animation {
+        EyeAnimation::Reading => EyeAnimation::reading_eyes_color(animation_frame),
+        _ => green,
+    };
+    let eye_style = Style::default().fg(eye_color);
 
     // Get eye characters based on animation state
-    // StarEyes uses animated frames, others use static chars
-    let (left_eye, right_eye) = if eye_animation == EyeAnimation::StarEyes {
-        EyeAnimation::star_eyes_animated(animation_frame)
-    } else {
-        eye_animation.eye_chars()
+    // StarEyes and Reading use animated frames, others use static chars
+    let (left_eye, right_eye) = match eye_animation {
+        EyeAnimation::StarEyes => EyeAnimation::star_eyes_animated(animation_frame),
+        EyeAnimation::Reading => EyeAnimation::reading_eyes_animated(animation_frame),
+        _ => eye_animation.eye_chars(),
     };
 
     // KB wordmark (just K and B from KANBLAM)
@@ -304,12 +353,12 @@ fn render_medium_logo(frame: &mut Frame, area: Rect, shimmer_frame: u8, eye_anim
             Span::styled("▄", text_style),
             Span::styled(" ", Style::default()),
         ]),
-        // Face row with green eyes in the negative space
+        // Face row with eyes (color pulses for Reading animation)
         Line::from(vec![
             Span::styled("  ▓", mascot_styles[1]),      // Left edge
-            Span::styled(left_eye, eye_style),          // Left eye (animated)
+            Span::styled(left_eye, eye_style),          // Left eye (color animated for Reading)
             Span::styled("▀▀", mascot_styles[1]),       // Nose/brow
-            Span::styled(right_eye, eye_style),         // Right eye (animated)
+            Span::styled(right_eye, eye_style),         // Right eye (color animated for Reading)
             Span::styled("▓▒▒", mascot_styles[1]),      // Right edge + shadow
             Span::styled("  ", Style::default()),
             Span::styled("█▀▄ █▀▄", text_style),

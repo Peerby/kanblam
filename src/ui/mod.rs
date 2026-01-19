@@ -3,6 +3,7 @@ mod kanban;
 pub mod logo;
 mod output;
 mod status_bar;
+pub mod watcher;
 mod welcome;
 
 use crate::app::App;
@@ -138,6 +139,20 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_stash_modal(frame, app);
     }
 
+    // Render watcher insight modal if active
+    if app.model.ui_state.show_watcher_insight_modal {
+        if let Some(ref project) = app.model.active_project() {
+            if let Some(ref comment) = project.watcher_comment {
+                watcher::render_watcher_insight_modal(
+                    frame,
+                    frame.area(),
+                    comment,
+                    app.model.ui_state.watcher_insight_scroll_offset,
+                );
+            }
+        }
+    }
+
     // Render confirmation modal if pending confirmation has multiline message
     if let Some(ref confirmation) = app.model.ui_state.pending_confirmation {
         if confirmation.message.contains('\n') {
@@ -190,13 +205,14 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::Logo
     match logo_size {
         logo::LogoSize::Full | logo::LogoSize::Medium => {
             // Render project bar on top-left (just first line)
+            // Use exact logo width - no extra padding
             let logo_width = if is_welcome_screen {
                 // Welcome screen: just KANBLAM text, no mascot
-                logo::KANBLAM_TEXT_WIDTH + 2
+                logo::KANBLAM_TEXT_WIDTH
             } else if matches!(logo_size, logo::LogoSize::Full) {
-                logo::FULL_LOGO_WIDTH + 2
+                logo::FULL_LOGO_WIDTH
             } else {
-                logo::MEDIUM_LOGO_WIDTH + 2
+                logo::MEDIUM_LOGO_WIDTH
             };
 
             let project_bar_area = Rect {
@@ -212,7 +228,32 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::Logo
                 logo::render_kanblam_text_only(frame, area);
             } else {
                 // Normal: render full logo with mascot
-                logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, app.model.ui_state.eye_animation, app.model.ui_state.animation_frame);
+                // Use Reading animation if watcher is actively observing
+                let eye_animation = if app.model.active_project().map_or(false, |p| p.watcher_observing) {
+                    logo::EyeAnimation::Reading
+                } else {
+                    app.model.ui_state.eye_animation
+                };
+
+                // Render watcher balloon FIRST on lines 1-3, to the left of the logo
+                // (render before logo so logo is drawn on top and not corrupted)
+                if let Some(ref project) = app.model.active_project() {
+                    if let Some(ref comment) = project.watcher_comment {
+                        // Balloon area stops at logo boundary (no overlap)
+                        let balloon_width = area.width.saturating_sub(logo_width);
+                        if balloon_width > 20 && area.height >= 3 {
+                            render_watcher_balloon_inline(frame, Rect {
+                                x: area.x,
+                                y: area.y, // Start at line 1
+                                width: balloon_width,
+                                height: 3, // All 3 header lines
+                            }, comment, app.model.ui_state.animation_frame);
+                        }
+                    }
+                }
+
+                // Render logo AFTER comment so it's not overwritten
+                logo::render_logo_size(frame, area, app.model.ui_state.logo_shimmer_frame, logo_size, eye_animation, app.model.ui_state.animation_frame);
             }
         }
         _ => {
@@ -220,6 +261,175 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, logo_size: logo::Logo
             render_project_bar_with_branding(frame, area, app);
         }
     }
+}
+
+/// Render watcher balloon inline next to the mascot in header
+/// Single-line balloon with horizontal scroll, points toward mascot
+fn render_watcher_balloon_inline(
+    frame: &mut Frame,
+    area: Rect,
+    comment: &crate::model::WatcherCommentDisplay,
+    _animation_frame: usize,
+) {
+    use ratatui::widgets::Clear;
+    use unicode_width::UnicodeWidthStr;
+
+    if area.width < 20 || area.height < 3 {
+        return;
+    }
+
+    let border_style = Style::default().fg(Color::Cyan);
+    let text_style = Style::default().fg(Color::White).bg(Color::Reset);
+
+    // Calculate balloon dimensions
+    // Leave 2 chars for pointer "|>"
+    // Add 1 char inner padding on left, and 2 extra chars margin for safety
+    let pointer_width = 2u16;
+    let border_overhead = 2u16; // │ on left, nothing on right (pointer serves as right border)
+    let inner_padding = 1u16;   // Space after left │
+    let safety_margin = 2u16;   // Extra margin to ensure |> always fits
+    let content_width = area.width.saturating_sub(pointer_width + border_overhead + inner_padding + safety_margin) as usize;
+
+    // Apply horizontal scroll to comment text using DISPLAY WIDTH (not char count)
+    // Emojis and wide characters take 2 display columns but count as 1 char
+    let comment_display_width = comment.comment.width();
+    let separator = " * ";  // Use ASCII to avoid width issues
+    let separator_width = separator.width();
+
+    let padded_text = if comment_display_width <= content_width {
+        // Comment fits - no scrolling needed, pad with spaces to fill content_width
+        let padding_needed = content_width.saturating_sub(comment_display_width);
+        format!("{}{}", comment.comment, " ".repeat(padding_needed))
+    } else {
+        // Comment too long - create cyclic display with separator
+        // Build extended string: comment + separator repeated 3 times
+        let extended = format!(
+            "{}{}{}{}{}{}",
+            comment.comment, separator,
+            comment.comment, separator,
+            comment.comment, separator
+        );
+        let extended_chars: Vec<char> = extended.chars().collect();
+
+        // Calculate cycle length in display width
+        let cycle_width = comment_display_width + separator_width;
+
+        // Get scroll position (modulo cycle width for smooth cycling)
+        let scroll_display_offset = comment.scroll_offset % cycle_width;
+
+        // Extract visible portion by display width
+        let visible_text = take_by_display_width(&extended_chars, scroll_display_offset, content_width);
+        let visible_width = visible_text.width();
+
+        // Pad to exact content_width
+        let padding_needed = content_width.saturating_sub(visible_width);
+        format!("{}{}", visible_text, " ".repeat(padding_needed))
+    };
+
+    // Build hints for bottom border - both right-aligned
+    // Keys (z, esc, ^w) are brighter than descriptions for visual clarity
+    // For intro message: "esc dismiss  ^w disable"
+    // For regular: "z show more  esc dismiss" (only if insight available)
+    let key_style = Style::default().fg(Color::Gray).bg(Color::Reset); // Brighter
+    let desc_style = Style::default().fg(Color::DarkGray).bg(Color::Reset); // Dimmer
+
+    // Build hint spans: (key1, desc1, key2, desc2)
+    let (key1, desc1, key2, desc2) = if comment.is_intro {
+        ("esc", " dismiss  ", "^w", " disable")
+    } else if comment.insight.is_some() {
+        ("z", " show more  ", "esc", " dismiss")
+    } else {
+        ("", "", "esc", " dismiss")
+    };
+    let total_hint_len = key1.len() + desc1.len() + key2.len() + desc2.len();
+    let dashes_available = content_width.saturating_sub(total_hint_len);
+
+    // Right-align the balloon
+    // Total width = │ + padding + content + │ + >
+    let balloon_width = content_width + pointer_width as usize + border_overhead as usize + inner_padding as usize;
+    let x_offset = area.width.saturating_sub(balloon_width as u16);
+
+    // Calculate the full balloon area and CLEAR it first to prevent bleed-through
+    let balloon_area = Rect {
+        x: area.x + x_offset,
+        y: area.y,
+        width: balloon_width as u16,
+        height: 3,
+    };
+    frame.render_widget(Clear, balloon_area);
+
+    // Line 0: Top border (with padding space)
+    let top_line = Line::from(vec![
+        Span::styled("╭", border_style.bg(Color::Reset)),
+        Span::styled("─".repeat(content_width + inner_padding as usize), border_style.bg(Color::Reset)),
+        Span::styled("╮ ", border_style.bg(Color::Reset)),
+    ]);
+    let top_area = Rect { x: area.x + x_offset, y: area.y, width: balloon_width as u16, height: 1 };
+    frame.render_widget(Paragraph::new(top_line), top_area);
+
+    // Line 1: Content with inner padding and pointer (separate spans to ensure pointer renders)
+    let content_line = Line::from(vec![
+        Span::styled("│", border_style.bg(Color::Reset)),
+        Span::styled(" ", text_style), // Inner padding on left
+        Span::styled(&padded_text, text_style),
+        Span::styled("│", border_style.bg(Color::Reset)),
+        Span::styled(">", border_style.bg(Color::Reset)),
+    ]);
+    let content_area = Rect { x: area.x + x_offset, y: area.y + 1, width: balloon_width as u16, height: 1 };
+    frame.render_widget(Paragraph::new(content_line), content_area);
+
+    // Line 2: Bottom border with hints (both right-aligned) - account for inner padding
+    let dashes_with_padding = dashes_available + inner_padding as usize;
+    let bottom_line = Line::from(vec![
+        Span::styled("╰", border_style.bg(Color::Reset)),
+        Span::styled("─".repeat(dashes_with_padding), border_style.bg(Color::Reset)),
+        Span::styled(key1, key_style),
+        Span::styled(desc1, desc_style),
+        Span::styled(key2, key_style),
+        Span::styled(desc2, desc_style),
+        Span::styled("╯ ", border_style.bg(Color::Reset)),
+    ]);
+    let bottom_area = Rect { x: area.x + x_offset, y: area.y + 2, width: balloon_width as u16, height: 1 };
+    frame.render_widget(Paragraph::new(bottom_line), bottom_area);
+}
+
+/// Extract a substring from chars starting at a display width offset,
+/// taking characters until we reach the target display width.
+/// Uses Unicode display width for accurate terminal column counting.
+fn take_by_display_width(chars: &[char], skip_display_width: usize, take_display_width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+
+    let mut result = String::new();
+    let mut current_display_pos = 0;
+    let mut accumulated_width = 0;
+
+    for &ch in chars {
+        let char_width = ch.width().unwrap_or(1);
+
+        // Skip characters until we reach the skip_display_width
+        if current_display_pos + char_width <= skip_display_width {
+            current_display_pos += char_width;
+            continue;
+        }
+
+        // If we're partially past skip point, we need to include this char
+        if current_display_pos < skip_display_width {
+            current_display_pos += char_width;
+            // Skip this character as it's being split
+            continue;
+        }
+
+        // Check if adding this character would exceed our target width
+        if accumulated_width + char_width > take_display_width {
+            break;
+        }
+
+        result.push(ch);
+        accumulated_width += char_width;
+        current_display_pos += char_width;
+    }
+
+    result
 }
 
 /// Render the project bar at the top of the screen
@@ -1533,7 +1743,8 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
             Span::styled("Other", Style::default().add_modifier(Modifier::UNDERLINED)),
         ]),
         Line::from("  q          Quit"),
-        Line::from("  Ctrl-,     Settings (editor, commands)"),
+        Line::from("  Ctrl-W     Toggle Mascot advice (on/off)"),
+        Line::from("  Ctrl-P     Settings (editor, commands)"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(
@@ -2126,6 +2337,50 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         lines.push(Line::from(vec![
             Span::raw("    "),
             Span::styled(ConfigField::DefaultEditor.hint(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Mascot Advice field
+    let is_selected = config.selected_field == ConfigField::MascotAdvice;
+    let mascot_value = match config.temp_mascot_advice {
+        None => "On (intro pending)".to_string(),
+        Some(true) => "On".to_string(),
+        Some(false) => "Off".to_string(),
+    };
+
+    let (prefix, style, value_style) = if is_selected {
+        (
+            "► ",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            if config.temp_mascot_advice.unwrap_or(true) {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Red)
+            }
+        )
+    } else {
+        (
+            "  ",
+            Style::default(),
+            if config.temp_mascot_advice.unwrap_or(true) {
+                Style::default().fg(Color::Green).add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+            }
+        )
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled("Mascot Advice: ", style),
+        Span::styled(mascot_value, value_style),
+        Span::styled(if is_selected { "  (Enter to toggle)" } else { "" }, Style::default().fg(Color::DarkGray)),
+    ]));
+    if is_selected {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(ConfigField::MascotAdvice.hint(), Style::default().fg(Color::DarkGray)),
         ]));
     }
     lines.push(Line::from(""));

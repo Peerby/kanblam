@@ -6,5 +6,5 @@
 pub mod client;
 pub mod protocol;
 
-pub use client::{ensure_sidecar_running, SidecarClient, SidecarEventReceiver};
+pub use client::{ensure_sidecar_running, SidecarClient, SidecarEventReceiver, SidecarNotification};
 pub use protocol::{SessionEventType, SidecarEvent};

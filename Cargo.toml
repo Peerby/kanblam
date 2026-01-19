@@ -44,6 +44,7 @@ dirs = "5.0"
 anyhow = "1.0"
 thiserror = "1.0"
 exec = "0.3"
+unicode-width = "0.1"
 
 # Terminal emulation for interactive pane
 vt100 = "0.15"

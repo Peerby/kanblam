@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 /// JSON-RPC 2.0 Request
@@ -173,6 +174,107 @@ impl TryFrom<SessionEventParams> for SidecarEvent {
             tool_name: params.tool_name,
             output: params.output,
         })
+    }
+}
+
+// Watcher types
+
+/// Mood/expression for the mascot when showing watcher comments
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherMood {
+    #[default]
+    Happy,
+    Thinking,
+    Concerned,
+    Excited,
+    Sleepy,
+}
+
+/// Structured insight data from the watcher
+#[derive(Debug, Clone, Deserialize)]
+pub struct WatcherInsight {
+    /// Short one-line remark (shown in bubble)
+    pub remark: String,
+    /// Longer description (shown in modal)
+    pub description: String,
+    /// Task instructions (can be used to create a task)
+    pub task: String,
+}
+
+/// Watcher comment notification from the sidecar
+#[derive(Debug, Deserialize)]
+pub struct WatcherCommentParams {
+    pub project_path: String,
+    pub comment: String,
+    pub mood: WatcherMood,
+    pub timestamp: String,
+    /// Full insight data if available
+    #[serde(default)]
+    pub insight: Option<WatcherInsight>,
+}
+
+/// Parsed watcher comment ready for use in app logic
+#[derive(Debug, Clone)]
+pub struct WatcherComment {
+    pub project_path: PathBuf,
+    pub comment: String,
+    pub mood: WatcherMood,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Full insight data if available
+    pub insight: Option<WatcherInsight>,
+}
+
+impl TryFrom<WatcherCommentParams> for WatcherComment {
+    type Error = String;
+
+    fn try_from(params: WatcherCommentParams) -> Result<Self, Self::Error> {
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&params.timestamp)
+            .map_err(|e| format!("Invalid timestamp: {}", e))?
+            .with_timezone(&chrono::Utc);
+
+        Ok(Self {
+            project_path: PathBuf::from(params.project_path),
+            comment: params.comment,
+            mood: params.mood,
+            timestamp,
+            insight: params.insight,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct StartWatcherParams {
+    pub project_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_minutes: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StopWatcherParams {
+    pub project_path: String,
+}
+
+/// Notification params for watcher observation status (when Claude SDK starts/stops)
+#[derive(Debug, Clone, Deserialize)]
+pub struct WatcherObservingParams {
+    pub project_path: String,
+    pub is_observing: bool,
+}
+
+/// Parsed watcher observing status ready for use in app logic
+#[derive(Debug, Clone)]
+pub struct WatcherObserving {
+    pub project_path: PathBuf,
+    pub is_observing: bool,
+}
+
+impl From<WatcherObservingParams> for WatcherObserving {
+    fn from(params: WatcherObservingParams) -> Self {
+        Self {
+            project_path: PathBuf::from(params.project_path),
+            is_observing: params.is_observing,
+        }
     }
 }
 

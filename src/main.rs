@@ -178,13 +178,23 @@ where
             }
         }
 
-        // Poll sidecar events (SDK session notifications)
+        // Poll sidecar notifications (SDK session events + watcher comments)
         if let Some(ref mut receiver) = sidecar_receiver {
             // Poll multiple times to catch queued events
             for _ in 0..10 {
-                match receiver.try_recv(Duration::from_millis(1)) {
-                    Ok(Some(event)) => {
-                        let msg = Message::SidecarEvent(event);
+                match receiver.try_recv_notification(Duration::from_millis(1)) {
+                    Ok(Some(notification)) => {
+                        let msg = match notification {
+                            sidecar::SidecarNotification::SessionEvent(event) => {
+                                Message::SidecarEvent(event)
+                            }
+                            sidecar::SidecarNotification::WatcherComment(comment) => {
+                                Message::WatcherCommentReceived(comment)
+                            }
+                            sidecar::SidecarNotification::WatcherObserving(status) => {
+                                Message::WatcherObservingChanged(status)
+                            }
+                        };
                         let commands = app.update(msg);
                         // Process commands recursively to handle nested commands
                         // (e.g., CompleteAcceptTask returning ShowConfirmation)
@@ -235,6 +245,16 @@ where
                             let commands = app.update(msg);
                             process_commands_recursively(app, commands);
                         }
+                    } else if key.code == KeyCode::Char('z')
+                        && app.model.ui_state.focus != FocusArea::TaskInput
+                        && app.model.ui_state.editing_task_id.is_none()
+                        && app.model.active_project().map_or(false, |p| {
+                            p.watcher_comment.as_ref().map_or(false, |c| c.insight.is_some())
+                        })
+                    {
+                        // Global watcher insight shortcut - works when not editing text
+                        let commands = app.update(Message::OpenWatcherInsightModal);
+                        process_commands_recursively(app, commands);
                     } else if app.model.ui_state.focus == FocusArea::TaskInput {
                         // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
@@ -522,6 +542,20 @@ fn handle_mouse_event(
         // Check if click is on the logo (right side, when full logo is shown)
         if show_full_logo {
             let logo_start_x = size.width.saturating_sub(crate::ui::logo::FULL_LOGO_WIDTH);
+
+            // Check if click is on the watcher balloon (left of logo, top 3 lines)
+            // Balloon is visible when there's a watcher comment
+            if x < logo_start_x && y < 3 {
+                if let Some(project) = app.model.active_project() {
+                    if let Some(ref comment) = project.watcher_comment {
+                        // Click on balloon opens insight modal if available
+                        if comment.insight.is_some() {
+                            return Some(Message::OpenWatcherInsightModal);
+                        }
+                    }
+                }
+            }
+
             if x >= logo_start_x && y < 4 {
                 // Click on the mascot/logo - trigger blink animation
                 return Some(Message::TriggerMascotBlink);
@@ -785,6 +819,15 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::OpenExternalEditor]
         }
 
+        // Ctrl+I - pass to editor
+        KeyCode::Char('i') if ctrl => {
+            app.model.ui_state.editor_event_handler.on_key_event(
+                key,
+                &mut app.model.ui_state.editor_state,
+            );
+            vec![]
+        }
+
         // Up arrow at position 0 moves focus to Kanban board (keeps content)
         KeyCode::Up => {
             let cursor = app.model.ui_state.editor_state.cursor;
@@ -931,6 +974,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return handle_stash_modal_key(key);
     }
 
+    // Handle watcher insight modal if open
+    if app.model.ui_state.show_watcher_insight_modal {
+        return handle_watcher_insight_modal_key(key, app);
+    }
+
     // Handle task preview modal - allow action keys to work, only close on Esc/Enter/Space/?
     if app.model.ui_state.show_task_preview {
         return handle_task_preview_modal_key(key, app);
@@ -964,12 +1012,25 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Help
         KeyCode::Char('?') => vec![Message::ToggleHelp],
 
-        // Settings/Config (Ctrl-,)
-        KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
+        // Settings/Config (Ctrl-P)
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
 
         // Quick Claude CLI pane (Ctrl-T)
         KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             vec![Message::OpenClaudeCliPane]
+        }
+
+        // Watcher toggle (Ctrl-W) - friendly mascot that observes and comments
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(project) = app.model.active_project() {
+                if project.watcher_enabled {
+                    vec![Message::StopWatcher]
+                } else {
+                    vec![Message::StartWatcher]
+                }
+            } else {
+                vec![]
+            }
         }
 
         // Git remote operations
@@ -1013,7 +1074,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![Message::ShowOpenProjectDialog { slot: 0 }]
         }
 
-        // Focus switching
+        // Focus switching (Tab)
         KeyCode::Tab => {
             let next_focus = match app.model.ui_state.focus {
                 FocusArea::KanbanBoard => FocusArea::TaskInput,
@@ -1435,6 +1496,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             if app.model.projects.is_empty() && app.model.ui_state.welcome_bubble_focused {
                 return vec![Message::WelcomeBubbleUnfocus];
             }
+            // If watcher comment is showing, dismiss it first
+            if app.model.active_project().map(|p| p.watcher_comment.is_some()).unwrap_or(false) {
+                return vec![Message::DismissWatcherComment];
+            }
             // Track consecutive ESC presses - when count reaches 2, show hints
             let current_count = app.model.ui_state.consecutive_esc_count;
             if current_count >= 1 {
@@ -1605,6 +1670,48 @@ fn handle_stash_modal_key(key: event::KeyEvent) -> Vec<Message> {
         // Delete selected stash (with confirmation)
         KeyCode::Char('d') => {
             vec![Message::DropSelectedStash]
+        }
+
+        _ => vec![],
+    }
+}
+
+/// Handle key events when the watcher insight modal is open
+/// p = create task in Planned, Ctrl+S = start task immediately, Esc = close
+/// j/k/Up/Down scroll the description
+fn handle_watcher_insight_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Check if we have insight data
+    let has_insight = app.model.active_project()
+        .and_then(|p| p.watcher_comment.as_ref())
+        .and_then(|c| c.insight.as_ref())
+        .is_some();
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            vec![Message::CloseWatcherInsightModal]
+        }
+
+        // Create task in Planned (p key)
+        KeyCode::Char('p') if has_insight => {
+            vec![Message::CreateTaskFromWatcherInsight]
+        }
+
+        // Start task immediately (Ctrl+S)
+        KeyCode::Char('s') if ctrl && has_insight => {
+            vec![Message::StartTaskFromWatcherInsight]
+        }
+
+        // Scroll up
+        KeyCode::Char('k') | KeyCode::Up => {
+            vec![Message::ScrollWatcherInsightUp]
+        }
+
+        // Scroll down
+        KeyCode::Char('j') | KeyCode::Down => {
+            vec![Message::ScrollWatcherInsightDown]
         }
 
         _ => vec![],

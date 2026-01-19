@@ -91,6 +91,38 @@ export interface SessionEventParams {
   output?: string;
 }
 
+// Watcher types
+export type WatcherMood = 'happy' | 'thinking' | 'concerned' | 'excited' | 'sleepy';
+
+export interface WatcherInsight {
+  remark: string;
+  description: string;
+  task: string;
+}
+
+export interface WatcherCommentParams {
+  project_path: string;
+  comment: string;
+  mood: WatcherMood;
+  timestamp: string;
+  /** Full insight data if available */
+  insight?: WatcherInsight;
+}
+
+export interface StartWatcherParams {
+  project_path: string;
+  interval_minutes?: number;
+}
+
+export interface StopWatcherParams {
+  project_path: string;
+}
+
+export interface WatcherObservingParams {
+  project_path: string;
+  is_observing: boolean;
+}
+
 // Helper functions
 export function createRequest(
   id: number | string,
@@ -123,6 +155,14 @@ export function createNotification(
 
 export function createSessionEvent(params: SessionEventParams): JsonRpcNotification {
   return createNotification('session_event', params);
+}
+
+export function createWatcherComment(params: WatcherCommentParams): JsonRpcNotification {
+  return createNotification('watcher_comment', params);
+}
+
+export function createWatcherObserving(params: WatcherObservingParams): JsonRpcNotification {
+  return createNotification('watcher_observing', params);
 }
 
 // Error codes

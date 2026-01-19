@@ -310,7 +310,7 @@ fn render_startup_hints(frame: &mut Frame, area: Rect, remaining: usize) {
     );
 
     // Build the hint text with character-by-character styling for the light effect
-    let hint_text = " ↑↓←→ navigate   enter select   esc back   ^, settings   ? help   q quit ";
+    let hint_text = " ↑↓←→ navigate   enter select   esc back   ^p settings   ? help   q quit ";
     let hint_chars: Vec<char> = hint_text.chars().collect();
 
     // Center the hint text
