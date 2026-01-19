@@ -1617,9 +1617,9 @@ impl MergeCelebrationState {
     /// Number of trailing sparkle characters to show before evaporating
     pub const SPARKLE_TRAIL_LEN: usize = 2;
 
-    /// Sparkle characters (from light to absent)
-    /// Uses ✧ for initial sparkle, · for fading, then space for gone
-    pub const SPARKLE_CHARS: [char; 4] = ['✧', '·', '·', ' '];
+    /// Sparkle characters (from bright to fading to gone)
+    /// Uses ★ for fresh sparkle, ✦ for bright, ✧ for fading, · for dim, then space for gone
+    pub const SPARKLE_CHARS: [char; 5] = ['★', '✦', '✧', '·', ' '];
 
     /// Check if the animation is complete (all text has evaporated)
     pub fn is_complete(&self) -> bool {
