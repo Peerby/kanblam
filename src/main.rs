@@ -1,3 +1,4 @@
+// Core application modules
 mod app;
 mod hooks;
 mod image;
