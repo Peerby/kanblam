@@ -1214,6 +1214,19 @@ impl App {
                     project.release_main_worktree_lock(task_id);
                 }
 
+                // Capture celebration info BEFORE clearing applied state
+                let celebration_info = self.model.active_project().and_then(|project| {
+                    let tasks_in_review = project.tasks_by_status(TaskStatus::Review);
+                    tasks_in_review.iter().enumerate()
+                        .find(|(_, t)| t.id == task_id)
+                        .map(|(idx, t)| {
+                            let task_id_short = &t.id.to_string()[..4];
+                            let title = t.short_title.as_ref().unwrap_or(&t.title);
+                            let display_text = format!("[{}] {}", task_id_short, title);
+                            (display_text, idx)
+                        })
+                });
+
                 // If there was a stash created during apply, track it so user can restore their changes
                 let stash_to_track = self.model.active_project()
                     .and_then(|p| p.applied_stash_ref.clone())
@@ -1245,6 +1258,17 @@ impl App {
                     project.applied_task_id = None;
                     project.applied_stash_ref = None;
                     project.applied_with_conflict_resolution = false;
+                }
+
+                // Trigger celebratory animations
+                commands.push(Message::TriggerLogoShimmer);
+                if let Some((display_text, task_index)) = celebration_info {
+                    commands.push(Message::TriggerMergeCelebration {
+                        task_id,
+                        display_text,
+                        column_status: TaskStatus::Review,
+                        task_index,
+                    });
                 }
 
                 // Check if there are tracked stashes to offer popping

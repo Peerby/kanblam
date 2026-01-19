@@ -165,21 +165,21 @@ export class WatcherSession {
 
     return `You are a supportive coding buddy reviewing this project. Your focus: ${focusDescriptions[focusType]}.
 
-First, explore the codebase to understand its structure. Use Bash to run: git diff --stat HEAD~5, git log --oneline -10, and look at key files.
+Quick exploration: Run "git diff --stat HEAD~5" and "git log --oneline -5" to see recent activity, then read 1-2 key files.
 
-Then provide your insight in this EXACT XML format:
+After exploring, you MUST output your insight in this EXACT XML format (this is required):
 
 <insight>
-<remark>A short, casual one-liner about what you found (can be humorous, include emojis!) - MAX 100 chars</remark>
-<description>A supportive, detailed explanation as a teammate who wants the best for this project and the developer. 2-4 sentences.</description>
-<task>Clear task instructions that could be fed into a coding assistant to address this insight. Be specific about files and changes needed.</task>
+<remark>Short casual one-liner, can be humorous with emojis - MAX 100 chars</remark>
+<description>Supportive 2-3 sentence explanation as a helpful teammate.</description>
+<task>Specific task instructions for a coding assistant to address this.</task>
 </insight>
 
-IMPORTANT:
-- The <remark> must be ONE LINE, under 100 characters, casual and fun
-- The <description> should be encouraging and constructive
-- The <task> should be actionable and specific
-- Output ONLY the XML block, nothing else`;
+CRITICAL RULES:
+- You MUST output the <insight> XML block - this is required
+- Keep exploration brief (2-3 tool calls max) so you have turns left for the XML output
+- The remark must be under 100 characters
+- Do NOT output any text before or after the XML block`;
   }
 
   /**
