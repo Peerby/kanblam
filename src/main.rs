@@ -11,7 +11,7 @@ mod notify;
 mod sidecar;
 mod tmux;
 mod ui;
-mod worktree;
+mod worktree; // Handles git worktree isolation for parallel task execution
 
 use app::{load_state, save_state, App};
 use chrono::Utc;
