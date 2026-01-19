@@ -576,24 +576,26 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     // Check if there are local changes that need to be stashed
     // Only check for TRACKED file changes - untracked files don't need stashing
     // (git stash doesn't stash untracked files by default anyway)
+    // Also exclude .kanblam/ since we exclude it from the patch and it changes independently
     let status_check = Command::new("git")
         .current_dir(project_dir)
         .args(["status", "--porcelain"])
         .output()?;
 
-    // Filter out untracked files (??) - only stash tracked changes
+    // Filter out untracked files (??) and .kanblam/ files - only stash other tracked changes
     let status_output = String::from_utf8_lossy(&status_check.stdout);
     let has_tracked_changes = status_output
         .lines()
-        .any(|line| !line.starts_with("??"));
+        .any(|line| !line.starts_with("??") && !line.contains(".kanblam/"));
     log(&format!("has_tracked_changes={}", has_tracked_changes));
     let mut stash_ref = None;
 
     // Stash tracked changes if any (untracked files don't need stashing)
+    // Exclude .kanblam/ since it changes independently and we exclude it from patches
     if has_tracked_changes {
         let stash_output = Command::new("git")
             .current_dir(project_dir)
-            .args(["stash", "push", "-m", &format!("kanclaude: before applying task {}", task_id)])
+            .args(["stash", "push", "-m", &format!("kanclaude: before applying task {}", task_id), "--", ".", ":!.kanblam"])
             .output()?;
 
         if !stash_output.status.success() {
@@ -793,18 +795,20 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
         let patch_content = std::fs::read(&patch_path)?;
 
         // Check for unstaged changes - these would interfere with patch reversal
+        // Exclude .kanblam/ since it changes independently
         let has_unstaged = Command::new("git")
             .current_dir(project_dir)
-            .args(["diff", "--quiet"])
+            .args(["diff", "--quiet", "--", ".", ":!.kanblam"])
             .status()
             .map(|s| !s.success())
             .unwrap_or(false);
 
         // If there are unstaged changes, stash them while keeping staged (applied) changes
+        // Exclude .kanblam/ since it changes independently
         let did_stash = if has_unstaged {
             let stash_result = Command::new("git")
                 .current_dir(project_dir)
-                .args(["stash", "push", "--keep-index", "-m", "kanclaude: unapply temp stash"])
+                .args(["stash", "push", "--keep-index", "-m", "kanclaude: unapply temp stash", "--", ".", ":!.kanblam"])
                 .output()?;
             stash_result.status.success()
         } else {
