@@ -84,6 +84,7 @@ pub fn view(frame: &mut Frame, app: &mut App) {
             app.model.ui_state.animation_frame,
             app.model.ui_state.welcome_message_idx,
             app.model.ui_state.welcome_bubble_focused,
+            app.model.ui_state.is_open_project_dialog_open(),
         );
     } else {
         // Render kanban board (full width - tmux handles the split)

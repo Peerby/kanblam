@@ -67,12 +67,13 @@ pub fn render_welcome_panel(
     animation_frame: usize,
     welcome_message_idx: usize,
     bubble_focused: bool,
+    project_dialog_open: bool,
 ) {
     // Choose layout based on available space
     if area.width >= 70 && area.height >= 20 {
-        render_full_welcome(frame, area, eye_animation, animation_frame, welcome_message_idx, bubble_focused);
+        render_full_welcome(frame, area, eye_animation, animation_frame, welcome_message_idx, bubble_focused, project_dialog_open);
     } else if area.width >= 50 && area.height >= 15 {
-        render_medium_welcome(frame, area, eye_animation, animation_frame, welcome_message_idx, bubble_focused);
+        render_medium_welcome(frame, area, eye_animation, animation_frame, welcome_message_idx, bubble_focused, project_dialog_open);
     } else {
         render_compact_welcome(frame, area, eye_animation, animation_frame);
     }
@@ -86,6 +87,7 @@ fn render_full_welcome(
     animation_frame: usize,
     message_idx: usize,
     bubble_focused: bool,
+    project_dialog_open: bool,
 ) {
     // Create a block for the welcome area (replaces kanban board)
     let block = Block::default()
@@ -96,10 +98,13 @@ fn render_full_welcome(
     frame.render_widget(block, area);
 
     // Render the CTA hint at top-left, pointing up at the +project button
-    render_cta_hint(frame, inner);
+    // Hide when project dialog is open
+    if !project_dialog_open {
+        render_cta_hint(frame, inner);
+    }
 
-    // Calculate total content height: mascot(6) + spacing(2) + quickstart(10) = 18
-    let content_height = 6 + 2 + 10;
+    // Calculate total content height: mascot(6) + spacing(2) + quickstart(11) = 19
+    let content_height = 6 + 2 + 11;
     let available_height = inner.height.saturating_sub(4); // Subtract CTA height
     let top_padding = available_height.saturating_sub(content_height) / 2;
 
@@ -111,7 +116,7 @@ fn render_full_welcome(
             Constraint::Length(top_padding),  // Top padding to center content
             Constraint::Length(6),            // Mascot + speech bubble
             Constraint::Length(2),            // Spacing
-            Constraint::Length(10),           // Quick start guide (6 steps)
+            Constraint::Length(11),           // Quick start guide (7 steps)
             Constraint::Min(1),               // Bottom padding
         ])
         .split(inner);
@@ -131,6 +136,7 @@ fn render_medium_welcome(
     animation_frame: usize,
     message_idx: usize,
     bubble_focused: bool,
+    project_dialog_open: bool,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -140,7 +146,10 @@ fn render_medium_welcome(
     frame.render_widget(block, area);
 
     // Render the CTA hint at top-left
-    render_cta_hint(frame, inner);
+    // Hide when project dialog is open
+    if !project_dialog_open {
+        render_cta_hint(frame, inner);
+    }
 
     // Calculate total content height: mascot(5) + spacing(1) + quickstart(4) = 10
     let content_height = 5 + 1 + 4;
@@ -415,7 +424,7 @@ fn render_quick_start(frame: &mut Frame, area: Rect) {
         x: start_x,
         y: area.y,
         width: box_width,
-        height: 10,
+        height: 11,
     };
 
     let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
@@ -429,7 +438,9 @@ fn render_quick_start(frame: &mut Frame, area: Rect) {
         Line::from(vec![
             Span::styled("│  ", border_style),
             Span::styled("Quick Start", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Span::styled("                                 │", border_style),
+            Span::styled("                        Exit ", border_style),
+            Span::styled("[q]", key_style),
+            Span::styled(" ││", border_style),
         ]),
         Line::from(Span::styled(
             "├──────────────────────────────────────────────┤",
@@ -465,6 +476,10 @@ fn render_quick_start(frame: &mut Frame, area: Rect) {
             Span::styled("[m]", key_style),
             Span::styled("       │", border_style),
         ]),
+        Line::from(Span::styled(
+            "│   7. Rinse and repeat!                       │",
+            border_style,
+        )),
         Line::from(Span::styled(
             "└──────────────────────────────────────────────┘",
             border_style,
