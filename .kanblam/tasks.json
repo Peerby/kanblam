@@ -2,6 +2,30 @@
   "version": 1,
   "tasks": [
     {
+      "id": "04bbdb8b-d7b9-47c3-815c-d5b81f9c20a1",
+      "title": "unfocus new task input on an empty submit (enter in normal mode without any content)",
+      "description": "",
+      "short_title": null,
+      "status": "Planned",
+      "images": [],
+      "claude_session_id": null,
+      "created_at": "2026-01-19T21:05:57.845473Z",
+      "started_at": null,
+      "completed_at": null,
+      "worktree_path": null,
+      "git_branch": null,
+      "tmux_window": null,
+      "session_state": "NotStarted",
+      "session_mode": "SdkManaged",
+      "sdk_command_count": 0,
+      "cli_opened_at_command_count": 0,
+      "feedback_history": [],
+      "queued_for_session": null,
+      "accepting_started_at": null,
+      "last_activity_at": null,
+      "last_tool_name": null
+    },
+    {
       "id": "feca0efa-d1c4-4d2c-9021-c17fa5cb33aa",
       "title": "Make sure that Testing and Needs work have at least one line available on small screen, same for the other areas if things get really small, but those aren't suffering right now. The only issues happen with Testing and Needs work. They are compressed to have not a single task in view left, which breaks the ux.",
       "description": "",
@@ -180,8 +204,8 @@
       "created_at": "2026-01-18T22:59:47.715113Z",
       "started_at": "2026-01-18T22:59:47.730765Z",
       "completed_at": null,
-      "worktree_path": "/Users/daan/code/kanblam/worktrees/task-3fefafc7-c6c0-499e-b400-b2bb42336508",
-      "git_branch": "claude/3fefafc7-c6c0-499e-b400-b2bb42336508",
+      "worktree_path": null,
+      "git_branch": null,
       "tmux_window": null,
       "session_state": "Paused",
       "session_mode": "SdkManaged",
@@ -240,59 +264,6 @@
       "accepting_started_at": null,
       "last_activity_at": "2026-01-19T20:16:08.287210Z",
       "last_tool_name": "Grep"
-    },
-    {
-      "id": "8cc8887d-63c1-4270-b2e0-7d58afc1361e",
-      "title": "In src/ui/welcome.rs, update the render_quick_start function to add a 7th step that hints at the iterative workflow. After step 6 (\"Merge if all's well\"), add step 7 with text like \"7. Rinse and repeat! Watch NeedsWork\" with key hint \"[4]\" (the column number). Increase the guide_area height from 10 to 11 and update the box border widths accordingly. This teaches users that the kanban board has a feedback loop, not just a linear pipeline. - Also add Exit [q] as the last option in the key overview.",
-      "description": "",
-      "short_title": "Add iterative workflow hint...",
-      "status": "InProgress",
-      "images": [],
-      "claude_session_id": "41d989f6-909e-49d1-8284-5a4443efecfc",
-      "created_at": "2026-01-19T18:48:42.585472Z",
-      "started_at": "2026-01-19T20:27:58.575926Z",
-      "completed_at": null,
-      "worktree_path": "/Users/daan/code/kanblam/worktrees/task-8cc8887d-63c1-4270-b2e0-7d58afc1361e",
-      "git_branch": "claude/8cc8887d-63c1-4270-b2e0-7d58afc1361e",
-      "tmux_window": null,
-      "session_state": "Working",
-      "session_mode": "SdkManaged",
-      "sdk_command_count": 2,
-      "cli_opened_at_command_count": 1,
-      "feedback_history": [
-        {
-          "timestamp": "2026-01-19T20:37:27.407028Z",
-          "content": "Remove \"Watch NeedsWork [4]\" - just show the Rinse and repeat!"
-        }
-      ],
-      "queued_for_session": null,
-      "accepting_started_at": null,
-      "last_activity_at": "2026-01-19T20:37:35.754356Z",
-      "last_tool_name": "Edit"
-    },
-    {
-      "id": "a70e2f75-c2ab-4407-a307-fd9f7d24d1d7",
-      "title": "Reverse the order of the days displayed in the graph on the stats modal. Oldest day first, end with Y and T (maybe put - in front of the numbers to make it easier to grasp)",
-      "description": "",
-      "short_title": "Reverse stats graph day order",
-      "status": "Review",
-      "images": [],
-      "claude_session_id": "1ef03635-00bb-4d9a-bc59-a73e5c3d584b",
-      "created_at": "2026-01-19T20:33:41.090891Z",
-      "started_at": "2026-01-19T20:34:00.155895Z",
-      "completed_at": null,
-      "worktree_path": "/Users/daan/code/kanblam/worktrees/task-a70e2f75-c2ab-4407-a307-fd9f7d24d1d7",
-      "git_branch": "claude/a70e2f75-c2ab-4407-a307-fd9f7d24d1d7",
-      "tmux_window": null,
-      "session_state": "Paused",
-      "session_mode": "SdkManaged",
-      "sdk_command_count": 1,
-      "cli_opened_at_command_count": 0,
-      "feedback_history": [],
-      "queued_for_session": null,
-      "accepting_started_at": null,
-      "last_activity_at": "2026-01-19T20:34:50.517235Z",
-      "last_tool_name": "Bash"
     },
     {
       "id": "a46109d5-dfe4-4026-9d9a-f6879dfe51b0",
@@ -3633,39 +3604,6 @@
       "last_tool_name": "TodoWrite"
     },
     {
-      "id": "4cef5759-e72d-4eca-bc9c-14df2c02ae7e",
-      "title": "Sleep for 30 secs",
-      "description": "",
-      "short_title": null,
-      "status": "Done",
-      "images": [],
-      "claude_session_id": "74acd58b-145d-444b-a757-74332c5e3733",
-      "created_at": "2026-01-19T20:07:07.632959Z",
-      "started_at": "2026-01-19T20:07:07.650677Z",
-      "completed_at": "2026-01-19T20:17:59.253716Z",
-      "worktree_path": null,
-      "git_branch": null,
-      "tmux_window": null,
-      "session_state": "Ended",
-      "session_mode": "SdkManaged",
-      "sdk_command_count": 3,
-      "cli_opened_at_command_count": 0,
-      "feedback_history": [
-        {
-          "timestamp": "2026-01-19T20:07:48.092268Z",
-          "content": "Say goodbye!"
-        },
-        {
-          "timestamp": "2026-01-19T20:17:30.891103Z",
-          "content": "Say Ready when you are!"
-        }
-      ],
-      "queued_for_session": null,
-      "accepting_started_at": null,
-      "last_activity_at": "2026-01-19T20:17:30.891099Z",
-      "last_tool_name": "Bash"
-    },
-    {
       "id": "653e35bc-e240-446d-a4cc-846a936f74f4",
       "title": "add a command line option that forces the app to read from a different state config file (create if it doesn't exist).",
       "description": "",
@@ -3712,9 +3650,71 @@
       "accepting_started_at": null,
       "last_activity_at": "2026-01-19T20:25:09.668811Z",
       "last_tool_name": "TodoWrite"
+    },
+    {
+      "id": "8cc8887d-63c1-4270-b2e0-7d58afc1361e",
+      "title": "In src/ui/welcome.rs, update the render_quick_start function to add a 7th step that hints at the iterative workflow. After step 6 (\"Merge if all's well\"), add step 7 with text like \"7. Rinse and repeat! Watch NeedsWork\" with key hint \"[4]\" (the column number). Increase the guide_area height from 10 to 11 and update the box border widths accordingly. This teaches users that the kanban board has a feedback loop, not just a linear pipeline. - Also add Exit [q] as the last option in the key overview.",
+      "description": "",
+      "short_title": "Add iterative workflow hint...",
+      "status": "Done",
+      "images": [],
+      "claude_session_id": "41d989f6-909e-49d1-8284-5a4443efecfc",
+      "created_at": "2026-01-19T18:48:42.585472Z",
+      "started_at": "2026-01-19T20:27:58.575926Z",
+      "completed_at": "2026-01-19T20:43:21.781498Z",
+      "worktree_path": null,
+      "git_branch": null,
+      "tmux_window": null,
+      "session_state": "Ended",
+      "session_mode": "CliActivelyWorking",
+      "sdk_command_count": 3,
+      "cli_opened_at_command_count": 3,
+      "feedback_history": [
+        {
+          "timestamp": "2026-01-19T20:37:27.407028Z",
+          "content": "Remove \"Watch NeedsWork [4]\" - just show the Rinse and repeat!"
+        },
+        {
+          "timestamp": "2026-01-19T20:40:33.015997Z",
+          "content": "Move the quit hint one char to the left and don't forget to close the box beind the quit hint with a vertical bar.\nHide the [!] hint box as soon as the user open the project selection modal"
+        }
+      ],
+      "queued_for_session": null,
+      "accepting_started_at": null,
+      "last_activity_at": "2026-01-19T20:41:43.540351Z",
+      "last_tool_name": "Bash"
+    },
+    {
+      "id": "a70e2f75-c2ab-4407-a307-fd9f7d24d1d7",
+      "title": "Reverse the order of the days displayed in the graph on the stats modal. Oldest day first, end with Y and T (maybe put - in front of the numbers to make it easier to grasp)",
+      "description": "",
+      "short_title": "Reverse stats graph day order",
+      "status": "Done",
+      "images": [],
+      "claude_session_id": "1ef03635-00bb-4d9a-bc59-a73e5c3d584b",
+      "created_at": "2026-01-19T20:33:41.090891Z",
+      "started_at": "2026-01-19T20:34:00.155895Z",
+      "completed_at": "2026-01-19T20:44:57.343332Z",
+      "worktree_path": null,
+      "git_branch": null,
+      "tmux_window": null,
+      "session_state": "Ended",
+      "session_mode": "SdkManaged",
+      "sdk_command_count": 2,
+      "cli_opened_at_command_count": 0,
+      "feedback_history": [
+        {
+          "timestamp": "2026-01-19T20:38:34.811066Z",
+          "content": "Add 4 more days to the history"
+        }
+      ],
+      "queued_for_session": null,
+      "accepting_started_at": null,
+      "last_activity_at": "2026-01-19T20:39:14.575472Z",
+      "last_tool_name": "Bash"
     }
   ],
-  "applied_task_id": "a70e2f75-c2ab-4407-a307-fd9f7d24d1d7",
+  "applied_task_id": null,
   "applied_stash_ref": null,
   "commands": {
     "check": null,
@@ -3724,8 +3724,8 @@
     "lint": null
   },
   "statistics": {
-    "total_completed": 9,
-    "total_duration_seconds": 81272,
+    "total_completed": 12,
+    "total_duration_seconds": 90486,
     "completion_timestamps": [
       "2026-01-19T19:51:45.395348Z",
       "2026-01-19T20:05:09.161781Z",
@@ -3735,9 +3735,12 @@
       "2026-01-19T20:17:52.524112Z",
       "2026-01-19T20:17:59.253713Z",
       "2026-01-19T20:27:12.078187Z",
-      "2026-01-19T20:31:12.852518Z"
+      "2026-01-19T20:31:12.852518Z",
+      "2026-01-19T20:43:21.781496Z",
+      "2026-01-19T20:44:57.343330Z",
+      "2026-01-19T22:14:21.788419Z"
     ],
-    "total_lines_added": 96,
-    "total_lines_deleted": 89
+    "total_lines_added": 132,
+    "total_lines_deleted": 113
   }
 }
