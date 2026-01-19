@@ -549,8 +549,8 @@ fn handle_mouse_event(
         let kanban_rel_y = y - kanban_y;
         // Kanban board has outer border (1 char each side)
         // Inside is a 2x3 grid layout:
-        //   Row 0: Planned (left)    | Queued (right)
-        //   Row 1: InProgress (left) | NeedsInput (right)
+        //   Row 0: Planned (left)    | InProgress (right)
+        //   Row 1: Testing (left)    | NeedsInput (right)
         //   Row 2: Review (left)     | Done (right)
 
         let inner_x = x.saturating_sub(1); // Account for left border
@@ -571,10 +571,11 @@ fn handle_mouse_event(
             2
         };
 
+        // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
         let status = match (row, is_right) {
             (0, false) => TaskStatus::Planned,     // Row 0, left
-            (0, true) => TaskStatus::Queued,       // Row 0, right
-            (1, false) => TaskStatus::InProgress,  // Row 1, left
+            (0, true) => TaskStatus::InProgress,   // Row 0, right
+            (1, false) => TaskStatus::Testing,     // Row 1, left
             (1, true) => TaskStatus::NeedsInput,   // Row 1, right
             (2, false) => TaskStatus::Review,      // Row 2, left
             (_, _) => TaskStatus::Done,            // Row 2, right (catch-all)
@@ -1359,10 +1360,10 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('-') | KeyCode::Char('_') => vec![Message::MoveTaskDown],
 
         // Column switching with 1-6
-        // 2x3 grid: Row 1: Planned|Queued, Row 2: InProgress|NeedsInput, Row 3: Review|Done
+        // 2x3 grid: Row 1: Planned|InProgress, Row 2: Testing|NeedsInput, Row 3: Review|Done
         KeyCode::Char('1') => vec![Message::SelectColumn(model::TaskStatus::Planned)],
-        KeyCode::Char('2') => vec![Message::SelectColumn(model::TaskStatus::Queued)],
-        KeyCode::Char('3') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
+        KeyCode::Char('2') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
+        KeyCode::Char('3') => vec![Message::SelectColumn(model::TaskStatus::Testing)],
         KeyCode::Char('4') => vec![Message::SelectColumn(model::TaskStatus::NeedsInput)],
         KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
         KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],

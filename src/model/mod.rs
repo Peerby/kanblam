@@ -1002,9 +1002,9 @@ impl Project {
         self.tasks.iter_mut().find(|t| t.queued_for_session == Some(task_id))
     }
 
-    /// Get the next queued task (first one in queue order)
+    /// Get the next queued task (first Planned task with queued_for_session set)
     pub fn next_queued_task(&self) -> Option<&Task> {
-        self.tasks.iter().find(|t| t.status == TaskStatus::Queued)
+        self.tasks.iter().find(|t| t.status == TaskStatus::Planned && t.queued_for_session.is_some())
     }
 
     pub fn review_count(&self) -> usize {
@@ -1025,7 +1025,7 @@ impl Project {
                 .map(|pos| pos + 1)
                 .unwrap_or_else(|| {
                     // No tasks with this status yet - find appropriate position
-                    // Status order: Planned, Queued, InProgress, NeedsInput, Review, Done
+                    // Status order: Planned, InProgress, Testing, NeedsInput, Review, Done
                     // Insert before any tasks with a "later" status
                     self.tasks.iter()
                         .position(|t| t.status > new_status)
@@ -1294,8 +1294,7 @@ impl Task {
 
     /// Check if this task can be started (not already active)
     pub fn can_start(&self) -> bool {
-        matches!(self.status, TaskStatus::Planned | TaskStatus::Queued)
-            && !self.has_active_session()
+        self.status == TaskStatus::Planned && !self.has_active_session()
     }
 
     /// Check if this task can be continued (in review with a session)
@@ -1317,13 +1316,13 @@ impl Task {
 }
 
 /// Task status in the Kanban workflow
-/// Ordered by typical progression: Planned -> Queued -> InProgress -> ... -> Done
+/// Ordered by typical progression: Planned -> InProgress -> Testing -> ... -> Done
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaskStatus {
     #[default]
     Planned,
-    Queued,
     InProgress,
+    Testing,   // Task being tested before review
     NeedsInput,
     Review,
     Accepting, // Rebasing onto main before accepting
@@ -1336,8 +1335,8 @@ impl TaskStatus {
     pub fn label(&self) -> &'static str {
         match self {
             TaskStatus::Planned => "Planned",
-            TaskStatus::Queued => "Queued",
             TaskStatus::InProgress => "In Progress",
+            TaskStatus::Testing => "Testing",
             TaskStatus::NeedsInput => "Needs Input",
             TaskStatus::Review => "Review",
             TaskStatus::Accepting => "Accepting",
@@ -1351,8 +1350,8 @@ impl TaskStatus {
     pub fn all() -> [TaskStatus; 6] {
         [
             TaskStatus::Planned,
-            TaskStatus::Queued,
             TaskStatus::InProgress,
+            TaskStatus::Testing,
             TaskStatus::NeedsInput,
             TaskStatus::Review,
             TaskStatus::Done,
@@ -1364,8 +1363,8 @@ impl TaskStatus {
     pub fn index(&self) -> usize {
         match self {
             TaskStatus::Planned => 0,
-            TaskStatus::Queued => 1,
-            TaskStatus::InProgress => 2,
+            TaskStatus::InProgress => 1,
+            TaskStatus::Testing => 2,
             TaskStatus::NeedsInput => 3,
             TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => 4,
             TaskStatus::Done => 5,
@@ -1402,7 +1401,7 @@ pub struct UiState {
     /// Animation frame counter for spinners
     pub animation_frame: usize,
     /// Last scroll position (visual index) for each column, preserved when leaving
-    /// Order: Planned, Queued, InProgress, NeedsInput, Review, Done
+    /// Order: Planned, InProgress, Testing, NeedsInput, Review, Done
     pub column_scroll_offsets: [usize; 6],
 
     // Queue dialog state

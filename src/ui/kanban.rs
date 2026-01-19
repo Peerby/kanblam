@@ -58,12 +58,12 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
         .split(rows[2]);
 
     // Render each column in 2x3 layout:
-    // Row 1: Planned | Queued
-    // Row 2: InProgress | NeedsInput
+    // Row 1: Planned | InProgress
+    // Row 2: Testing | NeedsInput
     // Row 3: Review | Done
     render_column(frame, row1_cols[0], app, TaskStatus::Planned);
-    render_column(frame, row1_cols[1], app, TaskStatus::Queued);
-    render_column(frame, row2_cols[0], app, TaskStatus::InProgress);
+    render_column(frame, row1_cols[1], app, TaskStatus::InProgress);
+    render_column(frame, row2_cols[0], app, TaskStatus::Testing);
     render_column(frame, row2_cols[1], app, TaskStatus::NeedsInput);
     render_column(frame, row3_cols[0], app, TaskStatus::Review);
     render_column(frame, row3_cols[1], app, TaskStatus::Done);
@@ -78,8 +78,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
     // Note: Accepting/Updating tasks appear in the Review column, so they're styled like Review
     let (num, title, color, contrast_fg) = match status {
         TaskStatus::Planned => ("1", "Planned", Color::Blue, Color::White),
-        TaskStatus::Queued => ("2", "Queued", Color::Cyan, Color::Black),
-        TaskStatus::InProgress => ("3", "In Progress", Color::Yellow, Color::Black),
+        TaskStatus::InProgress => ("2", "In Progress", Color::Yellow, Color::Black),
+        TaskStatus::Testing => ("3", "Testing", Color::Cyan, Color::Black),
         TaskStatus::NeedsInput => ("4", "Needs Input", Color::Red, Color::White),
         TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => ("5", "Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
@@ -231,17 +231,19 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let rebase_frames = ['↑', '⇧', '⇈', '⇪', '⇈', '⇧', '↑']; // Upward arrows for rebase
                     // Saved patterns: ['░', '▒', '▓', '█', '▓', '▒'] (fill), ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'] (rotating dot)
                     let apply_frames = ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈']; // Rotating dot for applying
-                    // Building blocks animation - foundation being laid
+                    // Building blocks animation - foundation being laid (worktree preparation)
                     let building_frames = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂'];
                     let prefix = match task.status {
-                        TaskStatus::Queued if matches!(
+                        TaskStatus::InProgress if matches!(
                             task.session_state,
                             crate::model::ClaudeSessionState::Creating | crate::model::ClaudeSessionState::Starting
                         ) => {
+                            // Building animation while worktree is being prepared
                             let frame = app.model.ui_state.animation_frame % building_frames.len();
                             format!("{} ", building_frames[frame])
                         }
                         TaskStatus::InProgress => {
+                            // Spinner when Claude is actively working
                             // Slow down spinner: change every 2 ticks (200ms per frame)
                             let frame = (app.model.ui_state.animation_frame / 2) % spinner_frames.len();
                             format!("{} ", spinner_frames[frame])
@@ -549,14 +551,6 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("d", key_style),
             Span::styled("el", desc_style),
         ],
-        TaskStatus::Queued => vec![
-            Span::styled("s", key_style),
-            Span::styled("tart ", desc_style),
-            Span::styled("e", key_style),
-            Span::styled("dit ", desc_style),
-            Span::styled("d", key_style),
-            Span::styled("el", desc_style),
-        ],
         TaskStatus::InProgress => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
@@ -564,6 +558,9 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("eview ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-reset", desc_style),
+        ],
+        TaskStatus::Testing => vec![
+            // Empty for now - no tasks will be in Testing state yet
         ],
         TaskStatus::NeedsInput => vec![
             Span::styled("o", key_style),
@@ -746,18 +743,9 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("e", key_style),
             Span::styled("dit ", desc_style),
             Span::styled("d", key_style),
-            Span::styled("el ", desc_style),
-            Span::styled("q", key_style),
-            Span::styled("ue", desc_style),
-        ],
-        TaskStatus::Queued => vec![
-            Span::styled("s", key_style),
-            Span::styled("tart ", desc_style),
-            Span::styled("e", key_style),
-            Span::styled("dit ", desc_style),
-            Span::styled("d", key_style),
             Span::styled("el", desc_style),
         ],
+        TaskStatus::Testing => vec![],
         TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
@@ -810,14 +798,9 @@ fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::Planned => vec![
             Span::styled("s", key_style), sep.clone(),
             Span::styled("e", key_style), sep.clone(),
-            Span::styled("d", key_style), sep.clone(),
-            Span::styled("q", key_style),
-        ],
-        TaskStatus::Queued => vec![
-            Span::styled("s", key_style), sep.clone(),
-            Span::styled("e", key_style), sep.clone(),
             Span::styled("d", key_style),
         ],
+        TaskStatus::Testing => vec![],
         TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
             Span::styled("o", key_style), sep.clone(),
             Span::styled("t", key_style), sep.clone(),

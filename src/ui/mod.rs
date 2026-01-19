@@ -606,8 +606,8 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
     // Get column color for the border
     let (column_color, phase_label) = match task.status {
         crate::model::TaskStatus::Planned => (Color::Blue, "Planned"),
-        crate::model::TaskStatus::Queued => (Color::Cyan, "Queued"),
         crate::model::TaskStatus::InProgress => (Color::Yellow, "In Progress"),
+        crate::model::TaskStatus::Testing => (Color::Cyan, "Testing"),
         crate::model::TaskStatus::NeedsInput => (Color::Red, "Needs Input"),
         crate::model::TaskStatus::Review => (Color::Magenta, "Review"),
         crate::model::TaskStatus::Accepting => (Color::Magenta, "Accepting"),
@@ -746,24 +746,31 @@ fn render_general_tab<'a>(
     lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
 
     match task.status {
-        crate::model::TaskStatus::Planned | crate::model::TaskStatus::Queued => {
+        crate::model::TaskStatus::Planned => {
             lines.push(Line::from(vec![
                 Span::styled("Created: ", *label_style),
                 Span::styled(format_datetime(task.created_at), *value_style),
             ]));
 
-            if task.status == crate::model::TaskStatus::Queued {
-                if let Some(queued_for) = task.queued_for_session {
-                    if let Some(project) = app.model.active_project() {
-                        if let Some(parent_task) = project.tasks.iter().find(|t| t.id == queued_for) {
-                            lines.push(Line::from(vec![
-                                Span::styled("Queued for: ", *label_style),
-                                Span::styled(parent_task.title.clone(), Style::default().fg(Color::Yellow)),
-                            ]));
-                        }
+            // Show if task is queued for another task's session
+            if let Some(queued_for) = task.queued_for_session {
+                if let Some(project) = app.model.active_project() {
+                    if let Some(parent_task) = project.tasks.iter().find(|t| t.id == queued_for) {
+                        lines.push(Line::from(vec![
+                            Span::styled("Queued for: ", *label_style),
+                            Span::styled(parent_task.title.clone(), Style::default().fg(Color::Yellow)),
+                        ]));
                     }
                 }
             }
+        }
+
+        crate::model::TaskStatus::Testing => {
+            // Testing phase - no specific timing info yet
+            lines.push(Line::from(vec![
+                Span::styled("Status: ", *label_style),
+                Span::styled("Awaiting test results", *value_style),
+            ]));
         }
 
         crate::model::TaskStatus::InProgress => {
@@ -1277,13 +1284,8 @@ fn render_help_tab<'a>(
             ]));
         }
 
-        crate::model::TaskStatus::Queued => {
-            lines.push(Line::from(vec![
-                Span::styled(" e ", *key_style), Span::styled(" Edit task", *label_style),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled(" d ", *key_style), Span::styled(" Delete task", *label_style),
-            ]));
+        crate::model::TaskStatus::Testing => {
+            // No actions available for Testing state yet
         }
 
         crate::model::TaskStatus::InProgress => {
@@ -1463,7 +1465,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         ]),
         Line::from("  h/l        Move left/right between columns"),
         Line::from("  j/k        Move down/up within column"),
-        Line::from("  1-6        Jump to column (Planned/Queued/InProgress/Needs/Review/Done)"),
+        Line::from("  1-6        Jump to column (Planned/InProgress/Testing/Needs/Review/Done)"),
         Line::from("  Tab        Cycle focus: Board → Input → Tabs"),
         Line::from(""),
         Line::from(vec![
@@ -1472,7 +1474,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  Space/Enter  Open task details"),
         Line::from("  i          New task (focus input)"),
         Line::from("  e          Edit task"),
-        Line::from("  s          Start (Planned/Queued) / Continue (Review/NeedsInput)"),
+        Line::from("  s          Start (Planned) / Continue (Review/NeedsInput)"),
         Line::from("  d          Delete task"),
         Line::from("  r          Move to Review (InProgress/NeedsInput/Done)"),
         Line::from("  x          Reset: cleanup & move to Planned"),

@@ -447,15 +447,10 @@ impl App {
 
                     // Check if another task is active (InProgress or NeedsInput)
                     if project.has_active_task() {
-                        // Queue the task instead of starting it (only if Planned)
-                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                            if task.status == TaskStatus::Planned {
-                                task.status = TaskStatus::Queued;
-                                commands.push(Message::SetStatusMessage(Some(
-                                    "Task queued - waiting for current task to complete".to_string()
-                                )));
-                            }
-                        }
+                        // Can't start a new task while another is active
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Another task is already active".to_string()
+                        )));
                     } else {
                         // For non-git repos, just show an error - worktree isolation required
                         commands.push(Message::Error(
@@ -482,10 +477,11 @@ impl App {
                     }
 
                     // Update task state immediately for UI feedback
+                    // Task goes straight to InProgress with Creating state (shows building animation)
                     if let Some(project) = self.model.active_project_mut() {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.session_state = crate::model::ClaudeSessionState::Creating;
-                            task.status = TaskStatus::Queued;
+                            task.status = TaskStatus::InProgress;
                             task.started_at = Some(Utc::now());
                             task.log_activity("User started task");
                         }
@@ -2394,10 +2390,11 @@ impl App {
                 }
 
                 // Set the task to queue after the last task in the chain
+                // Task stays in Planned state but has queued_for_session set
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.queued_for_session = Some(current_id);
-                        task.status = TaskStatus::Queued;
+                        // Keep in Planned state - queued_for_session field indicates it's waiting
                     }
                 }
 
@@ -3981,7 +3978,7 @@ impl App {
                             SessionEventType::Started => {
                                 // Don't override Accepting/Updating/Applying status if this is a rebase session
                                 if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
-                                    task.status = TaskStatus::InProgress; // Move from Queued to InProgress
+                                    task.status = TaskStatus::InProgress; // Session started, Claude is now working
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                 task.session_mode = crate::model::SessionMode::SdkManaged;
@@ -5437,12 +5434,13 @@ impl App {
 
                 // Gather info first to avoid borrow issues
                 let current_column = self.model.ui_state.selected_column;
+                // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
                 let above_status = match current_column {
-                    TaskStatus::InProgress => Some(TaskStatus::Planned),
-                    TaskStatus::NeedsInput => Some(TaskStatus::Queued),
-                    TaskStatus::Review => Some(TaskStatus::InProgress),
+                    TaskStatus::Testing => Some(TaskStatus::Planned),
+                    TaskStatus::NeedsInput => Some(TaskStatus::InProgress),
+                    TaskStatus::Review => Some(TaskStatus::Testing),
                     TaskStatus::Done => Some(TaskStatus::NeedsInput),
-                    _ => None, // Planned and Queued have nothing above
+                    _ => None, // Planned and InProgress have nothing above
                 };
                 let above_tasks_len = above_status
                     .and_then(|s| self.model.active_project().map(|p| p.tasks_by_status(s).len()))
@@ -5462,8 +5460,8 @@ impl App {
                     self.model.ui_state.selected_task_idx = idx;
                 }
 
-                // Check if we're at the top of Planned or Queued and should move to ProjectTabs
-                let is_top_row = matches!(current_column, TaskStatus::Planned | TaskStatus::Queued);
+                // Check if we're at the top of Planned or InProgress and should move to ProjectTabs
+                let is_top_row = matches!(current_column, TaskStatus::Planned | TaskStatus::InProgress);
                 let at_top_of_column = match idx {
                     None => true, // Empty column
                     Some(0) => true, // At first task
@@ -5517,8 +5515,8 @@ impl App {
                 // Handle ProjectTabs navigation - down returns to KanbanBoard
                 if self.model.ui_state.focus == FocusArea::ProjectTabs {
                     self.model.ui_state.focus = FocusArea::KanbanBoard;
-                    // Ensure we're in one of the top row columns (Planned or Queued)
-                    if !matches!(self.model.ui_state.selected_column, TaskStatus::Planned | TaskStatus::Queued) {
+                    // Ensure we're in one of the top row columns (Planned or InProgress)
+                    if !matches!(self.model.ui_state.selected_column, TaskStatus::Planned | TaskStatus::InProgress) {
                         self.model.ui_state.selected_column = TaskStatus::Planned;
                     }
                     // Select the first item in the column
@@ -5541,10 +5539,11 @@ impl App {
                             None => (0, false),
                         };
                         // 2x3 grid navigation - move down in same column
+                        // Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
                         let below = match self.model.ui_state.selected_column {
-                            TaskStatus::Planned => Some(TaskStatus::InProgress),
-                            TaskStatus::Queued => Some(TaskStatus::NeedsInput),
-                            TaskStatus::InProgress => Some(TaskStatus::Review),
+                            TaskStatus::Planned => Some(TaskStatus::Testing),
+                            TaskStatus::InProgress => Some(TaskStatus::NeedsInput),
+                            TaskStatus::Testing => Some(TaskStatus::Review),
                             TaskStatus::NeedsInput => Some(TaskStatus::Done),
                             _ => None, // Review and Done have nothing below
                         };
@@ -5608,7 +5607,7 @@ impl App {
                     return vec![];
                 }
 
-                // Linear navigation through all columns: Planned -> Queued -> InProgress -> NeedsInput -> Review -> Done
+                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsInput -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {
                     if idx > 0 {
@@ -5635,7 +5634,7 @@ impl App {
                     return vec![];
                 }
 
-                // Linear navigation through all columns: Planned -> Queued -> InProgress -> NeedsInput -> Review -> Done
+                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsInput -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {
                     if idx + 1 < columns.len() {
