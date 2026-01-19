@@ -1862,6 +1862,22 @@ impl App {
                                 return commands;
                             }
 
+                            // Check for conflict markers in repo (bad state from previous operation)
+                            if err_msg.contains("conflict markers") {
+                                if let Some(project) = self.model.active_project_mut() {
+                                    project.release_main_worktree_lock(task_id);
+                                }
+                                // Clear conflict state with git reset before showing error
+                                let _ = std::process::Command::new("git")
+                                    .current_dir(&project_dir)
+                                    .args(["reset", "--hard", "HEAD"])
+                                    .output();
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "Cleared stale conflict markers. Press 'a' to apply again.".to_string()
+                                )));
+                                return commands;
+                            }
+
                             // Fast apply failed - check if we need to rebase first
                             let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
 

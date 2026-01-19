@@ -546,7 +546,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
 
         // Try to fit hints in available width, using progressively shorter versions
         let available_width = area.width.saturating_sub(2); // Leave space for corners
-        let final_hints = fit_hints_to_width(hints, available_width, status);
+        let animation_frame = app.model.ui_state.animation_frame;
+        let final_hints = fit_hints_to_width(hints, available_width, status, animation_frame);
 
         if !final_hints.is_empty() {
             let hints_text: String = final_hints.iter().map(|s| s.content.as_ref()).collect();
@@ -867,27 +868,34 @@ fn get_accepting_hints(task: &crate::model::Task) -> Vec<Span<'static>> {
 }
 
 /// Fit hints to available width by trying progressively shorter versions
-fn fit_hints_to_width(hints: Vec<Span<'static>>, available_width: u16, status: TaskStatus) -> Vec<Span<'static>> {
+/// When space is limited, we use cycling hints that show one full hint at a time
+fn fit_hints_to_width(hints: Vec<Span<'static>>, available_width: u16, status: TaskStatus, animation_frame: usize) -> Vec<Span<'static>> {
     let hints_text: String = hints.iter().map(|s| s.content.as_ref()).collect();
     let hints_width = hints_text.chars().count() as u16;
 
-    // If full hints fit, use them
+    // If full hints fit, use them (no cycling needed)
     if hints_width <= available_width {
         return hints;
     }
 
-    // Try medium abbreviated version
+    // Check if medium abbreviated version would fit
     let medium = get_medium_hints(status);
     let medium_text: String = medium.iter().map(|s| s.content.as_ref()).collect();
-    if (medium_text.chars().count() as u16) <= available_width {
-        return medium;
-    }
+    let medium_width = medium_text.chars().count() as u16;
 
-    // Try short version (just keys)
+    // Check if short version would fit
     let short = get_short_hints(status);
     let short_text: String = short.iter().map(|s| s.content.as_ref()).collect();
-    if (short_text.chars().count() as u16) <= available_width {
-        return short;
+    let short_width = short_text.chars().count() as u16;
+
+    // If medium fits, use cycling full-in-medium (one full, others abbreviated)
+    if medium_width <= available_width {
+        return get_cycling_full_in_medium_hints(status, animation_frame);
+    }
+
+    // If short fits, use cycling full-in-short (one full, others just key)
+    if short_width <= available_width {
+        return get_cycling_full_in_short_hints(status, animation_frame);
     }
 
     // Nothing fits
@@ -936,6 +944,8 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("b ", desc_style),
             Span::styled("n", key_style),
             Span::styled("w ", desc_style),
+            Span::styled("o", key_style),
+            Span::styled("pen ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-rst", desc_style),
         ],
@@ -951,6 +961,139 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("ev", desc_style),
         ],
     }
+}
+
+/// Get cycling full-in-medium hints: one hint shows full form, others show abbreviated
+/// animation_frame is used to determine which hint to expand (cycles every ~1.5s)
+fn get_cycling_full_in_medium_hints(status: TaskStatus, animation_frame: usize) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+
+    // Define hint tuples (key, abbreviated, full) for each status
+    let hint_tuples: Vec<(&str, &str, &str)> = match status {
+        TaskStatus::Planned => vec![
+            ("s", "tart", "tart"),
+            ("e", "dit", "dit"),
+            ("d", "el", "elete"),
+        ],
+        TaskStatus::Testing => vec![],
+        TaskStatus::InProgress | TaskStatus::NeedsWork => vec![
+            ("o", "pen", "pen"),
+            ("t", "est", "est"),
+            ("r", "ev", "eview"),
+            ("x", "-rst", "-reset"),
+        ],
+        TaskStatus::Review => vec![
+            ("a", "pp", "pply"),
+            ("u", "nap", "napply"),
+            ("r", "eb", "ebase"),
+            ("m", "rg", "erge"),
+            ("d", "is", "iscard"),
+            ("c", "hk", "heck"),
+            ("f", "b", "eedback"),
+            ("n", "w", "eeds-work"),
+            ("o", "pen", "pen"),
+            ("x", "-rst", "-reset"),
+        ],
+        TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => {
+            return vec![Span::styled("...", desc_style)];
+        }
+        TaskStatus::Done => vec![
+            ("e", "dit", "dit"),
+            ("d", "el", "elete"),
+            ("r", "ev", "eview"),
+        ],
+    };
+
+    if hint_tuples.is_empty() {
+        return vec![];
+    }
+
+    let num_hints = hint_tuples.len();
+    // Cycle every ~1.5 seconds (15 ticks at 100ms each)
+    let expanded_idx = (animation_frame / 15) % num_hints;
+
+    let mut hints = Vec::new();
+    for (i, (key, abbrev, full)) in hint_tuples.iter().enumerate() {
+        if i > 0 {
+            hints.push(Span::styled(" ", desc_style));
+        }
+        hints.push(Span::styled(*key, key_style));
+        if i == expanded_idx {
+            // This is the expanded hint - show full description
+            hints.push(Span::styled(*full, desc_style));
+        } else {
+            // Show abbreviated description
+            hints.push(Span::styled(*abbrev, desc_style));
+        }
+    }
+
+    hints
+}
+
+/// Get cycling full-in-short hints: one hint shows full form, others show just the key
+/// animation_frame is used to determine which hint to expand (cycles every ~1.5s)
+fn get_cycling_full_in_short_hints(status: TaskStatus, animation_frame: usize) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+
+    // Define hint pairs (key, description) for each status
+    let hint_pairs: Vec<(&str, &str)> = match status {
+        TaskStatus::Planned => vec![
+            ("s", "tart"),
+            ("e", "dit"),
+            ("d", "elete"),
+        ],
+        TaskStatus::Testing => vec![],
+        TaskStatus::InProgress | TaskStatus::NeedsWork => vec![
+            ("o", "pen"),
+            ("t", "est"),
+            ("r", "eview"),
+            ("x", "-reset"),
+        ],
+        TaskStatus::Review => vec![
+            ("a", "pply"),
+            ("u", "napply"),
+            ("r", "ebase"),
+            ("m", "erge"),
+            ("d", "iscard"),
+            ("c", "heck"),
+            ("f", "eedback"),
+            ("n", "eeds-work"),
+            ("o", "pen"),
+            ("x", "-reset"),
+        ],
+        TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => {
+            return vec![Span::styled("...", desc_style)];
+        }
+        TaskStatus::Done => vec![
+            ("e", "dit"),
+            ("d", "elete"),
+            ("r", "eview"),
+        ],
+    };
+
+    if hint_pairs.is_empty() {
+        return vec![];
+    }
+
+    let num_hints = hint_pairs.len();
+    // Cycle every ~1.5 seconds (15 ticks at 100ms each)
+    let expanded_idx = (animation_frame / 15) % num_hints;
+
+    let mut hints = Vec::new();
+    for (i, (key, desc)) in hint_pairs.iter().enumerate() {
+        if i > 0 {
+            hints.push(Span::styled(" ", desc_style));
+        }
+        hints.push(Span::styled(*key, key_style));
+        if i == expanded_idx {
+            // This is the expanded hint - show full description
+            hints.push(Span::styled(*desc, desc_style));
+        }
+    }
+
+    hints
 }
 
 /// Get short hints (just the key letters)
@@ -981,6 +1124,7 @@ fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("c", key_style), sep.clone(),
             Span::styled("f", key_style), sep.clone(),
             Span::styled("n", key_style), sep.clone(),
+            Span::styled("o", key_style), sep.clone(),
             Span::styled("x", key_style),
         ],
         TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => vec![
