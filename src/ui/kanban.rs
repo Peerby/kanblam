@@ -221,12 +221,14 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         display_source.clone()
                     };
 
-                    // Add spinner for in-progress tasks, question prompt for needs-work,
+                    // Add spinner for in-progress tasks, prompt indicator for needs-work (when Claude waiting),
                     // merge animation for accepting tasks, apply animation for applying tasks,
                     // and building animation for queued tasks that are preparing (creating worktree)
                     // InProgress uses the same spinner as Claude Code CLI: ·✢✳✶✻✽
                     let spinner_frames = ['·', '✢', '✳', '✶', '✻', '✽'];
-                    let prompt_frames = ['?', '¿', '⁇', '❓'];
+                    // Blinking prompt: ~500ms on, ~500ms off (classic cursor blink at ~1Hz)
+                    // At 100ms/tick: 5 frames on, 5 frames off = 1 second cycle
+                    let prompt_frames = ['›', '›', '›', '›', '›', ' ', ' ', ' ', ' ', ' '];
                     let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
                     let rebase_frames = ['↑', '⇧', '⇈', '⇪', '⇈', '⇧', '↑']; // Upward arrows for rebase
                     // Saved patterns: ['░', '▒', '▓', '█', '▓', '▒'] (fill), ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'] (rotating dot)
@@ -248,7 +250,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             let frame = (app.model.ui_state.animation_frame / 2) % spinner_frames.len();
                             format!("{} ", spinner_frames[frame])
                         }
-                        TaskStatus::NeedsWork => {
+                        TaskStatus::NeedsWork if task.session_state == crate::model::ClaudeSessionState::Paused => {
+                            // Only show blinking prompt when Claude is actively waiting for input
                             let frame = app.model.ui_state.animation_frame % prompt_frames.len();
                             format!("{} ", prompt_frames[frame])
                         }
