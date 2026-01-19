@@ -1602,12 +1602,12 @@ pub struct MergeCelebrationState {
 }
 
 impl MergeCelebrationState {
-    /// Total frames for phase 1 (confirmation pulse) - 300ms
-    pub const PHASE1_FRAMES: usize = 3;
-    /// Frames per character during sparkle substitution (phase 2) - 100ms per char
-    pub const FRAMES_PER_CHAR: usize = 1;
+    /// Total frames for phase 1 (confirmation pulse)
+    pub const PHASE1_FRAMES: usize = 1;
+    /// Characters swept per frame during sparkle substitution (phase 2)
+    pub const CHARS_PER_FRAME: usize = 2;
     /// Number of trailing sparkle characters to show before evaporating
-    pub const SPARKLE_TRAIL_LEN: usize = 4;
+    pub const SPARKLE_TRAIL_LEN: usize = 2;
 
     /// Sparkle characters (from light to absent)
     /// Uses ✧ for initial sparkle, · for fading, then space for gone
@@ -1615,11 +1615,11 @@ impl MergeCelebrationState {
 
     /// Check if the animation is complete (all text has evaporated)
     pub fn is_complete(&self) -> bool {
-        // Phase 2+3 together: we need (text_len + SPARKLE_TRAIL_LEN) * FRAMES_PER_CHAR frames
-        // after phase 1 to fully sweep and fade
+        // Phase 2+3 together: we need enough frames to sweep all chars + trail
         let text_len = self.original_text.chars().count();
-        let total_sweep_frames = (text_len + Self::SPARKLE_TRAIL_LEN) * Self::FRAMES_PER_CHAR;
-        self.frame >= Self::PHASE1_FRAMES + total_sweep_frames
+        let total_chars = text_len + Self::SPARKLE_TRAIL_LEN;
+        let sweep_frames = (total_chars + Self::CHARS_PER_FRAME - 1) / Self::CHARS_PER_FRAME;
+        self.frame >= Self::PHASE1_FRAMES + sweep_frames
     }
 
     /// Get the current animation phase
@@ -1638,7 +1638,7 @@ impl MergeCelebrationState {
         if self.frame < Self::PHASE1_FRAMES {
             0
         } else {
-            (self.frame - Self::PHASE1_FRAMES) / Self::FRAMES_PER_CHAR
+            (self.frame - Self::PHASE1_FRAMES) * Self::CHARS_PER_FRAME
         }
     }
 
