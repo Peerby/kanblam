@@ -177,6 +177,16 @@ pub enum Message {
     /// Fast rebase failed with error (from background task)
     FastRebaseFailed { task_id: Uuid, error: String },
 
+    // Async rebase-for-apply (when pressing 'a' on task that's behind main)
+    /// Start rebase-for-apply in background
+    StartRebaseForApply { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    /// Rebase-for-apply completed successfully
+    RebaseForApplyCompleted { task_id: Uuid },
+    /// Rebase-for-apply needs Claude for conflicts
+    RebaseForApplyNeedsClaude { task_id: Uuid },
+    /// Rebase-for-apply failed
+    RebaseForApplyFailed { task_id: Uuid, error: String },
+
     // Async smart accept (merge task)
     /// Start smart accept git operations in background
     StartSmartAcceptGitOps { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf, has_branch: bool },

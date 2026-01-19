@@ -1717,15 +1717,37 @@ impl App {
                 });
 
                 if let Some((project_dir, worktree_path, git_branch, current_status, commits_behind)) = task_info {
-                    // Require rebase before apply - ensures clean patches
+                    // Auto-rebase if task is behind main
                     if commits_behind > 0 {
-                        if let Some(project) = self.model.active_project_mut() {
-                            project.release_main_worktree_lock(task_id);
+                        if let Some(ref wt_path) = worktree_path {
+                            // Release lock - rebase operation will re-acquire if needed
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
+                            // Set status to Updating to show rebase is in progress
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.status = TaskStatus::Updating;
+                                }
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("Task is {} commits behind. Rebasing...", commits_behind)
+                            )));
+                            commands.push(Message::StartRebaseForApply {
+                                task_id,
+                                worktree_path: wt_path.clone(),
+                                project_dir: project_dir.clone(),
+                            });
+                            return commands;
+                        } else {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.release_main_worktree_lock(task_id);
+                            }
+                            commands.push(Message::Error(
+                                "Cannot rebase: worktree path not found.".to_string()
+                            ));
+                            return commands;
                         }
-                        commands.push(Message::SetStatusMessage(Some(
-                            format!("Task is {} commits behind main. Press 'r' to rebase first.", commits_behind)
-                        )));
-                        return commands;
                     }
                     // Don't process if already applying
                     if current_status == TaskStatus::Applying {
@@ -2204,6 +2226,101 @@ impl App {
                     format!("Fast rebase failed ({}), trying smart update...", error)
                 )));
                 commands.push(Message::StartUpdateRebaseSession { task_id });
+            }
+
+            // Rebase-for-apply handlers (when 'a' triggers auto-rebase)
+            Message::StartRebaseForApply { task_id, worktree_path, project_dir } => {
+                // Require async sender - fail explicitly if missing
+                let sender = match self.async_sender.clone() {
+                    Some(s) => s,
+                    None => {
+                        if let Some(project) = self.model.active_project_mut() {
+                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                task.status = TaskStatus::Review;
+                            }
+                        }
+                        commands.push(Message::Error(
+                            "Internal error: async_sender not configured.".to_string()
+                        ));
+                        return commands;
+                    }
+                };
+
+                // Spawn rebase in background
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        // First commit any uncommitted changes
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                            return Err(e);
+                        }
+                        // Then do the rebase
+                        crate::worktree::update_worktree_to_main(&worktree_path, &project_dir)
+                    }).await;
+
+                    let msg = match result {
+                        Ok(Ok(true)) => Message::RebaseForApplyCompleted { task_id },
+                        Ok(Ok(false)) => Message::RebaseForApplyNeedsClaude { task_id },
+                        Ok(Err(e)) => Message::RebaseForApplyFailed { task_id, error: e.to_string() },
+                        Err(e) => Message::RebaseForApplyFailed { task_id, error: format!("Task panicked: {}", e) },
+                    };
+
+                    let _ = sender.send(msg);
+                });
+            }
+
+            Message::RebaseForApplyCompleted { task_id } => {
+                // Rebase succeeded - now check if we're in bootstrap mode
+                let is_bootstrap = self.model.active_project()
+                    .map(|p| is_bootstrap_project(p))
+                    .unwrap_or(false);
+
+                // Reset task to Review status
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.status = TaskStatus::Review;
+                    }
+                }
+
+                // Refresh git status to update commits_behind
+                commands.push(Message::RefreshGitStatus);
+
+                if is_bootstrap {
+                    // In bootstrap mode, show confirmation before applying (which triggers restart)
+                    self.model.ui_state.confirmation_scroll_offset = 0;
+                    self.model.ui_state.pending_confirmation = Some(PendingConfirmation {
+                        message: "Task rebased. Ready to apply and restart?\n\n\
+                            [Y] Yes, apply and restart  [N] No, stay in Review".to_string(),
+                        action: PendingAction::RebaseForApplyReady { task_id },
+                        animation_tick: 20,
+                    });
+                } else {
+                    // Not bootstrap mode - proceed directly with apply
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Rebased. Applying...".to_string()
+                    )));
+                    commands.push(Message::SmartApplyTask(task_id));
+                }
+            }
+
+            Message::RebaseForApplyNeedsClaude { task_id } => {
+                // Conflicts during rebase - need Claude to resolve
+                // For now, send them to the regular update session
+                commands.push(Message::SetStatusMessage(Some(
+                    "Rebase conflicts detected, starting smart rebase...".to_string()
+                )));
+                commands.push(Message::StartUpdateRebaseSession { task_id });
+            }
+
+            Message::RebaseForApplyFailed { task_id, error } => {
+                // Rebase failed - reset to Review and show error
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.status = TaskStatus::Review;
+                    }
+                }
+                commands.push(Message::SetStatusMessage(Some(
+                    format!("Rebase failed: {}. Try 'r' for smart rebase.", error)
+                )));
             }
 
             Message::RefreshGitStatus => {
@@ -3358,6 +3475,13 @@ impl App {
                             // User chose to use smart apply with Claude
                             commands.push(Message::StartApplySession { task_id });
                         }
+                        PendingAction::RebaseForApplyReady { task_id } => {
+                            // User confirmed apply after rebase (bootstrap mode)
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Applying...".to_string()
+                            )));
+                            commands.push(Message::SmartApplyTask(task_id));
+                        }
                         PendingAction::UpdateGitignore { path, name, slot, .. } => {
                             // User confirmed adding KanBlam entries to .gitignore
                             match crate::worktree::git::ensure_gitignore_has_kanblam_entries(&path) {
@@ -3476,6 +3600,12 @@ impl App {
                             // User cancelled smart apply - nothing to do
                             commands.push(Message::SetStatusMessage(Some(
                                 "Apply cancelled. Use 'p' to try again.".to_string()
+                            )));
+                        }
+                        PendingAction::RebaseForApplyReady { .. } => {
+                            // User cancelled apply after rebase - task stays rebased in Review
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Cancelled. Task rebased and ready in Review.".to_string()
                             )));
                         }
                         PendingAction::UpdateGitignore { path, name, slot, .. } => {

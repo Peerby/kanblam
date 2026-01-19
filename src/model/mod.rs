@@ -2200,6 +2200,9 @@ pub enum PendingAction {
     /// Apply conflict - show conflict details in scrollable modal
     /// Options: y=try smart apply with Claude, n=cancel
     ApplyConflict { task_id: Uuid, conflict_output: String },
+    /// Task was rebased for apply, ready to restart? (bootstrap mode only)
+    /// Options: y=restart to apply, n=cancel (stays rebased)
+    RebaseForApplyReady { task_id: Uuid },
     /// Project .gitignore is missing KanBlam entries (.claude/, worktrees/)
     /// Options: y=add entries, n=open anyway without adding
     UpdateGitignore {
