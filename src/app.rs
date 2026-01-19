@@ -2695,11 +2695,12 @@ impl App {
                                 next_task.worktree_path = worktree_path.clone();
                                 next_task.git_branch = git_branch;
                                 next_task.tmux_window = tmux_window.clone();
-                                next_task.status = TaskStatus::InProgress;
                                 next_task.session_state = crate::model::ClaudeSessionState::Working;
                                 next_task.started_at = Some(Utc::now());
                                 next_task.queued_for_session = None; // Clear queue reference
                             }
+                            // Move to end of InProgress column so newly active tasks appear at bottom
+                            project.move_task_to_end_of_status(next_task_id, TaskStatus::InProgress);
 
                             // Clear session info from finished task (it's now in Review)
                             if let Some(finished_task) = project.tasks.iter_mut().find(|t| t.id == finished_task_id) {
@@ -3952,10 +3953,13 @@ impl App {
                                 task.log_activity("Input received, continuing...");
                                 // Don't change status if task is in a special state
                                 if !was_accepting && !was_updating && !was_applying && !is_terminal {
-                                    task.status = TaskStatus::InProgress;
+                                    // Move to end of InProgress column so newly active tasks appear at bottom
+                                    project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                 }
                                 if !is_terminal {
-                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                    }
                                     project.needs_attention = false;
                                     notify::clear_attention_indicator();
                                 }
@@ -3969,9 +3973,13 @@ impl App {
                                     task.log_activity("Working...");
                                     // Don't override Accepting/Updating/Applying status if mid-rebase
                                     if !was_accepting && !was_updating && !was_applying {
-                                        task.status = TaskStatus::InProgress;
+                                        // Move to end of InProgress column so newly active tasks appear at bottom
+                                        project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                     }
-                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    // Re-find task since move_task_to_end_of_status may have repositioned it
+                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                    }
                                     project.needs_attention = false;
                                     notify::clear_attention_indicator();
                                 }
