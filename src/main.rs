@@ -1400,10 +1400,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        let title = if task.title.len() > 30 {
-                            format!("{}...", &task.title[..27])
+                        let title = task.short_title.as_ref().unwrap_or(&task.title);
+                        let title = if title.len() > 30 {
+                            format!("{}...", &title[..27])
                         } else {
-                            task.title.clone()
+                            title.clone()
                         };
                         return vec![Message::ShowConfirmation {
                             message: format!("Delete '{}'? (y/n)", title),
@@ -1437,8 +1438,14 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                     if let Some(task) = tasks.get(idx) {
                         // Reset works on InProgress, NeedsWork, Review, Done
                         if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
+                            let title = task.short_title.as_ref().unwrap_or(&task.title);
+                            let title = if title.len() > 30 {
+                                format!("{}...", &title[..27])
+                            } else {
+                                title.clone()
+                            };
                             return vec![Message::ShowConfirmation {
-                                message: format!("Reset '{}'? This will clean up worktree and move to Planned. (y/n)", task.title),
+                                message: format!("Reset '{}'? This will clean up worktree and move to Planned. (y/n)", title),
                                 action: model::PendingAction::ResetTask(task.id),
                             }];
                         }
@@ -1924,10 +1931,11 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                     },
                 ]
             } else {
-                let title = if task.title.len() > 30 {
-                    format!("{}...", &task.title[..27])
+                let title = task.short_title.as_ref().unwrap_or(&task.title);
+                let title = if title.len() > 30 {
+                    format!("{}...", &title[..27])
                 } else {
-                    task.title.clone()
+                    title.clone()
                 };
                 vec![
                     Message::ToggleTaskPreview,
@@ -1976,10 +1984,16 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         // Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
             if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
+                let title = task.short_title.as_ref().unwrap_or(&task.title);
+                let title = if title.len() > 30 {
+                    format!("{}...", &title[..27])
+                } else {
+                    title.clone()
+                };
                 vec![
                     Message::ToggleTaskPreview,
                     Message::ShowConfirmation {
-                        message: format!("Reset '{}'? This will clean up worktree and move to Planned.", task.title),
+                        message: format!("Reset '{}'? This will clean up worktree and move to Planned.", title),
                         action: model::PendingAction::ResetTask(task.id),
                     },
                 ]
