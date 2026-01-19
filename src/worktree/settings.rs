@@ -1,5 +1,7 @@
 //! Claude Code settings generation for isolated worktrees
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::PathBuf;

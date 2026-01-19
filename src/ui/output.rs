@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::app::App;
 use crate::model::FocusArea;
 use ratatui::{

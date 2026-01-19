@@ -19,7 +19,6 @@ use ratatui::{
 
 pub use interactive_modal::render_interactive_modal;
 pub use kanban::render_kanban;
-pub use output::render_output;
 pub use status_bar::render_status_bar;
 pub use welcome::welcome_message_count;
 
@@ -305,7 +304,7 @@ fn render_project_bar(frame: &mut Frame, area: Rect, app: &App) {
 /// Render the project bar with inline branding on the right
 fn render_project_bar_with_branding(frame: &mut Frame, area: Rect, app: &App) {
     let green = Color::Rgb(80, 200, 120);
-    let dark_green = Color::Rgb(60, 150, 90);
+    let _dark_green = Color::Rgb(60, 150, 90);
 
     let mut spans = Vec::new();
     spans.push(Span::raw(" "));
@@ -2250,7 +2249,7 @@ fn render_stash_modal(frame: &mut Frame, app: &App) {
     } else {
         let label_style = Style::default().fg(Color::DarkGray);
         let value_style = Style::default().fg(Color::White);
-        let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let _key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
         for (idx, stash) in stashes.iter().enumerate() {
             let is_selected = idx == selected_idx;

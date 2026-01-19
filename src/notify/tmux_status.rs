@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::process::Command;
 
 const TMUX_OPTION_NAME: &str = "@kanclaude_attention";

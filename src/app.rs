@@ -1,5 +1,7 @@
+#![allow(dead_code)]
+
 use crate::message::Message;
-use crate::model::{AppModel, FocusArea, MainWorktreeOperation, PendingAction, PendingConfirmation, Project, Task, TaskStatus, SessionMode};
+use crate::model::{AppModel, FocusArea, MainWorktreeOperation, PendingAction, PendingConfirmation, Project, Task, TaskStatus};
 use crate::notify;
 use crate::sidecar::SidecarClient;
 use crate::ui::logo::EyeAnimation;
@@ -1260,7 +1262,7 @@ impl App {
                         ))
                 });
 
-                if let Some((project_slug, project_dir, is_git, window_name, worktree_path, git_branch)) = task_info {
+                if let Some((project_slug, project_dir, _is_git, window_name, worktree_path, git_branch)) = task_info {
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -4120,7 +4122,7 @@ impl App {
             Message::SdkSessionOutput { task_id, output } => {
                 // Store SDK output for display
                 for project in &mut self.model.projects {
-                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                    if project.tasks.iter().any(|t| t.id == task_id) {
                         // Append to captured output
                         project.captured_output.push_str(&output);
                         break;
@@ -4189,9 +4191,9 @@ impl App {
                     })
                 });
 
-                if let Some((worktree_path, session_id, session_state, session_mode, sdk_count, cli_opened_at)) = task_info {
+                if let Some((worktree_path, _session_id, session_state, session_mode, _sdk_count, _cli_opened_at)) = task_info {
                     // Require worktree path
-                    let Some(worktree_path) = worktree_path else {
+                    let Some(_worktree_path) = worktree_path else {
                         commands.push(Message::Error(
                             "Cannot open interactive mode: no worktree path.".to_string()
                         ));
@@ -6231,18 +6233,6 @@ impl App {
             Message::QuitAndSwitchPane(_) => {
                 // Legacy - just quit
                 self.should_quit = true;
-            }
-
-            Message::OpenClaudeCliPane => {
-                // Open a new pane to the right with a fresh Claude CLI session
-                if let Some(project) = self.model.active_project() {
-                    let working_dir = project.working_dir.clone();
-                    if let Err(e) = crate::tmux::split_pane_with_claude(&working_dir) {
-                        commands.push(Message::Error(format!("Failed to open Claude pane: {}", e)));
-                    }
-                } else {
-                    commands.push(Message::Error("No active project".to_string()));
-                }
             }
 
             Message::Error(err) => {

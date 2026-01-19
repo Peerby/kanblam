@@ -1,5 +1,7 @@
 //! Git worktree commands for task isolation
 
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
@@ -527,7 +529,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
 
     // Debug logging to file (TUI covers stderr)
     let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");
-    let mut log = |msg: &str| {
+    let log = |msg: &str| {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
             let _ = writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg);

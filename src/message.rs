@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::model::{FocusArea, HookSignal, PendingAction, TaskStatus};
 use std::path::PathBuf;
 use uuid::Uuid;

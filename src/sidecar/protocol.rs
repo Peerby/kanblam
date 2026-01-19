@@ -1,7 +1,8 @@
 //! JSON-RPC 2.0 protocol types for Rust <-> TypeScript sidecar communication
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use uuid::Uuid;
 
 /// JSON-RPC 2.0 Request

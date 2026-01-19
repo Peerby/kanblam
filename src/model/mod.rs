@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
 use edtui::{
@@ -454,7 +456,7 @@ impl DirectoryBrowser {
 
     /// Enter the selected item - opens project or navigates for special entries
     pub fn enter_selected(&mut self) -> std::io::Result<EnterResult> {
-        let (entry_clone, col_dir) = {
+        let (entry_clone, _col_dir) = {
             let col = match self.columns[self.active_column].as_ref() {
                 Some(c) => c,
                 None => return Ok(EnterResult::Nothing),

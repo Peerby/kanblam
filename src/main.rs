@@ -9,7 +9,7 @@ mod tmux;
 mod ui;
 mod worktree;
 
-use app::{load_state, save_state, App, AsyncTaskSender};
+use app::{load_state, save_state, App};
 use chrono::Utc;
 use hooks::{HookWatcher, WatcherEvent};
 use message::Message;
@@ -57,14 +57,11 @@ async fn main() -> anyhow::Result<()> {
     let model = load_state().unwrap_or_default();
 
     // Start sidecar and connect (keep handle to kill on exit)
-    let mut sidecar_child = None;
-    let sidecar_client = match sidecar::ensure_sidecar_running() {
-        Ok(child) => {
-            sidecar_child = child; // Store handle if we spawned it
-            sidecar::SidecarClient::connect().ok()
-        }
+    let _sidecar_child = match sidecar::ensure_sidecar_running() {
+        Ok(child) => child, // Store handle to keep process alive
         Err(_) => None,
     };
+    let sidecar_client = sidecar::SidecarClient::connect().ok();
 
     // Create event receiver for sidecar notifications
     let sidecar_receiver = sidecar::SidecarEventReceiver::connect().ok();
@@ -680,7 +677,7 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
 
-    let super_key = key.modifiers.contains(KeyModifiers::SUPER);
+    let _super_key = key.modifiers.contains(KeyModifiers::SUPER);
 
     match key.code {
         // Ctrl+S: Submit and immediately start the task
@@ -1816,7 +1813,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Move to Review (from InProgress, NeedsInput, Done)
+        // Move to Review (from InProgress, NeedsInput, Done) or Rebase worktree (in Review)
         KeyCode::Char('r') => {
             if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Done) {
                 vec![
@@ -1826,6 +1823,9 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                         to_status: TaskStatus::Review,
                     },
                 ]
+            } else if task.worktree_path.is_some() && task.status == TaskStatus::Review {
+                // Rebase worktree to latest main (Review only)
+                vec![Message::ToggleTaskPreview, Message::UpdateWorktreeToMain(task.id)]
             } else {
                 vec![]
             }
@@ -1867,14 +1867,6 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 .unwrap_or(false);
             if has_applied {
                 return vec![Message::ToggleTaskPreview, Message::UnapplyTaskChanges];
-            }
-            vec![]
-        }
-
-        // Rebase worktree to latest main (Review only)
-        KeyCode::Char('r') => {
-            if task.worktree_path.is_some() && task.status == TaskStatus::Review {
-                return vec![Message::ToggleTaskPreview, Message::UpdateWorktreeToMain(task.id)];
             }
             vec![]
         }

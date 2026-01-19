@@ -1,12 +1,5 @@
 use rodio::{Decoder, OutputStream, Sink};
-use std::io::Cursor;
 use std::thread;
-
-/// Built-in notification sound (embedded as bytes)
-/// Using a simple system beep if no custom sound is available
-pub enum NotificationSound {
-    Attention,
-}
 
 /// Play the attention notification sound
 /// Plays asynchronously so it doesn't block the UI
@@ -44,7 +37,3 @@ fn play_sound_internal() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Play a test sound (for settings/configuration)
-pub fn play_test_sound() {
-    play_attention_sound();
-}
