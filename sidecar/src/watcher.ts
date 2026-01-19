@@ -109,7 +109,9 @@ export class WatcherSession {
   }
 
   /**
-   * Start the watcher session. It will observe the project periodically.
+   * Start the watcher session. The TUI controls when to trigger observations
+   * via the trigger_watcher RPC call - the sidecar does not auto-observe.
+   * This prevents wasting tokens when the user isn't interacting with the app.
    */
   async start(): Promise<void> {
     if (this.isRunning) {
@@ -118,21 +120,9 @@ export class WatcherSession {
     }
 
     this.isRunning = true;
-    console.log(`[Watcher] Starting for ${this.projectPath}`);
-
-    // Initial observation after a short delay
-    setTimeout(() => {
-      if (this.isRunning) {
-        this.observe();
-      }
-    }, 30000); // First observation after 30 seconds
-
-    // Then observe periodically
-    this.intervalId = setInterval(() => {
-      if (this.isRunning) {
-        this.observe();
-      }
-    }, this.observationIntervalMs);
+    console.log(`[Watcher] Started for ${this.projectPath} (TUI controls timing)`);
+    // No setInterval here - the TUI triggers observations via trigger_watcher RPC
+    // This ensures we don't waste tokens when advice is awaiting dismissal
   }
 
   /**

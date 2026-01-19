@@ -76,6 +76,13 @@ pub struct GlobalSettings {
     /// Mascot advice enabled (None = never set, show intro; Some(true/false) = user preference)
     #[serde(default)]
     pub mascot_advice_enabled: Option<bool>,
+    /// Mascot advice interval in minutes (default: 15)
+    #[serde(default = "default_mascot_interval")]
+    pub mascot_advice_interval_minutes: u32,
+}
+
+fn default_mascot_interval() -> u32 {
+    15
 }
 
 impl Default for GlobalSettings {
@@ -83,6 +90,7 @@ impl Default for GlobalSettings {
         Self {
             default_editor: Editor::Vim,
             mascot_advice_enabled: None, // Will show intro message on first run
+            mascot_advice_interval_minutes: 15,
         }
     }
 }
@@ -1691,6 +1699,7 @@ pub enum ConfigField {
     #[default]
     DefaultEditor,
     MascotAdvice,
+    MascotAdviceInterval,
     CheckCommand,
     RunCommand,
     TestCommand,
@@ -1699,17 +1708,37 @@ pub enum ConfigField {
 }
 
 impl ConfigField {
-    /// Get all config fields in display order
+    /// Get all config fields in display order (includes all fields, visibility controlled by UI)
     pub fn all() -> &'static [ConfigField] {
         &[
             ConfigField::DefaultEditor,
             ConfigField::MascotAdvice,
+            ConfigField::MascotAdviceInterval,
             ConfigField::CheckCommand,
             ConfigField::RunCommand,
             ConfigField::TestCommand,
             ConfigField::FormatCommand,
             ConfigField::LintCommand,
         ]
+    }
+
+    /// Get visible fields based on mascot advice being enabled
+    pub fn visible_fields(mascot_enabled: bool) -> Vec<ConfigField> {
+        let mut fields = vec![
+            ConfigField::DefaultEditor,
+            ConfigField::MascotAdvice,
+        ];
+        if mascot_enabled {
+            fields.push(ConfigField::MascotAdviceInterval);
+        }
+        fields.extend([
+            ConfigField::CheckCommand,
+            ConfigField::RunCommand,
+            ConfigField::TestCommand,
+            ConfigField::FormatCommand,
+            ConfigField::LintCommand,
+        ]);
+        fields
     }
 }
 
@@ -1776,6 +1805,7 @@ impl ConfigField {
         match self {
             ConfigField::DefaultEditor => "Default Editor",
             ConfigField::MascotAdvice => "Mascot Advice",
+            ConfigField::MascotAdviceInterval => "  Advice Interval",
             ConfigField::CheckCommand => "Check Command",
             ConfigField::RunCommand => "Run Command",
             ConfigField::TestCommand => "Test Command",
@@ -1789,6 +1819,7 @@ impl ConfigField {
         match self {
             ConfigField::DefaultEditor => "External editor for Ctrl-G (global setting)",
             ConfigField::MascotAdvice => "Toggle with Ctrl-W (uses Claude tokens)",
+            ConfigField::MascotAdviceInterval => "How often mascot gives advice (1-120 minutes)",
             ConfigField::CheckCommand => "e.g. cargo check, npm run build, tsc --noEmit",
             ConfigField::RunCommand => "e.g. cargo run, npm start, python main.py",
             ConfigField::TestCommand => "e.g. cargo test, npm test, pytest",
@@ -1799,17 +1830,31 @@ impl ConfigField {
 
     /// Whether this field is a global setting (vs project-specific)
     pub fn is_global(&self) -> bool {
-        matches!(self, ConfigField::DefaultEditor | ConfigField::MascotAdvice)
+        matches!(self, ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval)
     }
 
-    /// Get the next field (wrapping)
+    /// Get the next field (wrapping), respecting visible fields based on mascot enabled state
+    pub fn next_visible(&self, mascot_enabled: bool) -> ConfigField {
+        let visible = Self::visible_fields(mascot_enabled);
+        let idx = visible.iter().position(|f| f == self).unwrap_or(0);
+        visible[(idx + 1) % visible.len()]
+    }
+
+    /// Get the previous field (wrapping), respecting visible fields based on mascot enabled state
+    pub fn prev_visible(&self, mascot_enabled: bool) -> ConfigField {
+        let visible = Self::visible_fields(mascot_enabled);
+        let idx = visible.iter().position(|f| f == self).unwrap_or(0);
+        visible[(idx + visible.len() - 1) % visible.len()]
+    }
+
+    /// Get the next field (wrapping) - deprecated, use next_visible instead
     pub fn next(&self) -> ConfigField {
         let all = Self::all();
         let idx = all.iter().position(|f| f == self).unwrap_or(0);
         all[(idx + 1) % all.len()]
     }
 
-    /// Get the previous field (wrapping)
+    /// Get the previous field (wrapping) - deprecated, use prev_visible instead
     pub fn prev(&self) -> ConfigField {
         let all = Self::all();
         let idx = all.iter().position(|f| f == self).unwrap_or(0);
@@ -1832,6 +1877,8 @@ pub struct ConfigModalState {
     pub temp_editor: Editor,
     /// Temporary mascot advice setting (None = show intro, Some(true/false) = enabled/disabled)
     pub temp_mascot_advice: Option<bool>,
+    /// Temporary mascot advice interval in minutes
+    pub temp_mascot_interval: u32,
 }
 
 /// Create vim mode handler with custom keybindings

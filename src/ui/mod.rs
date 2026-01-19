@@ -2343,6 +2343,7 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
 
     // Mascot Advice field
     let is_selected = config.selected_field == ConfigField::MascotAdvice;
+    let mascot_enabled = config.temp_mascot_advice.unwrap_or(true);
     let mascot_value = match config.temp_mascot_advice {
         None => "On (intro pending)".to_string(),
         Some(true) => "On".to_string(),
@@ -2353,7 +2354,7 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         (
             "► ",
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            if config.temp_mascot_advice.unwrap_or(true) {
+            if mascot_enabled {
                 Style::default().fg(Color::Green)
             } else {
                 Style::default().fg(Color::Red)
@@ -2363,7 +2364,7 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         (
             "  ",
             Style::default(),
-            if config.temp_mascot_advice.unwrap_or(true) {
+            if mascot_enabled {
                 Style::default().fg(Color::Green).add_modifier(Modifier::DIM)
             } else {
                 Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
@@ -2384,6 +2385,49 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         ]));
     }
     lines.push(Line::from(""));
+
+    // Mascot Advice Interval field (only shown when mascot advice is enabled)
+    if mascot_enabled {
+        let is_selected = config.selected_field == ConfigField::MascotAdviceInterval;
+        let is_editing = is_selected && config.editing;
+
+        let interval_value = if is_editing {
+            if config.edit_buffer.is_empty() {
+                "_".to_string()
+            } else {
+                format!("{}_", config.edit_buffer)
+            }
+        } else {
+            format!("{} min", config.temp_mascot_interval)
+        };
+
+        let (prefix, style, value_style) = if is_selected {
+            (
+                "► ",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                if is_editing {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                }
+            )
+        } else {
+            ("  ", Style::default(), Style::default().fg(Color::DarkGray))
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", ConfigField::MascotAdviceInterval.label()), style),
+            Span::styled(interval_value, value_style),
+        ]));
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(ConfigField::MascotAdviceInterval.hint(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
 
     // Section: Project Commands
     lines.push(Line::from(vec![

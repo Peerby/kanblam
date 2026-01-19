@@ -6111,7 +6111,8 @@ impl App {
                                     project.watcher_intro_shown = true;
                                     if !project.watcher_enabled {
                                         project.watcher_enabled = true;
-                                        // Will start watcher below
+                                        // Set timer to now - user waits full interval before first advice
+                                        project.watcher_last_interaction = Some(std::time::Instant::now());
                                     }
                                 }
                                 Some(false) => {
@@ -6127,11 +6128,12 @@ impl App {
                         .map(|p| p.watcher_enabled && !p.watcher_observing && p.watcher_comment.is_none() && !p.watcher_awaiting_dismissal)
                         .unwrap_or(false);
                     if should_start {
-                        // Check if enough time has passed since last interaction (15 min = 900 sec)
+                        // Check if enough time has passed since last interaction (based on configured interval)
+                        let interval_secs = (self.model.global_settings.mascot_advice_interval_minutes * 60) as u64;
                         let should_trigger = self.model.active_project()
                             .and_then(|p| p.watcher_last_interaction)
-                            .map(|t| t.elapsed().as_secs() >= 900)
-                            .unwrap_or(true); // No interaction yet = trigger immediately after intro
+                            .map(|t| t.elapsed().as_secs() >= interval_secs)
+                            .unwrap_or(false); // No interaction yet = wait for timer to be set
 
                         if should_trigger {
                             commands.push(Message::TriggerWatcher);
@@ -6213,6 +6215,7 @@ impl App {
                     .unwrap_or_default();
                 let temp_editor = self.model.global_settings.default_editor;
                 let temp_mascot_advice = self.model.global_settings.mascot_advice_enabled;
+                let temp_mascot_interval = self.model.global_settings.mascot_advice_interval_minutes;
 
                 self.model.ui_state.config_modal = Some(ConfigModalState {
                     selected_field: ConfigField::default(),
@@ -6221,6 +6224,7 @@ impl App {
                     temp_commands,
                     temp_editor,
                     temp_mascot_advice,
+                    temp_mascot_interval,
                 });
             }
 
@@ -6230,13 +6234,15 @@ impl App {
 
             Message::ConfigNavigateDown => {
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
-                    config.selected_field = config.selected_field.next();
+                    let mascot_enabled = config.temp_mascot_advice.unwrap_or(true);
+                    config.selected_field = config.selected_field.next_visible(mascot_enabled);
                 }
             }
 
             Message::ConfigNavigateUp => {
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
-                    config.selected_field = config.selected_field.prev();
+                    let mascot_enabled = config.temp_mascot_advice.unwrap_or(true);
+                    config.selected_field = config.selected_field.prev_visible(mascot_enabled);
                 }
             }
 
@@ -6257,6 +6263,12 @@ impl App {
                     } else if config.selected_field == ConfigField::MascotAdvice {
                         // Toggle on/off (None becomes Some(true), Some(true) becomes Some(false), Some(false) becomes Some(true))
                         config.temp_mascot_advice = Some(!config.temp_mascot_advice.unwrap_or(true));
+                    } else if config.selected_field == ConfigField::MascotAdviceInterval {
+                        // Interval field - enter text edit mode
+                        if !config.editing {
+                            config.edit_buffer = config.temp_mascot_interval.to_string();
+                            config.editing = true;
+                        }
                     } else {
                         // Command field - enter text edit mode
                         if !config.editing {
@@ -6267,7 +6279,7 @@ impl App {
                                 ConfigField::TestCommand => config.temp_commands.test.clone().unwrap_or_default(),
                                 ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
                                 ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
-                                ConfigField::DefaultEditor | ConfigField::MascotAdvice => String::new(),
+                                ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval => String::new(),
                             };
                             config.editing = true;
                         }
@@ -6303,6 +6315,14 @@ impl App {
                         config.editing = false;
                     } else if config.selected_field == ConfigField::MascotAdvice {
                         // MascotAdvice is toggled directly, no edit mode
+                    } else if config.selected_field == ConfigField::MascotAdviceInterval {
+                        // Parse and validate interval (1-120 minutes)
+                        if let Ok(interval) = config.edit_buffer.parse::<u32>() {
+                            config.temp_mascot_interval = interval.clamp(1, 120);
+                        }
+                        // If parse fails, keep previous value
+                        config.editing = false;
+                        config.edit_buffer.clear();
                     } else {
                         // Command field - save buffer to temp_commands
                         let value = if config.edit_buffer.is_empty() {
@@ -6317,7 +6337,7 @@ impl App {
                             ConfigField::TestCommand => config.temp_commands.test = value,
                             ConfigField::FormatCommand => config.temp_commands.format = value,
                             ConfigField::LintCommand => config.temp_commands.lint = value,
-                            ConfigField::DefaultEditor | ConfigField::MascotAdvice => {}
+                            ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval => {}
                         }
 
                         config.editing = false;
@@ -6335,19 +6355,21 @@ impl App {
 
             Message::ConfigSave => {
                 // Extract values before borrowing mutably
-                let (temp_editor, temp_commands, temp_mascot_advice) = if let Some(ref config) = self.model.ui_state.config_modal {
-                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice)
+                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval)
                 } else {
-                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled)
+                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes)
                 };
 
                 // Check if mascot advice setting changed
                 let mascot_changed = self.model.global_settings.mascot_advice_enabled != temp_mascot_advice;
+                let interval_changed = self.model.global_settings.mascot_advice_interval_minutes != temp_mascot_interval;
                 let mascot_enabled = temp_mascot_advice.unwrap_or(true);
 
                 // Save global settings
                 self.model.global_settings.default_editor = temp_editor;
                 self.model.global_settings.mascot_advice_enabled = temp_mascot_advice;
+                self.model.global_settings.mascot_advice_interval_minutes = temp_mascot_interval;
 
                 // Save project commands
                 if let Some(project) = self.model.active_project_mut() {
@@ -6364,6 +6386,10 @@ impl App {
                     } else {
                         commands.push(Message::StopWatcher);
                     }
+                } else if interval_changed && mascot_enabled {
+                    // If only interval changed and mascot is enabled, restart watcher with new interval
+                    commands.push(Message::StopWatcher);
+                    commands.push(Message::StartWatcher);
                 }
 
                 self.model.ui_state.config_modal = None;
@@ -6526,19 +6552,21 @@ impl App {
                 // Update global setting to remember preference
                 self.model.global_settings.mascot_advice_enabled = Some(true);
 
+                let interval_minutes = self.model.global_settings.mascot_advice_interval_minutes;
                 if let Some(project) = self.model.active_project_mut() {
                     project.watcher_enabled = true;
-                    // Reset timer to trigger soon
-                    project.watcher_last_interaction = Some(std::time::Instant::now() - std::time::Duration::from_secs(900));
+                    // Set timer to now - user must wait full interval before first advice
+                    // (The only exception is right after intro dismissal, handled in DismissWatcherComment)
+                    project.watcher_last_interaction = Some(std::time::Instant::now());
                     let working_dir = project.working_dir.clone();
 
-                    // Start watcher via sidecar (15 minute interval)
+                    // Start watcher via sidecar with configured interval
                     if let Some(ref client) = self.sidecar_client {
-                        if let Err(e) = client.start_watcher(&working_dir, Some(15)) {
+                        if let Err(e) = client.start_watcher(&working_dir, Some(interval_minutes)) {
                             commands.push(Message::Error(format!("Failed to start watcher: {}", e)));
                         } else {
                             commands.push(Message::SetStatusMessage(Some(
-                                "Mascot advice enabled".to_string()
+                                format!("Mascot advice enabled ({} min interval)", interval_minutes)
                             )));
                         }
                     }
@@ -6609,6 +6637,12 @@ impl App {
                 // Find the project that matches this comment's path
                 for project in &mut self.model.projects {
                     if paths_match(&project.working_dir, &comment.project_path) {
+                        // Don't overwrite existing comment (e.g., intro) that's awaiting dismissal
+                        if project.watcher_awaiting_dismissal && project.watcher_comment.is_some() {
+                            project.watcher_observing = false;
+                            break;
+                        }
+
                         project.watcher_comment = Some(crate::model::WatcherCommentDisplay::new(
                             comment.comment.clone(),
                             comment.mood,
@@ -6655,11 +6689,30 @@ impl App {
                     .map(|c| c.is_intro)
                     .unwrap_or(false);
 
+                let interval_minutes = self.model.global_settings.mascot_advice_interval_minutes;
                 if let Some(project) = self.model.active_project_mut() {
                     project.watcher_comment = None;
-                    // Mark interaction to restart 15min timer
                     project.watcher_awaiting_dismissal = false;
-                    project.watcher_last_interaction = Some(std::time::Instant::now());
+
+                    if was_intro {
+                        // After intro dismissal, trigger first real advice soon (30 seconds)
+                        // by setting last_interaction to (interval - 30s) ago
+                        let trigger_delay_secs = 30u64;
+                        let interval_secs = (interval_minutes as u64) * 60;
+                        if interval_secs > trigger_delay_secs {
+                            project.watcher_last_interaction = Some(
+                                std::time::Instant::now() - std::time::Duration::from_secs(interval_secs - trigger_delay_secs)
+                            );
+                        } else {
+                            // Interval is very short, just trigger soon
+                            project.watcher_last_interaction = Some(
+                                std::time::Instant::now() - std::time::Duration::from_secs(interval_secs)
+                            );
+                        }
+                    } else {
+                        // Normal dismissal - restart timer from now (wait full interval)
+                        project.watcher_last_interaction = Some(std::time::Instant::now());
+                    }
                 }
 
                 // If intro was dismissed, enable mascot advice
