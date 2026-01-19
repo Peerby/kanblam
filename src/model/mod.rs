@@ -1484,6 +1484,10 @@ pub struct UiState {
     pub welcome_message_cooldown: u16,
     /// Whether the welcome speech bubble is focused (for navigation)
     pub welcome_bubble_focused: bool,
+
+    // Signal replay state
+    /// True while replaying signals on startup (suppresses audio notifications)
+    pub replaying_signals: bool,
 }
 
 /// State for the interactive Claude terminal modal
@@ -1778,6 +1782,8 @@ impl Default for UiState {
             welcome_message_idx: 0,
             welcome_message_cooldown: 80,
             welcome_bubble_focused: false,
+            // Signal replay: starts false, set to true during startup signal replay
+            replaying_signals: false,
         }
     }
 }

@@ -3520,6 +3520,10 @@ impl App {
                 // Find the task either by UUID or by worktree path
                 let signal_dir = signal.project_dir.canonicalize().unwrap_or(signal.project_dir.clone());
 
+                // Capture replay flag before mutable borrow of projects
+                // During signal replay on startup, we suppress audio notifications
+                let replaying_signals = self.model.ui_state.replaying_signals;
+
                 let mut found_task = false;
 
                 for project in &mut self.model.projects {
@@ -3625,7 +3629,9 @@ impl App {
                                     if task.status != TaskStatus::Review {
                                         project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                         project.needs_attention = true;
-                                        notify::play_attention_sound();
+                                        if !replaying_signals {
+                                            notify::play_attention_sound();
+                                        }
                                         notify::set_attention_indicator(&project_name);
                                     }
                                 }
@@ -3663,7 +3669,9 @@ impl App {
                                         project.move_task_to_end_of_status(task_id, TaskStatus::Review);
                                     }
                                     project.needs_attention = true;
-                                    notify::play_attention_sound();
+                                    if !replaying_signals {
+                                        notify::play_attention_sound();
+                                    }
                                     notify::set_attention_indicator(&project.name);
                                 }
                             }
@@ -3680,7 +3688,9 @@ impl App {
                                     task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
-                                    notify::play_attention_sound();
+                                    if !replaying_signals {
+                                        notify::play_attention_sound();
+                                    }
                                     notify::set_attention_indicator(&project.name);
                                 } else if signal.input_type == "idle" && task.status == TaskStatus::Review {
                                     // idle_prompt fires after 60+ seconds of Claude being idle.
@@ -3692,7 +3702,9 @@ impl App {
                                             task.status = TaskStatus::NeedsWork;
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                             project.needs_attention = true;
-                                            notify::play_attention_sound();
+                                            if !replaying_signals {
+                                                notify::play_attention_sound();
+                                            }
                                             notify::set_attention_indicator(&project.name);
                                         }
                                         // Otherwise, Claude is just idle after finishing - stay in Review
@@ -3706,7 +3718,9 @@ impl App {
                                     task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
-                                    notify::play_attention_sound();
+                                    if !replaying_signals {
+                                        notify::play_attention_sound();
+                                    }
                                     notify::set_attention_indicator(&project.name);
                                 }
                             }

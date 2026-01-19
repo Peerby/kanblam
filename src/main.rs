@@ -78,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Process any signals that arrived while app was not running
     // Signals are sorted chronologically and replayed in order
+    // Note: replaying_signals flag suppresses audio notifications during replay
     if let Some(ref mut watcher) = hook_watcher {
+        app.model.ui_state.replaying_signals = true;
         let pending_events = watcher.process_all_pending();
         for event in pending_events {
             if let Some(msg) = convert_watcher_event(event) {
@@ -86,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
                 process_commands_recursively(&mut app, commands);
             }
         }
+        app.model.ui_state.replaying_signals = false;
     }
 
     // Fallback: Check tmux windows for InProgress tasks that are actually idle
