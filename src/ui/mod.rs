@@ -1597,7 +1597,7 @@ fn render_help_tab<'a>(
                 Span::styled(" u ", *key_style), Span::styled(" Unapply: remove applied changes", *label_style),
             ]));
             lines.push(Line::from(vec![
-                Span::styled(" r ", *key_style), Span::styled(" Rebase: update worktree to latest main", *label_style),
+                Span::styled(" r/= ", *key_style), Span::styled(" Rebase: update worktree to latest main", *label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" m ", *key_style), Span::styled(" Merge: finalize changes and mark done", *label_style),
@@ -2028,7 +2028,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  m/M        Merge changes (m: mark done, M: keep in Review)"),
         Line::from("  d          Discard: reject changes and mark done"),
         Line::from("  u          Unapply applied changes"),
-        Line::from("  r          Rebase: update worktree to latest main"),
+        Line::from("  r/=        Rebase: update worktree to latest main"),
         Line::from("  c          Check: view git diff/status report"),
         Line::from("  f          Feedback: send follow-up instructions"),
         Line::from("  n          Needs work: move back to Needs Work"),

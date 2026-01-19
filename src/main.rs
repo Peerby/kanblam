@@ -1218,7 +1218,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         }
 
         // Rebase selected task's worktree to latest main (Review only)
-        KeyCode::Char('r') if app.model.ui_state.selected_column == TaskStatus::Review => {
+        KeyCode::Char('r') | KeyCode::Char('=') if app.model.ui_state.selected_column == TaskStatus::Review => {
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(TaskStatus::Review);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -1957,7 +1957,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         }
 
         // Move to Review (from InProgress, NeedsWork, Done) or Rebase worktree (in Review)
-        KeyCode::Char('r') => {
+        KeyCode::Char('r') | KeyCode::Char('=') => {
             if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
