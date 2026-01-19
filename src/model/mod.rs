@@ -980,10 +980,10 @@ impl Project {
         self.tasks.iter().find(|t| t.status == TaskStatus::InProgress)
     }
 
-    /// Check if any task is currently active (InProgress or NeedsInput)
+    /// Check if any task is currently active (InProgress or NeedsWork)
     pub fn has_active_task(&self) -> bool {
         self.tasks.iter().any(|t| {
-            t.status == TaskStatus::InProgress || t.status == TaskStatus::NeedsInput
+            t.status == TaskStatus::InProgress || t.status == TaskStatus::NeedsWork
         })
     }
 
@@ -1025,7 +1025,7 @@ impl Project {
                 .map(|pos| pos + 1)
                 .unwrap_or_else(|| {
                     // No tasks with this status yet - find appropriate position
-                    // Status order: Planned, InProgress, Testing, NeedsInput, Review, Done
+                    // Status order: Planned, InProgress, Testing, NeedsWork, Review, Done
                     // Insert before any tasks with a "later" status
                     self.tasks.iter()
                         .position(|t| t.status > new_status)
@@ -1039,11 +1039,11 @@ impl Project {
         }
     }
 
-    pub fn needs_input_count(&self) -> usize {
-        self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsInput).count()
+    pub fn needs_work_count(&self) -> usize {
+        self.tasks.iter().filter(|t| t.status == TaskStatus::NeedsWork).count()
     }
 
-    /// Count of tasks needing attention (Review column + NeedsInput) in this project
+    /// Count of tasks needing attention (Review column + NeedsWork) in this project
     /// Includes Review, Accepting, Updating, Applying (all shown in Review column)
     pub fn attention_count(&self) -> usize {
         self.tasks.iter().filter(|t| {
@@ -1052,7 +1052,7 @@ impl Project {
                 TaskStatus::Accepting |
                 TaskStatus::Updating |
                 TaskStatus::Applying |
-                TaskStatus::NeedsInput
+                TaskStatus::NeedsWork
             )
         }).count()
     }
@@ -1323,7 +1323,7 @@ pub enum TaskStatus {
     Planned,
     InProgress,
     Testing,   // Task being tested before review
-    NeedsInput,
+    NeedsWork,
     Review,
     Accepting, // Rebasing onto main before accepting
     Updating,  // Rebasing onto main without merging back (just updating worktree)
@@ -1337,7 +1337,7 @@ impl TaskStatus {
             TaskStatus::Planned => "Planned",
             TaskStatus::InProgress => "In Progress",
             TaskStatus::Testing => "Testing",
-            TaskStatus::NeedsInput => "Needs Input",
+            TaskStatus::NeedsWork => "Needs Work",
             TaskStatus::Review => "Review",
             TaskStatus::Accepting => "Accepting",
             TaskStatus::Updating => "Updating",
@@ -1352,7 +1352,7 @@ impl TaskStatus {
             TaskStatus::Planned,
             TaskStatus::InProgress,
             TaskStatus::Testing,
-            TaskStatus::NeedsInput,
+            TaskStatus::NeedsWork,
             TaskStatus::Review,
             TaskStatus::Done,
         ]
@@ -1365,7 +1365,7 @@ impl TaskStatus {
             TaskStatus::Planned => 0,
             TaskStatus::InProgress => 1,
             TaskStatus::Testing => 2,
-            TaskStatus::NeedsInput => 3,
+            TaskStatus::NeedsWork => 3,
             TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => 4,
             TaskStatus::Done => 5,
         }
@@ -1401,7 +1401,7 @@ pub struct UiState {
     /// Animation frame counter for spinners
     pub animation_frame: usize,
     /// Last scroll position (visual index) for each column, preserved when leaving
-    /// Order: Planned, InProgress, Testing, NeedsInput, Review, Done
+    /// Order: Planned, InProgress, Testing, NeedsWork, Review, Done
     pub column_scroll_offsets: [usize; 6],
 
     // Queue dialog state

@@ -550,7 +550,7 @@ fn handle_mouse_event(
         // Kanban board has outer border (1 char each side)
         // Inside is a 2x3 grid layout:
         //   Row 0: Planned (left)    | InProgress (right)
-        //   Row 1: Testing (left)    | NeedsInput (right)
+        //   Row 1: Testing (left)    | NeedsWork (right)
         //   Row 2: Review (left)     | Done (right)
 
         let inner_x = x.saturating_sub(1); // Account for left border
@@ -571,12 +571,12 @@ fn handle_mouse_event(
             2
         };
 
-        // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
+        // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsWork, Row3 = Review|Done
         let status = match (row, is_right) {
             (0, false) => TaskStatus::Planned,     // Row 0, left
             (0, true) => TaskStatus::InProgress,   // Row 0, right
             (1, false) => TaskStatus::Testing,     // Row 1, left
-            (1, true) => TaskStatus::NeedsInput,   // Row 1, right
+            (1, true) => TaskStatus::NeedsWork,   // Row 1, right
             (2, false) => TaskStatus::Review,      // Row 2, left
             (_, _) => TaskStatus::Done,            // Row 2, right (catch-all)
         };
@@ -636,7 +636,7 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 input_type: String::new(),
             }))
         }
-        WatcherEvent::NeedsInput { session_id, project_dir, input_type } => {
+        WatcherEvent::NeedsWork { session_id, project_dir, input_type } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "needs-input".to_string(),
                 session_id,
@@ -1024,8 +1024,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Open combined tmux session (Claude on left, shell on right)
         KeyCode::Char('o') => {
             let column = app.model.ui_state.selected_column;
-            // Only for tasks with worktrees (InProgress, Review, NeedsInput)
-            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
+            // Only for tasks with worktrees (InProgress, Review, NeedsWork)
+            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsWork) {
                 if let Some(project) = app.model.active_project() {
                     let tasks = project.tasks_by_status(column);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -1043,7 +1043,7 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         // Open combined session in detached mode (Shift-O)
         KeyCode::Char('O') => {
             let column = app.model.ui_state.selected_column;
-            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput) {
+            if matches!(column, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsWork) {
                 if let Some(project) = app.model.active_project() {
                     let tasks = project.tasks_by_status(column);
                     if let Some(idx) = app.model.ui_state.selected_task_idx {
@@ -1278,18 +1278,38 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // 'r' key: Move to Review (from InProgress, NeedsInput, Done)
+        // 'r' key: Move to Review (from InProgress, NeedsWork, Done)
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // Move to Review from InProgress, NeedsInput, or Done
-                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Done) {
+                        // Move to Review from InProgress, NeedsWork, or Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Done) {
                             return vec![Message::MoveTask {
                                 task_id: task.id,
                                 to_status: model::TaskStatus::Review,
+                            }];
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+
+        // 'n' key: Move to NeedsWork (from Review)
+        KeyCode::Char('n') => {
+            let column = app.model.ui_state.selected_column;
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        // Move to NeedsWork from Review
+                        if matches!(column, TaskStatus::Review) {
+                            return vec![Message::MoveTask {
+                                task_id: task.id,
+                                to_status: model::TaskStatus::NeedsWork,
                             }];
                         }
                     }
@@ -1340,8 +1360,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // Reset works on InProgress, NeedsInput, Review, Done
-                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
+                        // Reset works on InProgress, NeedsWork, Review, Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
                             return vec![Message::ShowConfirmation {
                                 message: format!("Reset '{}'? This will clean up worktree and move to Planned. (y/n)", task.title),
                                 action: model::PendingAction::ResetTask(task.id),
@@ -1360,11 +1380,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         KeyCode::Char('-') | KeyCode::Char('_') => vec![Message::MoveTaskDown],
 
         // Column switching with 1-6
-        // 2x3 grid: Row 1: Planned|InProgress, Row 2: Testing|NeedsInput, Row 3: Review|Done
+        // 2x3 grid: Row 1: Planned|InProgress, Row 2: Testing|NeedsWork, Row 3: Review|Done
         KeyCode::Char('1') => vec![Message::SelectColumn(model::TaskStatus::Planned)],
         KeyCode::Char('2') => vec![Message::SelectColumn(model::TaskStatus::InProgress)],
         KeyCode::Char('3') => vec![Message::SelectColumn(model::TaskStatus::Testing)],
-        KeyCode::Char('4') => vec![Message::SelectColumn(model::TaskStatus::NeedsInput)],
+        KeyCode::Char('4') => vec![Message::SelectColumn(model::TaskStatus::NeedsWork)],
         KeyCode::Char('5') => vec![Message::SelectColumn(model::TaskStatus::Review)],
         KeyCode::Char('6') => vec![Message::SelectColumn(model::TaskStatus::Done)],
 
@@ -1703,7 +1723,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
         // Open combined tmux session (Claude on left, shell on right)
         KeyCode::Char('o') => {
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsInput)
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::Review | TaskStatus::NeedsWork)
                 && task.worktree_path.is_some()
             {
                 vec![Message::ToggleTaskPreview, Message::OpenInteractiveModal(task.id)]
@@ -1814,9 +1834,9 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Move to Review (from InProgress, NeedsInput, Done) or Rebase worktree (in Review)
+        // Move to Review (from InProgress, NeedsWork, Done) or Rebase worktree (in Review)
         KeyCode::Char('r') => {
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Done) {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
                     Message::MoveTask {
@@ -1834,7 +1854,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
         // Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsInput | TaskStatus::Review | TaskStatus::Done) {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
                 vec![
                     Message::ToggleTaskPreview,
                     Message::ShowConfirmation {
@@ -2096,10 +2116,10 @@ fn detect_idle_tasks_from_tmux(app: &mut App) {
         let project_slug = project.slug();
 
         for task in &mut project.tasks {
-            // Check InProgress and NeedsInput tasks with tmux windows
+            // Check InProgress and NeedsWork tasks with tmux windows
             // Both could have finished while app was closed
             if task.status != model::TaskStatus::InProgress
-                && task.status != model::TaskStatus::NeedsInput {
+                && task.status != model::TaskStatus::NeedsWork {
                 continue;
             }
             let Some(ref window_name) = task.tmux_window else {

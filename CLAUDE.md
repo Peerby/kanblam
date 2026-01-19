@@ -63,7 +63,7 @@ Two modes for Claude sessions:
 
 ### Task Lifecycle States
 ```
-Planned → Queued → InProgress → (NeedsInput) → Review → (Accepting) → Done
+Planned → Queued → InProgress → (NeedsWork) → Review → (Accepting) → Done
                                                     ↓
                                                   Discard
 ```

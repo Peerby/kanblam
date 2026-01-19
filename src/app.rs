@@ -432,8 +432,8 @@ impl App {
                         .find(|t| t.id == task_id)
                         .map(|t| t.status);
 
-                    // Handle reset tasks from Review or NeedsInput (legacy path)
-                    if matches!(task_status, Some(TaskStatus::Review) | Some(TaskStatus::NeedsInput)) {
+                    // Handle reset tasks from Review or NeedsWork (legacy path)
+                    if matches!(task_status, Some(TaskStatus::Review) | Some(TaskStatus::NeedsWork)) {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.status = TaskStatus::InProgress;
                             project.needs_attention = false;
@@ -445,7 +445,7 @@ impl App {
                         return commands;
                     }
 
-                    // Check if another task is active (InProgress or NeedsInput)
+                    // Check if another task is active (InProgress or NeedsWork)
                     if project.has_active_task() {
                         // Can't start a new task while another is active
                         commands.push(Message::SetStatusMessage(Some(
@@ -1151,6 +1151,43 @@ impl App {
                     // Release the lock - merge completed successfully
                     if let Some(project) = self.model.active_project_mut() {
                         project.release_main_worktree_lock(task_id);
+                    }
+
+                    // Clean up applied state - changes are now committed to main
+                    // This prevents unapply from trying to reverse committed changes
+                    crate::worktree::cleanup_applied_state(task_id);
+
+                    // If there was a stash created during apply, track it so user can restore their changes
+                    let stash_to_track = self.model.active_project()
+                        .and_then(|p| p.applied_stash_ref.clone())
+                        .and_then(|sha| {
+                            let project_dir = self.model.active_project()
+                                .map(|p| p.working_dir.clone())?;
+                            // Get stash details to create a TrackedStash entry
+                            if let Ok((files_changed, files_summary)) =
+                                crate::worktree::get_stash_details(&project_dir, &sha)
+                            {
+                                Some(crate::model::TrackedStash {
+                                    stash_ref: "stash@{0}".to_string(),
+                                    description: "Uncommitted changes before task apply".to_string(),
+                                    created_at: chrono::Utc::now(),
+                                    files_changed,
+                                    files_summary,
+                                    stash_sha: sha,
+                                })
+                            } else {
+                                None
+                            }
+                        });
+
+                    if let Some(project) = self.model.active_project_mut() {
+                        // Track the stash if there was one
+                        if let Some(tracked) = stash_to_track {
+                            project.tracked_stashes.push(tracked);
+                        }
+                        project.applied_task_id = None;
+                        project.applied_stash_ref = None;
+                        project.applied_with_conflict_resolution = false;
                     }
 
                     // Check if there are tracked stashes to offer popping
@@ -3638,9 +3675,9 @@ impl App {
                                     // Skip - we're in the middle of a rebase operation
                                 } else if signal.input_type == "permission" {
                                     // permission_prompt means Claude is blocked waiting for tool approval.
-                                    // Always move to NeedsInput, even from Review - this is unambiguous.
+                                    // Always move to NeedsWork, even from Review - this is unambiguous.
                                     task.log_activity("Waiting for permission...");
-                                    task.status = TaskStatus::NeedsInput;
+                                    task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
@@ -3652,7 +3689,7 @@ impl App {
                                     if let Some(ref window_name) = task.tmux_window {
                                         if crate::tmux::claude_output_contains_question(&project_slug, window_name) {
                                             task.log_activity("Waiting for answer...");
-                                            task.status = TaskStatus::NeedsInput;
+                                            task.status = TaskStatus::NeedsWork;
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                             project.needs_attention = true;
                                             notify::play_attention_sound();
@@ -3661,12 +3698,12 @@ impl App {
                                         // Otherwise, Claude is just idle after finishing - stay in Review
                                     }
                                 } else if task.status != TaskStatus::Review {
-                                    // idle_prompt or unknown type - only move to NeedsInput if NOT
+                                    // idle_prompt or unknown type - only move to NeedsWork if NOT
                                     // already in Review. The idle_prompt fires both when Claude asks
                                     // a question AND when Claude is done but sitting at an idle prompt.
                                     // We can't distinguish these cases, so trust the Review state.
                                     task.log_activity("Waiting for input...");
-                                    task.status = TaskStatus::NeedsInput;
+                                    task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
@@ -4015,7 +4052,7 @@ impl App {
                                 task.log_activity("Waiting for input...");
                                 // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
                                 if !was_accepting && !was_updating && !was_applying {
-                                    task.status = TaskStatus::NeedsInput;
+                                    task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
@@ -5434,12 +5471,12 @@ impl App {
 
                 // Gather info first to avoid borrow issues
                 let current_column = self.model.ui_state.selected_column;
-                // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
+                // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsWork, Row3 = Review|Done
                 let above_status = match current_column {
                     TaskStatus::Testing => Some(TaskStatus::Planned),
-                    TaskStatus::NeedsInput => Some(TaskStatus::InProgress),
+                    TaskStatus::NeedsWork => Some(TaskStatus::InProgress),
                     TaskStatus::Review => Some(TaskStatus::Testing),
-                    TaskStatus::Done => Some(TaskStatus::NeedsInput),
+                    TaskStatus::Done => Some(TaskStatus::NeedsWork),
                     _ => None, // Planned and InProgress have nothing above
                 };
                 let above_tasks_len = above_status
@@ -5539,12 +5576,12 @@ impl App {
                             None => (0, false),
                         };
                         // 2x3 grid navigation - move down in same column
-                        // Row1 = Planned|InProgress, Row2 = Testing|NeedsInput, Row3 = Review|Done
+                        // Row1 = Planned|InProgress, Row2 = Testing|NeedsWork, Row3 = Review|Done
                         let below = match self.model.ui_state.selected_column {
                             TaskStatus::Planned => Some(TaskStatus::Testing),
-                            TaskStatus::InProgress => Some(TaskStatus::NeedsInput),
+                            TaskStatus::InProgress => Some(TaskStatus::NeedsWork),
                             TaskStatus::Testing => Some(TaskStatus::Review),
-                            TaskStatus::NeedsInput => Some(TaskStatus::Done),
+                            TaskStatus::NeedsWork => Some(TaskStatus::Done),
                             _ => None, // Review and Done have nothing below
                         };
                         let below_len = below
@@ -5607,7 +5644,7 @@ impl App {
                     return vec![];
                 }
 
-                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsInput -> Review -> Done
+                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsWork -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {
                     if idx > 0 {
@@ -5634,7 +5671,7 @@ impl App {
                     return vec![];
                 }
 
-                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsInput -> Review -> Done
+                // Linear navigation through all columns: Planned -> InProgress -> Testing -> NeedsWork -> Review -> Done
                 let columns = TaskStatus::all();
                 if let Some(idx) = columns.iter().position(|&s| s == self.model.ui_state.selected_column) {
                     if idx + 1 < columns.len() {

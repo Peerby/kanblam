@@ -111,7 +111,7 @@ cargo run --release
 |-----|--------|
 | `h/j/k/l` | Navigate (vim-style) |
 | `←/↓/↑/→` | Navigate (arrow keys) |
-| `1-6` | Jump to column (Planned, Queued, InProgress, NeedsInput, Review, Done) |
+| `1-6` | Jump to column (Planned, InProgress, Testing, NeedsWork, Review, Done) |
 | `Tab` | Cycle focus (Board → Input → Projects) |
 | `Enter` / `Space` / `v` | View task details |
 | `?` | Help |
@@ -121,7 +121,7 @@ cargo run --release
 |-----|--------|
 | `i` | Enter input mode (create/edit task) |
 | `e` | Edit selected task |
-| `s` | Start task (Planned/Queued) or continue task (Review/NeedsInput) |
+| `s` | Start task (Planned/Queued) or continue task (Review/NeedsWork) |
 | `o` | Open terminal view (tmux split with Claude + shell) |
 | `O` | Open terminal in detached tmux (Shift+O) |
 | `d` | Delete task, or Discard changes (in Review) |

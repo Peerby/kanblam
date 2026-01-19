@@ -32,7 +32,7 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     // Split into 3 rows x 2 columns for the six statuses
-    // Middle row (InProgress/NeedsInput) is smaller since those columns typically have fewer tasks
+    // Middle row (InProgress/NeedsWork) is smaller since those columns typically have fewer tasks
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -59,12 +59,12 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
 
     // Render each column in 2x3 layout:
     // Row 1: Planned | InProgress
-    // Row 2: Testing | NeedsInput
+    // Row 2: Testing | NeedsWork
     // Row 3: Review | Done
     render_column(frame, row1_cols[0], app, TaskStatus::Planned);
     render_column(frame, row1_cols[1], app, TaskStatus::InProgress);
     render_column(frame, row2_cols[0], app, TaskStatus::Testing);
-    render_column(frame, row2_cols[1], app, TaskStatus::NeedsInput);
+    render_column(frame, row2_cols[1], app, TaskStatus::NeedsWork);
     render_column(frame, row3_cols[0], app, TaskStatus::Review);
     render_column(frame, row3_cols[1], app, TaskStatus::Done);
 }
@@ -80,7 +80,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         TaskStatus::Planned => ("1", "Planned", Color::Blue, Color::White),
         TaskStatus::InProgress => ("2", "In Progress", Color::Yellow, Color::Black),
         TaskStatus::Testing => ("3", "Testing", Color::Cyan, Color::Black),
-        TaskStatus::NeedsInput => ("4", "Needs Input", Color::Red, Color::White),
+        TaskStatus::NeedsWork => ("4", "Needs Work", Color::Red, Color::White),
         TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => ("5", "Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
     };
@@ -221,12 +221,12 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         display_source.clone()
                     };
 
-                    // Add spinner for in-progress tasks, pulsing indicator for needs-input,
+                    // Add spinner for in-progress tasks, question prompt for needs-work,
                     // merge animation for accepting tasks, apply animation for applying tasks,
                     // and building animation for queued tasks that are preparing (creating worktree)
                     // InProgress uses the same spinner as Claude Code CLI: ·✢✳✶✻✽
                     let spinner_frames = ['·', '✢', '✳', '✶', '✻', '✽'];
-                    let pulse_frames = ['◐', '◓', '◑', '◒'];
+                    let prompt_frames = ['?', '¿', '⁇', '❓'];
                     let merge_frames = ['\u{E727}', '\u{E725}', '\u{E728}', '\u{E726}'];
                     let rebase_frames = ['↑', '⇧', '⇈', '⇪', '⇈', '⇧', '↑']; // Upward arrows for rebase
                     // Saved patterns: ['░', '▒', '▓', '█', '▓', '▒'] (fill), ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'] (rotating dot)
@@ -248,9 +248,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             let frame = (app.model.ui_state.animation_frame / 2) % spinner_frames.len();
                             format!("{} ", spinner_frames[frame])
                         }
-                        TaskStatus::NeedsInput => {
-                            let frame = app.model.ui_state.animation_frame % pulse_frames.len();
-                            format!("{} ", pulse_frames[frame])
+                        TaskStatus::NeedsWork => {
+                            let frame = app.model.ui_state.animation_frame % prompt_frames.len();
+                            format!("{} ", prompt_frames[frame])
                         }
                         TaskStatus::Accepting => {
                             let frame = app.model.ui_state.animation_frame % merge_frames.len();
@@ -406,10 +406,10 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
         }
     }
 
-    // Show count badge for Review and NeedsInput columns
+    // Show count badge for Review and NeedsWork columns
     let badge_count = match status {
         TaskStatus::Review => app.model.active_project().map(|p| p.review_count()),
-        TaskStatus::NeedsInput => app.model.active_project().map(|p| p.needs_input_count()),
+        TaskStatus::NeedsWork => app.model.active_project().map(|p| p.needs_work_count()),
         _ => None,
     };
 
@@ -562,7 +562,7 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
         TaskStatus::Testing => vec![
             // Empty for now - no tasks will be in Testing state yet
         ],
-        TaskStatus::NeedsInput => vec![
+        TaskStatus::NeedsWork => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("r", key_style),
@@ -585,6 +585,8 @@ fn get_column_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("heck ", desc_style),
             Span::styled("f", key_style),
             Span::styled("eedback ", desc_style),
+            Span::styled("n", key_style),
+            Span::styled("eeds-work ", desc_style),
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("x", key_style),
@@ -648,13 +650,15 @@ fn get_review_hints(has_applied: bool, is_this_task_applied: bool, is_blocked: b
         hints.push(Span::styled("erge ", desc_style));
     }
 
-    // Always show discard, check, feedback, open, reset
+    // Always show discard, check, feedback, needs-work, open, reset
     hints.push(Span::styled("d", key_style));
     hints.push(Span::styled("iscard ", desc_style));
     hints.push(Span::styled("c", key_style));
     hints.push(Span::styled("heck ", desc_style));
     hints.push(Span::styled("f", key_style));
     hints.push(Span::styled("eedback ", desc_style));
+    hints.push(Span::styled("n", key_style));
+    hints.push(Span::styled("eeds-work ", desc_style));
     hints.push(Span::styled("o", key_style));
     hints.push(Span::styled("pen ", desc_style));
     hints.push(Span::styled("x", key_style));
@@ -746,7 +750,7 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("el", desc_style),
         ],
         TaskStatus::Testing => vec![],
-        TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
+        TaskStatus::InProgress | TaskStatus::NeedsWork => vec![
             Span::styled("o", key_style),
             Span::styled("pen ", desc_style),
             Span::styled("t", key_style),
@@ -771,6 +775,8 @@ fn get_medium_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("hk ", desc_style),
             Span::styled("f", key_style),
             Span::styled("b ", desc_style),
+            Span::styled("n", key_style),
+            Span::styled("w ", desc_style),
             Span::styled("x", key_style),
             Span::styled("-rst", desc_style),
         ],
@@ -801,7 +807,7 @@ fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("d", key_style),
         ],
         TaskStatus::Testing => vec![],
-        TaskStatus::InProgress | TaskStatus::NeedsInput => vec![
+        TaskStatus::InProgress | TaskStatus::NeedsWork => vec![
             Span::styled("o", key_style), sep.clone(),
             Span::styled("t", key_style), sep.clone(),
             Span::styled("r", key_style), sep.clone(),
@@ -815,6 +821,7 @@ fn get_short_hints(status: TaskStatus) -> Vec<Span<'static>> {
             Span::styled("d", key_style), sep.clone(),
             Span::styled("c", key_style), sep.clone(),
             Span::styled("f", key_style), sep.clone(),
+            Span::styled("n", key_style), sep.clone(),
             Span::styled("x", key_style),
         ],
         TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => vec![

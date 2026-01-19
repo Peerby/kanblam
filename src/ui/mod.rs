@@ -608,7 +608,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskStatus::Planned => (Color::Blue, "Planned"),
         crate::model::TaskStatus::InProgress => (Color::Yellow, "In Progress"),
         crate::model::TaskStatus::Testing => (Color::Cyan, "Testing"),
-        crate::model::TaskStatus::NeedsInput => (Color::Red, "Needs Input"),
+        crate::model::TaskStatus::NeedsWork => (Color::Red, "Needs Work"),
         crate::model::TaskStatus::Review => (Color::Magenta, "Review"),
         crate::model::TaskStatus::Accepting => (Color::Magenta, "Accepting"),
         crate::model::TaskStatus::Updating => (Color::Magenta, "Updating"),
@@ -803,19 +803,19 @@ fn render_general_tab<'a>(
             }
         }
 
-        crate::model::TaskStatus::NeedsInput => {
+        crate::model::TaskStatus::NeedsWork => {
             if let Some(started) = task.started_at {
                 let duration = chrono::Utc::now().signed_duration_since(started);
                 lines.push(Line::from(vec![
                     Span::styled("⚠ ", Style::default().fg(Color::Red)),
-                    Span::styled("Waiting for input since ", *label_style),
+                    Span::styled("Waiting for work since ", *label_style),
                     Span::styled(format_duration(duration), Style::default().fg(Color::Red)),
                 ]));
             }
 
             lines.push(Line::from(vec![
                 Span::styled("Session: ", *label_style),
-                Span::styled("Paused - needs your input", Style::default().fg(Color::Red)),
+                Span::styled("Paused - needs your attention", Style::default().fg(Color::Red)),
             ]));
         }
 
@@ -1300,7 +1300,7 @@ fn render_help_tab<'a>(
             ]));
         }
 
-        crate::model::TaskStatus::NeedsInput => {
+        crate::model::TaskStatus::NeedsWork => {
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
             ]));
@@ -1333,6 +1333,9 @@ fn render_help_tab<'a>(
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" f ", *key_style), Span::styled(" Feedback: send follow-up instructions", *label_style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled(" n ", *key_style), Span::styled(" Needs work: move back to Needs Work", *label_style),
             ]));
             lines.push(Line::from(vec![
                 Span::styled(" o ", *key_style), Span::styled(" Open interactive modal", *label_style),
@@ -1474,9 +1477,9 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  Space/Enter  Open task details"),
         Line::from("  i          New task (focus input)"),
         Line::from("  e          Edit task"),
-        Line::from("  s          Start (Planned) / Continue (Review/NeedsInput)"),
+        Line::from("  s          Start (Planned) / Continue (Review/NeedsWork)"),
         Line::from("  d          Delete task"),
-        Line::from("  r          Move to Review (InProgress/NeedsInput/Done)"),
+        Line::from("  r          Move to Review (InProgress/NeedsWork/Done)"),
         Line::from("  x          Reset: cleanup & move to Planned"),
         Line::from("  +/-        Reorder task up/down"),
         Line::from(""),
@@ -1490,6 +1493,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  r          Rebase: update worktree to latest main"),
         Line::from("  c          Check: view git diff/status report"),
         Line::from("  f          Feedback: send follow-up instructions"),
+        Line::from("  n          Needs work: move back to Needs Work"),
         Line::from("  o          Open: interactive Claude session"),
         Line::from(""),
         Line::from(vec![

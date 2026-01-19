@@ -22,8 +22,8 @@ pub enum WatcherEvent {
         project_dir: PathBuf,
         reason: String,
     },
-    /// Claude needs user input (Notification hook - permission_prompt or idle_prompt)
-    NeedsInput {
+    /// Claude needs work/input (Notification hook - permission_prompt or idle_prompt)
+    NeedsWork {
         session_id: String,
         project_dir: PathBuf,
         input_type: String,
@@ -143,7 +143,7 @@ impl HookWatcher {
                                 project_dir: signal.project_dir,
                                 reason: signal.reason,
                             }),
-                            "needs-input" => Some(WatcherEvent::NeedsInput {
+                            "needs-input" => Some(WatcherEvent::NeedsWork {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
                                 input_type: signal.input_type,
@@ -228,7 +228,7 @@ impl HookWatcher {
                             project_dir: signal.project_dir,
                             reason: signal.reason,
                         }),
-                        "needs-input" => Some(WatcherEvent::NeedsInput {
+                        "needs-input" => Some(WatcherEvent::NeedsWork {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
                             input_type: signal.input_type,

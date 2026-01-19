@@ -211,7 +211,7 @@ pub fn merge_with_project_settings(
                 {
                     // idle_prompt fires after 60+ seconds of Claude being idle
                     // This is our key signal that Claude is actually waiting for user input,
-                    // not just done. Pass "idle" type so handler can move from Review to NeedsInput.
+                    // not just done. Pass "idle" type so handler can move from Review to NeedsWork.
                     "matcher": "idle_prompt",
                     "hooks": [{
                         "type": "command",
