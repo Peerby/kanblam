@@ -275,7 +275,12 @@ impl SidecarClient {
         let mut reader = BufReader::new(&*stream);
         loop {
             let mut line = String::new();
-            reader.read_line(&mut line)?;
+            let bytes_read = reader.read_line(&mut line)?;
+
+            // EOF means socket closed - sidecar died
+            if bytes_read == 0 {
+                return Err(anyhow!("Sidecar connection closed unexpectedly"));
+            }
 
             if line.trim().is_empty() {
                 continue;
