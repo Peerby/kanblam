@@ -4970,7 +4970,7 @@ impl App {
                         if session_mode == crate::model::SessionMode::CliActivelyWorking {
                             // CLI is actively working (hooks told us) - ask user what to do
                             commands.push(Message::ShowConfirmation {
-                                message: "CLI working. i=interrupt, w=wait, o=open CLI, n=cancel".to_string(),
+                                message: "CLI working. i=interrupt, w=wait (auto-send when ready), o=open CLI, n=cancel".to_string(),
                                 action: PendingAction::InterruptCliForFeedback { task_id, feedback },
                             });
                         } else {
@@ -4982,7 +4982,7 @@ impl App {
                         if session_state == crate::model::ClaudeSessionState::Working {
                             // SDK is actively working - ask user what to do
                             commands.push(Message::ShowConfirmation {
-                                message: "SDK working. i=interrupt, w=wait, n=cancel".to_string(),
+                                message: "SDK working. i=interrupt, w=wait (auto-send when ready), n=cancel".to_string(),
                                 action: PendingAction::InterruptSdkForFeedback { task_id, feedback },
                             });
                         } else {
