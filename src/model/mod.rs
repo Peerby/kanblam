@@ -748,6 +748,10 @@ pub struct Project {
     /// Startup time for this session (used to delay intro by 1 minute)
     #[serde(skip)]
     pub watcher_startup_time: Option<std::time::Instant>,
+
+    /// Aggregated statistics for completed tasks (loaded from ProjectTaskData)
+    #[serde(default)]
+    pub statistics: TaskStatistics,
 }
 
 /// Custom commands for a project. All fields are optional - when None,
@@ -960,6 +964,7 @@ impl Project {
             watcher_last_interaction: None,
             watcher_intro_shown: false,
             watcher_startup_time: None,
+            statistics: TaskStatistics::default(),
         }
     }
 
@@ -1126,6 +1131,40 @@ impl Project {
             true
         } else {
             false
+        }
+    }
+
+    /// Complete a task, recording statistics and moving it to Done.
+    /// This is the canonical way to mark a task as done - use instead of direct status assignment.
+    /// Returns the task ID if successful.
+    pub fn complete_task(&mut self, task_id: Uuid) -> Option<Uuid> {
+        if let Some(idx) = self.tasks.iter().position(|t| t.id == task_id) {
+            let mut task = self.tasks.remove(idx);
+
+            // Record statistics before completing
+            if let Some(started_at) = task.started_at {
+                let completed_at = Utc::now();
+                let duration_secs = completed_at.signed_duration_since(started_at).num_seconds();
+                self.statistics.record_completion(
+                    duration_secs,
+                    task.git_additions,
+                    task.git_deletions,
+                );
+            }
+
+            // Update task state
+            task.status = TaskStatus::Done;
+            task.completed_at = Some(Utc::now());
+            task.worktree_path = None;
+            task.tmux_window = None;
+            task.git_branch = None;
+            task.session_state = ClaudeSessionState::Ended;
+
+            // Push to end (will be last in Done column)
+            self.tasks.push(task);
+            Some(task_id)
+        } else {
+            None
         }
     }
 
@@ -1474,6 +1513,8 @@ pub struct UiState {
     pub show_help: bool,
     /// Scroll offset for the help modal (lines scrolled from top)
     pub help_scroll_offset: usize,
+    /// If true, show the project statistics modal
+    pub show_stats: bool,
     pub pending_confirmation: Option<PendingConfirmation>,
     /// Scroll offset for confirmation modal (when content is large)
     pub confirmation_scroll_offset: usize,
@@ -1977,6 +2018,7 @@ impl Default for UiState {
             selected_column: TaskStatus::default(),
             show_help: false,
             help_scroll_offset: 0,
+            show_stats: false,
             pending_confirmation: None,
             confirmation_scroll_offset: 0,
             status_message: None,
@@ -2170,6 +2212,82 @@ pub struct HookSignal {
 }
 
 // ============================================================================
+// Task Statistics
+// ============================================================================
+
+/// Aggregated statistics for completed tasks in a project.
+/// Tracks completion counts, timing, and weekly progress.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskStatistics {
+    /// Total number of completed tasks (all time)
+    pub total_completed: u32,
+    /// Sum of all task durations in seconds (for computing average)
+    pub total_duration_seconds: i64,
+    /// Timestamps of completed tasks (for weekly calculation)
+    /// Stored as RFC3339 strings for JSON serialization
+    #[serde(default)]
+    pub completion_timestamps: Vec<DateTime<Utc>>,
+    /// Sum of all lines added across completed tasks
+    #[serde(default)]
+    pub total_lines_added: usize,
+    /// Sum of all lines deleted across completed tasks
+    #[serde(default)]
+    pub total_lines_deleted: usize,
+}
+
+impl TaskStatistics {
+    /// Get the average task duration
+    pub fn average_duration_seconds(&self) -> Option<i64> {
+        if self.total_completed > 0 {
+            Some(self.total_duration_seconds / self.total_completed as i64)
+        } else {
+            None
+        }
+    }
+
+    /// Get the number of tasks completed in the last 7 days
+    pub fn tasks_completed_this_week(&self) -> u32 {
+        let week_ago = Utc::now() - chrono::Duration::days(7);
+        self.completion_timestamps
+            .iter()
+            .filter(|ts| **ts >= week_ago)
+            .count() as u32
+    }
+
+    /// Get completion counts per day for the last 7 days (for bar chart)
+    /// Returns vec of (day_offset, count) where day_offset 0 = today, 1 = yesterday, etc.
+    pub fn completions_by_day(&self) -> Vec<(u32, u32)> {
+        let now = Utc::now();
+        let today_start = now.date_naive();
+
+        let mut counts = vec![0u32; 7];
+
+        for ts in &self.completion_timestamps {
+            let ts_date = ts.date_naive();
+            let days_ago = (today_start - ts_date).num_days();
+            if days_ago >= 0 && days_ago < 7 {
+                counts[days_ago as usize] += 1;
+            }
+        }
+
+        counts.into_iter().enumerate().map(|(i, c)| (i as u32, c)).collect()
+    }
+
+    /// Record a completed task
+    pub fn record_completion(&mut self, duration_seconds: i64, lines_added: usize, lines_deleted: usize) {
+        self.total_completed += 1;
+        self.total_duration_seconds += duration_seconds;
+        self.completion_timestamps.push(Utc::now());
+        self.total_lines_added += lines_added;
+        self.total_lines_deleted += lines_deleted;
+
+        // Keep only timestamps from the last 30 days to prevent unbounded growth
+        let cutoff = Utc::now() - chrono::Duration::days(30);
+        self.completion_timestamps.retain(|ts| *ts >= cutoff);
+    }
+}
+
+// ============================================================================
 // Per-Project Task Storage
 // ============================================================================
 
@@ -2191,6 +2309,9 @@ pub struct ProjectTaskData {
     /// Custom commands for this project
     #[serde(default)]
     pub commands: ProjectCommands,
+    /// Aggregated statistics for completed tasks
+    #[serde(default)]
+    pub statistics: TaskStatistics,
 }
 
 fn default_version() -> u32 { 1 }
@@ -2203,6 +2324,7 @@ impl Default for ProjectTaskData {
             applied_task_id: None,
             applied_stash_ref: None,
             commands: ProjectCommands::default(),
+            statistics: TaskStatistics::default(),
         }
     }
 }
@@ -2257,6 +2379,7 @@ impl Project {
         self.applied_task_id = data.applied_task_id;
         self.applied_stash_ref = data.applied_stash_ref;
         self.commands = data.commands;
+        self.statistics = data.statistics;
 
         // Regenerate worktree paths (they're not persisted, derived from project_dir + task_id)
         for task in &mut self.tasks {
@@ -2284,6 +2407,7 @@ impl Project {
             applied_task_id: self.applied_task_id,
             applied_stash_ref: self.applied_stash_ref.clone(),
             commands: self.commands.clone(),
+            statistics: self.statistics.clone(),
         };
         data.save(&self.working_dir)
     }

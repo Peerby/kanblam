@@ -305,17 +305,8 @@ impl App {
                             follow_to_planned = true;
                         }
                     } else if to_status == TaskStatus::Done {
-                        // Special handling for moving to Done: move to end of list
-                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                            let mut task = project.tasks.remove(idx);
-                            task.status = TaskStatus::Done;
-                            task.completed_at = Some(Utc::now());
-                            // Clear session-related fields
-                            task.tmux_window = None;
-                            task.session_state = crate::model::ClaudeSessionState::Ended;
-                            // Push to end (will be last in Done column)
-                            project.tasks.push(task);
-                        }
+                        // Use complete_task to record statistics and move to Done
+                        project.complete_task(task_id);
                     } else if to_status == TaskStatus::Review {
                         // Special handling for moving to Review: move to end of Review tasks
                         // This ensures the first task to finish appears at the top
@@ -702,18 +693,13 @@ impl App {
                             })
                     });
 
-                    // Update task and move to end of list (bottom of Done column)
+                    // Complete task (records stats) and move to Done
                     if let Some(project) = self.model.active_project_mut() {
-                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                            let mut task = project.tasks.remove(idx);
-                            task.status = TaskStatus::Done;
-                            task.completed_at = Some(Utc::now());
-                            task.worktree_path = None;
-                            task.tmux_window = None;
-                            task.session_state = crate::model::ClaudeSessionState::Ended;
+                        // Log activity before completion
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.log_activity("User merged changes");
-                            project.tasks.push(task);
                         }
+                        project.complete_task(task_id);
                         project.needs_attention = project.review_count() > 0;
                         if !project.needs_attention {
                             notify::clear_attention_indicator();
@@ -1048,18 +1034,9 @@ impl App {
                             })
                     });
 
-                    // Update task and move to end of list (bottom of Done column)
+                    // Complete task (records stats) and move to Done
                     if let Some(project) = self.model.active_project_mut() {
-                        if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                            let mut task = project.tasks.remove(idx);
-                            task.status = TaskStatus::Done;
-                            task.completed_at = Some(Utc::now());
-                            task.worktree_path = None;
-                            task.tmux_window = None;
-                            task.git_branch = None;
-                            task.session_state = crate::model::ClaudeSessionState::Ended;
-                            project.tasks.push(task);
-                        }
+                        project.complete_task(task_id);
                         project.needs_attention = project.review_count() > 0;
                         if !project.needs_attention {
                             notify::clear_attention_indicator();
@@ -3035,18 +3012,9 @@ impl App {
                                     )));
                                 }
 
-                                // Update task and move to end of list (bottom of Done column)
+                                // Complete task (records stats) and move to Done
                                 if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                                        let mut task = project.tasks.remove(idx);
-                                        task.status = TaskStatus::Done;
-                                        task.completed_at = Some(Utc::now());
-                                        task.worktree_path = None;
-                                        task.tmux_window = None;
-                                        task.git_branch = None;
-                                        task.session_state = crate::model::ClaudeSessionState::Ended;
-                                        project.tasks.push(task);
-                                    }
+                                    project.complete_task(task_id);
                                     project.needs_attention = project.review_count() > 0;
                                     if !project.needs_attention {
                                         notify::clear_attention_indicator();
@@ -3127,18 +3095,10 @@ impl App {
                                     )));
                                 }
 
-                                // Update task and move to end of list (bottom of Done column)
+                                // Complete task (records stats) and move to Done
+                                // Note: We still record stats for declined tasks since work was done
                                 if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                                        let mut task = project.tasks.remove(idx);
-                                        task.status = TaskStatus::Done;
-                                        task.completed_at = Some(Utc::now());
-                                        task.worktree_path = None;
-                                        task.tmux_window = None;
-                                        task.git_branch = None;
-                                        task.session_state = crate::model::ClaudeSessionState::Ended;
-                                        project.tasks.push(task);
-                                    }
+                                    project.complete_task(task_id);
                                     project.needs_attention = project.review_count() > 0;
                                     if !project.needs_attention {
                                         notify::clear_attention_indicator();
@@ -3190,18 +3150,9 @@ impl App {
                                 // Delete branch
                                 let _ = crate::worktree::delete_branch(&project_dir, task_id);
 
-                                // Move task to Done
+                                // Complete task (records stats) and move to Done
                                 if let Some(project) = self.model.active_project_mut() {
-                                    if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                                        let mut task = project.tasks.remove(idx);
-                                        task.status = TaskStatus::Done;
-                                        task.completed_at = Some(Utc::now());
-                                        task.worktree_path = None;
-                                        task.tmux_window = None;
-                                        task.git_branch = None;
-                                        task.session_state = crate::model::ClaudeSessionState::Ended;
-                                        project.tasks.push(task);
-                                    }
+                                    project.complete_task(task_id);
                                     project.needs_attention = project.review_count() > 0;
                                     if !project.needs_attention {
                                         notify::clear_attention_indicator();
@@ -3263,18 +3214,9 @@ impl App {
                                         // Delete branch
                                         let _ = crate::worktree::delete_branch(&project_dir, task_id);
 
-                                        // Move task to Done
+                                        // Complete task (records stats) and move to Done
                                         if let Some(project) = self.model.active_project_mut() {
-                                            if let Some(idx) = project.tasks.iter().position(|t| t.id == task_id) {
-                                                let mut task = project.tasks.remove(idx);
-                                                task.status = TaskStatus::Done;
-                                                task.completed_at = Some(Utc::now());
-                                                task.worktree_path = None;
-                                                task.tmux_window = None;
-                                                task.git_branch = None;
-                                                task.session_state = crate::model::ClaudeSessionState::Ended;
-                                                project.tasks.push(task);
-                                            }
+                                            project.complete_task(task_id);
                                             project.needs_attention = project.review_count() > 0;
                                             if !project.needs_attention {
                                                 notify::clear_attention_indicator();
@@ -5998,6 +5940,10 @@ impl App {
                 if self.model.ui_state.show_help {
                     self.model.ui_state.help_scroll_offset = 0;
                 }
+            }
+
+            Message::ToggleStats => {
+                self.model.ui_state.show_stats = !self.model.ui_state.show_stats;
             }
 
             Message::ScrollHelpUp(lines) => {

@@ -115,6 +115,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_help(frame, app.model.ui_state.help_scroll_offset);
     }
 
+    // Render stats modal if active
+    if app.model.ui_state.show_stats {
+        render_stats_modal(frame, app);
+    }
+
     // Render queue dialog if active
     if app.model.ui_state.is_queue_dialog_open() {
         render_queue_dialog(frame, app);
@@ -1652,6 +1657,267 @@ fn render_help_tab<'a>(
     ]));
 }
 
+/// Render the project statistics modal (triggered by / key)
+fn render_stats_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(55, 70, frame.area());
+
+    let accent_color = Color::Cyan;
+    let bar_full = Color::Rgb(0, 255, 136); // Neon green
+    let sparkle = Color::Rgb(255, 215, 0); // Gold
+    let dim_style = Style::default().fg(Color::DarkGray);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    let Some(project) = app.model.active_project() else {
+        lines.push(Line::from(Span::styled("No project selected", dim_style)));
+        let content = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" Stats ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(accent_color)),
+            );
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(content, area);
+        return;
+    };
+
+    let stats = &project.statistics;
+
+    // Empty state
+    if stats.total_completed == 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  🚀 ", Style::default()),
+            Span::styled("No completed tasks yet!", Style::default().fg(Color::Yellow)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  Complete your first task to see statistics.", dim_style)));
+        lines.push(Line::from(Span::styled("  Stats will track:", dim_style)));
+        lines.push(Line::from(Span::styled("    • Total tasks completed", dim_style)));
+        lines.push(Line::from(Span::styled("    • Average completion time", dim_style)));
+        lines.push(Line::from(Span::styled("    • Weekly activity graph", dim_style)));
+        lines.push(Line::from(Span::styled("    • Code impact (lines added/removed)", dim_style)));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  Press any key to close", dim_style)));
+
+        let content = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" Stats ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(accent_color)),
+            );
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(content, area);
+        return;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BIG NUMBER: Tasks Completed
+    // ═══════════════════════════════════════════════════════════════════════
+    let total = stats.total_completed;
+    let big_num = format!("{:>4}", total);
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  ✨ ", Style::default().fg(sparkle)),
+        Span::styled("TASKS COMPLETED", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("     ", Style::default()),
+        Span::styled(big_num, Style::default().fg(bar_full).add_modifier(Modifier::BOLD)),
+        Span::styled(" total", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(""));
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AVERAGE TIME
+    // ═══════════════════════════════════════════════════════════════════════
+    if let Some(avg_secs) = stats.average_duration_seconds() {
+        let duration = chrono::Duration::seconds(avg_secs);
+        lines.push(Line::from(vec![
+            Span::styled("  ⏱  ", Style::default().fg(Color::Yellow)),
+            Span::styled("AVG TIME  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format_duration(duration), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // THIS WEEK
+    // ═══════════════════════════════════════════════════════════════════════
+    let this_week = stats.tasks_completed_this_week();
+    lines.push(Line::from(vec![
+        Span::styled("  📅 ", Style::default().fg(Color::Magenta)),
+        Span::styled("THIS WEEK ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}", this_week), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" tasks", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(""));
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7-DAY ACTIVITY CHART
+    // ═══════════════════════════════════════════════════════════════════════
+    lines.push(Line::from(vec![
+        Span::styled("  ┌── 7-DAY ACTIVITY ─────────────────┐", Style::default().fg(accent_color)),
+    ]));
+
+    let daily_counts = stats.completions_by_day();
+    let max_count = daily_counts.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+
+    let bar_height = 5;
+    let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    for row in (0..bar_height).rev() {
+        let mut spans = vec![Span::styled("  │ ", Style::default().fg(accent_color))];
+
+        for (day_offset, count) in &daily_counts {
+            let fill_level = (*count as f64 / max_count as f64) * bar_height as f64;
+            let char_idx = if fill_level > row as f64 + 0.875 {
+                7
+            } else if fill_level > row as f64 {
+                ((fill_level - row as f64) * 8.0).min(7.0) as usize
+            } else {
+                0
+            };
+
+            let bar_char = if fill_level > row as f64 {
+                bar_chars[char_idx.min(7)]
+            } else {
+                ' '
+            };
+
+            let color = match *day_offset {
+                0 => bar_full,
+                1 => Color::Rgb(0, 220, 120),
+                2 => Color::Rgb(0, 190, 100),
+                3 => Color::Rgb(0, 160, 80),
+                4 => Color::Rgb(0, 130, 60),
+                5 => Color::Rgb(0, 100, 40),
+                _ => Color::Rgb(0, 80, 30),
+            };
+
+            spans.push(Span::styled(format!(" {} ", bar_char), Style::default().fg(color)));
+        }
+
+        spans.push(Span::styled("    │", Style::default().fg(accent_color)));
+        lines.push(Line::from(spans));
+    }
+
+    // X-axis labels
+    let day_labels = ["T", "Y", "2", "3", "4", "5", "6"];
+    let mut label_spans = vec![Span::styled("  │ ", Style::default().fg(accent_color))];
+    for (i, label) in day_labels.iter().enumerate() {
+        let color = if i == 0 { bar_full } else { Color::DarkGray };
+        label_spans.push(Span::styled(format!(" {} ", label), Style::default().fg(color)));
+    }
+    label_spans.push(Span::styled("    │", Style::default().fg(accent_color)));
+    lines.push(Line::from(label_spans));
+
+    lines.push(Line::from(vec![
+        Span::styled("  └─────────────────────────────────────┘", Style::default().fg(accent_color)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    T=today  Y=yesterday  2-6=days ago", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CODE IMPACT
+    // ═══════════════════════════════════════════════════════════════════════
+    if stats.total_lines_added > 0 || stats.total_lines_deleted > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  📝 ", Style::default().fg(Color::Green)),
+            Span::styled("CODE IMPACT", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        let total_lines = stats.total_lines_added + stats.total_lines_deleted;
+        let add_ratio = if total_lines > 0 {
+            stats.total_lines_added as f64 / total_lines as f64
+        } else {
+            0.5
+        };
+
+        let bar_width = 24usize;
+        let add_chars = (add_ratio * bar_width as f64).round() as usize;
+        let del_chars = bar_width.saturating_sub(add_chars);
+
+        let add_bar = "█".repeat(add_chars);
+        let del_bar = "█".repeat(del_chars);
+
+        lines.push(Line::from(vec![
+            Span::styled("     ", Style::default()),
+            Span::styled(add_bar, Style::default().fg(Color::Green)),
+            Span::styled(del_bar, Style::default().fg(Color::Red)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("     +", Style::default().fg(Color::Green)),
+            Span::styled(format!("{}", stats.total_lines_added), Style::default().fg(Color::Green)),
+            Span::styled(" / ", Style::default().fg(Color::DarkGray)),
+            Span::styled("-", Style::default().fg(Color::Red)),
+            Span::styled(format!("{}", stats.total_lines_deleted), Style::default().fg(Color::Red)),
+            Span::styled(" lines", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TOTAL TIME
+    // ═══════════════════════════════════════════════════════════════════════
+    if stats.total_duration_seconds > 0 {
+        lines.push(Line::from(""));
+        let total_duration = chrono::Duration::seconds(stats.total_duration_seconds);
+        lines.push(Line::from(vec![
+            Span::styled("  🕐 ", Style::default().fg(accent_color)),
+            Span::styled("TOTAL TIME ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format_duration_long(total_duration), Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
+        ]));
+    }
+
+    // Footer
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press any key to close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(format!(" {} Stats ", project.name))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(accent_color)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(content, area);
+}
+
+/// Format a duration for long display (e.g., "2 days, 5 hours")
+fn format_duration_long(duration: chrono::Duration) -> String {
+    let total_secs = duration.num_seconds();
+    let days = total_secs / 86400;
+    let hours = (total_secs % 86400) / 3600;
+    let mins = (total_secs % 3600) / 60;
+
+    if days > 0 {
+        if hours > 0 {
+            format!("{}d {}h", days, hours)
+        } else {
+            format!("{}d", days)
+        }
+    } else if hours > 0 {
+        if mins > 0 {
+            format!("{}h {}m", hours, mins)
+        } else {
+            format!("{}h", hours)
+        }
+    } else if mins > 0 {
+        format!("{}m", mins)
+    } else {
+        format!("{}s", total_secs)
+    }
+}
+
 /// Format a datetime for display
 fn format_datetime(dt: chrono::DateTime<chrono::Utc>) -> String {
     let local = dt.with_timezone(&chrono::Local);
@@ -1786,6 +2052,7 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         Line::from("  q          Quit"),
         Line::from("  Ctrl-W     Toggle Mascot advice (on/off)"),
         Line::from("  Ctrl-P     Settings (editor, commands)"),
+        Line::from("  /          Project statistics"),
         Line::from("  ?          Toggle this help"),
         Line::from(""),
         Line::from(Span::styled(

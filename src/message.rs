@@ -269,6 +269,7 @@ pub enum Message {
     NavigateToStart, // Home key - jump to first item in list
     NavigateToEnd,   // End key - jump to last item in list
     ToggleHelp,
+    ToggleStats,           // Show/hide project statistics modal (/)
     ScrollHelpUp(usize),   // Scroll help modal up by N lines
     ScrollHelpDown(usize), // Scroll help modal down by N lines
     ToggleTaskPreview,     // Show/hide task preview modal (v/space)

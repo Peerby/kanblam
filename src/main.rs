@@ -965,6 +965,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return handle_help_modal_key(key);
     }
 
+    // Handle stats modal - any key closes it
+    if app.model.ui_state.show_stats {
+        return vec![Message::ToggleStats];
+    }
+
     // Handle stash modal if open
     if app.model.ui_state.show_stash_modal {
         return handle_stash_modal_key(key);
@@ -1007,6 +1012,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // Help
         KeyCode::Char('?') => vec![Message::ToggleHelp],
+
+        // Stats
+        KeyCode::Char('/') => vec![Message::ToggleStats],
 
         // Settings/Config (Ctrl-P)
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
