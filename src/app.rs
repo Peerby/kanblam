@@ -5437,6 +5437,16 @@ impl App {
                             commands.push(Message::SetStatusMessage(Some(
                                 "Image attached to task".to_string()
                             )));
+                        } else if let Some(task_id) = self.model.ui_state.feedback_task_id {
+                            // If we're in feedback mode, attach to that task
+                            if let Some(project) = self.model.active_project_mut() {
+                                if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    task.images.push(image_path.clone());
+                                }
+                            }
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Image attached to task".to_string()
+                            )));
                         } else {
                             // Store image path to attach when task is created
                             self.model.ui_state.pending_images.push(image_path);
@@ -5458,6 +5468,119 @@ impl App {
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.images.push(path);
+                    }
+                }
+            }
+
+            Message::ClearImages => {
+                // Clear images from the appropriate source based on mode
+                if let Some(task_id) = self.model.ui_state.editing_task_id {
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            let count = task.images.len();
+                            task.images.clear();
+                            if count > 0 {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Cleared {} image{}", count, if count == 1 { "" } else { "s" })
+                                )));
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "No images to clear".to_string()
+                                )));
+                            }
+                        }
+                    }
+                } else if let Some(task_id) = self.model.ui_state.feedback_task_id {
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            let count = task.images.len();
+                            task.images.clear();
+                            if count > 0 {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    format!("Cleared {} image{}", count, if count == 1 { "" } else { "s" })
+                                )));
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "No images to clear".to_string()
+                                )));
+                            }
+                        }
+                    }
+                } else {
+                    let count = self.model.ui_state.pending_images.len();
+                    self.model.ui_state.pending_images.clear();
+                    if count > 0 {
+                        commands.push(Message::SetStatusMessage(Some(
+                            format!("Cleared {} image{}", count, if count == 1 { "" } else { "s" })
+                        )));
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "No images to clear".to_string()
+                        )));
+                    }
+                }
+            }
+
+            Message::RemoveLastImage => {
+                // Remove last image from the appropriate source based on mode
+                if let Some(task_id) = self.model.ui_state.editing_task_id {
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            if task.images.pop().is_some() {
+                                let remaining = task.images.len();
+                                if remaining > 0 {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("{} image{} remaining", remaining, if remaining == 1 { "" } else { "s" })
+                                    )));
+                                } else {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Image removed".to_string()
+                                    )));
+                                }
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "No images to remove".to_string()
+                                )));
+                            }
+                        }
+                    }
+                } else if let Some(task_id) = self.model.ui_state.feedback_task_id {
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            if task.images.pop().is_some() {
+                                let remaining = task.images.len();
+                                if remaining > 0 {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        format!("{} image{} remaining", remaining, if remaining == 1 { "" } else { "s" })
+                                    )));
+                                } else {
+                                    commands.push(Message::SetStatusMessage(Some(
+                                        "Image removed".to_string()
+                                    )));
+                                }
+                            } else {
+                                commands.push(Message::SetStatusMessage(Some(
+                                    "No images to remove".to_string()
+                                )));
+                            }
+                        }
+                    }
+                } else {
+                    if self.model.ui_state.pending_images.pop().is_some() {
+                        let remaining = self.model.ui_state.pending_images.len();
+                        if remaining > 0 {
+                            commands.push(Message::SetStatusMessage(Some(
+                                format!("{} image{} remaining", remaining, if remaining == 1 { "" } else { "s" })
+                            )));
+                        } else {
+                            commands.push(Message::SetStatusMessage(Some(
+                                "Image removed".to_string()
+                            )));
+                        }
+                    } else {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "No images to remove".to_string()
+                        )));
                     }
                 }
             }

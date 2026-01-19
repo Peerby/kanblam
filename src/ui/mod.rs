@@ -8,6 +8,7 @@ mod welcome;
 
 use crate::app::App;
 use crate::model::{DirEntry, FocusArea, MillerColumn, SpecialEntry, TaskStatus};
+use uuid::Uuid;
 use edtui::{EditorMode, EditorTheme, EditorView};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -642,12 +643,44 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         Style::default().fg(border_color)
     };
 
+    // Get image count for feedback/edit mode tasks
+    let get_task_image_count = |task_id: Uuid| -> usize {
+        app.model.active_project()
+            .and_then(|project| project.tasks.iter().find(|t| t.id == task_id))
+            .map(|t| t.images.len())
+            .unwrap_or(0)
+    };
+
+    // Effective image count: task images for edit/feedback mode, pending images otherwise
+    let effective_image_count = if let Some(task_id) = app.model.ui_state.editing_task_id {
+        get_task_image_count(task_id)
+    } else if let Some(task_id) = app.model.ui_state.feedback_task_id {
+        get_task_image_count(task_id)
+    } else {
+        pending_count
+    };
+
     let title = if is_live_feedback {
-        Line::from(Span::styled(" Live Feedback ", title_style))
+        let img_count = app.model.ui_state.feedback_task_id.map(get_task_image_count).unwrap_or(0);
+        if img_count > 0 {
+            Line::from(Span::styled(format!(" Live Feedback [{}img] ", img_count), title_style))
+        } else {
+            Line::from(Span::styled(" Live Feedback ", title_style))
+        }
     } else if is_feedback_mode {
-        Line::from(Span::styled(" Feedback ", title_style))
+        let img_count = app.model.ui_state.feedback_task_id.map(get_task_image_count).unwrap_or(0);
+        if img_count > 0 {
+            Line::from(Span::styled(format!(" Feedback [{}img] ", img_count), title_style))
+        } else {
+            Line::from(Span::styled(" Feedback ", title_style))
+        }
     } else if is_editing_task {
-        Line::from(Span::styled(" Edit Task ", title_style))
+        let img_count = app.model.ui_state.editing_task_id.map(get_task_image_count).unwrap_or(0);
+        if img_count > 0 {
+            Line::from(Span::styled(format!(" Edit Task [{}img] ", img_count), title_style))
+        } else {
+            Line::from(Span::styled(" Edit Task ", title_style))
+        }
     } else if pending_count > 0 {
         Line::from(Span::styled(format!(" New Task [+{} img] ", pending_count), title_style))
     } else {
@@ -708,8 +741,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         )
     } else if is_insert_mode {
         // INSERT MODE hints
-        if pending_count > 0 {
-            // With pending images: "^C cancel ^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit ^S start"
+        if effective_image_count > 0 {
+            // With images: "^C cancel ^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit ^S start"
             // Width: 2+7+2+5+2+3+2+4+1+6+4+8+2+6 = 54
             (
                 Line::from(vec![
@@ -731,7 +764,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 54u16,
             )
         } else {
-            // No pending images: "^C cancel ^V img ^G vim ⏎ line esc→⏎ submit ^S start"
+            // No images: "^C cancel ^V img ^G vim ⏎ line esc→⏎ submit ^S start"
             // Width: 2+8+2+5+2+editor+1+6+4+8+2+6 = 46 + editor_hint_len
             (
                 Line::from(vec![
@@ -753,8 +786,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     } else {
         // NORMAL MODE hints
-        if pending_count > 0 {
-            // With pending images: "^C cancel ^V+img ^X-1 ^Uclr aio edit ⏎ submit ^S start"
+        if effective_image_count > 0 {
+            // With images: "^C cancel ^V+img ^X-1 ^Uclr aio edit ⏎ submit ^S start"
             // Width: 2+8+2+5+2+3+2+4+3+6+1+8+2+6 = 54
             (
                 Line::from(vec![
@@ -776,7 +809,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 54u16,
             )
         } else {
-            // No pending images: "^C cancel ^V img ^G vim aio edit ⏎ submit ^S start"
+            // No images: "^C cancel ^V img ^G vim aio edit ⏎ submit ^S start"
             // Width: 2+8+2+5+2+editor+3+6+1+8+2+6 = 45 + editor_hint_len
             (
                 Line::from(vec![

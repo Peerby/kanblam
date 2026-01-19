@@ -248,6 +248,10 @@ pub enum Message {
     // Image handling
     PasteImage,
     AttachImage { task_id: Uuid, path: PathBuf },
+    /// Clear all images (from pending or active edit/feedback task)
+    ClearImages,
+    /// Remove the last image (from pending or active edit/feedback task)
+    RemoveLastImage,
 
     // UI events
     InputSubmit,

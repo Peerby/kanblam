@@ -800,29 +800,14 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::PasteImage]
         }
 
-        // Ctrl+U clears all pending images
+        // Ctrl+U clears all images (pending or from edit/feedback task)
         KeyCode::Char('u') if ctrl => {
-            let count = app.model.ui_state.pending_images.len();
-            app.model.ui_state.pending_images.clear();
-            if count > 0 {
-                vec![Message::SetStatusMessage(Some(format!("Cleared {} image{}", count, if count == 1 { "" } else { "s" })))]
-            } else {
-                vec![Message::SetStatusMessage(Some("No images to clear".to_string()))]
-            }
+            vec![Message::ClearImages]
         }
 
-        // Ctrl+X removes the last pending image
+        // Ctrl+X removes the last image (pending or from edit/feedback task)
         KeyCode::Char('x') if ctrl => {
-            if let Some(_) = app.model.ui_state.pending_images.pop() {
-                let remaining = app.model.ui_state.pending_images.len();
-                if remaining > 0 {
-                    vec![Message::SetStatusMessage(Some(format!("{} image{} remaining", remaining, if remaining == 1 { "" } else { "s" })))]
-                } else {
-                    vec![Message::SetStatusMessage(Some("Image removed".to_string()))]
-                }
-            } else {
-                vec![Message::SetStatusMessage(Some("No images to remove".to_string()))]
-            }
+            vec![Message::RemoveLastImage]
         }
 
         // Ctrl+G opens input in external editor (vim)
