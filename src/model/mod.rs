@@ -1605,7 +1605,7 @@ impl MergeCelebrationState {
     /// Total frames for phase 1 (confirmation pulse)
     pub const PHASE1_FRAMES: usize = 1;
     /// Characters swept per frame during sparkle substitution (phase 2)
-    pub const CHARS_PER_FRAME: usize = 2;
+    pub const CHARS_PER_FRAME: usize = 4;
     /// Number of trailing sparkle characters to show before evaporating
     pub const SPARKLE_TRAIL_LEN: usize = 2;
 

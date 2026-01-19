@@ -21,8 +21,8 @@
       "cli_opened_at_command_count": 0,
       "queued_for_session": null,
       "accepting_started_at": null,
-      "last_activity_at": null,
-      "last_tool_name": null
+      "last_activity_at": "2026-01-19T17:09:58.623175Z",
+      "last_tool_name": "Read"
     },
     {
       "id": "feca0efa-d1c4-4d2c-9021-c17fa5cb33aa",
@@ -322,29 +322,6 @@
       "accepting_started_at": null,
       "last_activity_at": "2026-01-19T16:58:08.031089Z",
       "last_tool_name": "Bash"
-    },
-    {
-      "id": "6b4a750f-c104-4a55-9989-1c94236442f9",
-      "title": "I want to test a very basic merge. Can you make a tiny change that won't affect anything? Just add a helpful comment somewhere.",
-      "description": "",
-      "short_title": "Add a helpful comment",
-      "status": "Review",
-      "images": [],
-      "claude_session_id": "0cc5e1b6-bc53-464d-b36e-9b7921d7dfdd",
-      "created_at": "2026-01-19T16:43:14.614477Z",
-      "started_at": "2026-01-19T17:04:40.684871Z",
-      "completed_at": null,
-      "worktree_path": "/Users/daan/code/kanblam/worktrees/task-6b4a750f-c104-4a55-9989-1c94236442f9",
-      "git_branch": "claude/6b4a750f-c104-4a55-9989-1c94236442f9",
-      "tmux_window": null,
-      "session_state": "Paused",
-      "session_mode": "SdkManaged",
-      "sdk_command_count": 3,
-      "cli_opened_at_command_count": 0,
-      "queued_for_session": null,
-      "accepting_started_at": null,
-      "last_activity_at": "2026-01-19T17:04:55.936056Z",
-      "last_tool_name": "Edit"
     },
     {
       "id": "dd7fa9b4-a5c7-473a-bc2c-bdb62f915fe8",
@@ -3199,6 +3176,29 @@
       "accepting_started_at": null,
       "last_activity_at": "2026-01-19T16:55:28.949561Z",
       "last_tool_name": "Bash"
+    },
+    {
+      "id": "6b4a750f-c104-4a55-9989-1c94236442f9",
+      "title": "I want to test a very basic merge. Can you make a tiny change that won't affect anything? Just add a helpful comment somewhere.",
+      "description": "",
+      "short_title": "Add a helpful comment",
+      "status": "Done",
+      "images": [],
+      "claude_session_id": "0cc5e1b6-bc53-464d-b36e-9b7921d7dfdd",
+      "created_at": "2026-01-19T16:43:14.614477Z",
+      "started_at": "2026-01-19T17:04:40.684871Z",
+      "completed_at": "2026-01-19T17:06:34.455253Z",
+      "worktree_path": null,
+      "git_branch": null,
+      "tmux_window": null,
+      "session_state": "Ended",
+      "session_mode": "SdkManaged",
+      "sdk_command_count": 3,
+      "cli_opened_at_command_count": 0,
+      "queued_for_session": null,
+      "accepting_started_at": null,
+      "last_activity_at": "2026-01-19T17:04:55.936056Z",
+      "last_tool_name": "Edit"
     }
   ],
   "applied_task_id": null,

@@ -283,19 +283,27 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         // Render the gold dust sweep animation
                         let celebration = app.model.ui_state.merge_celebration.as_ref().unwrap();
                         let phase = celebration.phase();
+                        let frame = celebration.frame;
 
-                        // Gold/amber color for sparkles
-                        let gold = Color::Rgb(255, 200, 80);
-                        // Soft mint color for sparkles (alternative)
-                        let mint = Color::Rgb(150, 220, 180);
+                        // Gold palette with shimmer effect (brightness varies with frame)
+                        let shimmer = ((frame % 3) as i16 - 1) * 15; // -15, 0, +15 brightness pulse
+                        let bright_gold = Color::Rgb(
+                            (255_i16 + shimmer).clamp(200, 255) as u8,
+                            (200_i16 + shimmer).clamp(160, 220) as u8,
+                            (60_i16 + shimmer / 2).clamp(40, 80) as u8,
+                        );
+                        // Desaturated white/cream highlight
+                        let cream_highlight = Color::Rgb(250, 245, 230);
+                        // Muted warm tan for fading
+                        let warm_tan = Color::Rgb(180, 160, 120);
 
-                        // Phase 1: Confirmation pulse - show full text in green/cyan
+                        // Phase 1: Confirmation pulse - show full text in warm gold
                         if phase == 1 {
                             // Build the full display text: prefix + "[id] " + title
                             let full_text = format!("{}[{}] {}", prefix, task_id_short, display_title);
-                            // Pulse with green/cyan color
+                            // Pulse with warm gold color
                             let pulse_style = Style::default()
-                                .fg(Color::Rgb(80, 220, 150)) // Bright green/cyan
+                                .fg(Color::Rgb(255, 215, 100)) // Warm golden yellow
                                 .add_modifier(Modifier::BOLD);
                             spans.push(Span::styled(full_text, pulse_style));
                         } else {
@@ -306,8 +314,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             let sparkle_count = celebration.sparkle_chars_count();
                             let text_len = full_chars.len();
 
-                            // Dimming style for original text as sparkles approach
-                            let dim_white = Color::Rgb(120, 120, 120);
+                            // Warm dimming for text as sparkles approach
+                            let dim_warm = Color::Rgb(160, 150, 130);
 
                             for (i, &ch) in full_chars.iter().enumerate() {
                                 let pos_from_right = text_len.saturating_sub(i + 1);
@@ -317,9 +325,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                                     let sparkle_age = sparkle_count - pos_from_right - 1;
                                     // Pick sparkle character and color based on age
                                     let (sparkle_char, sparkle_color) = match sparkle_age {
-                                        0 => ('✧', gold),               // Fresh sparkle - gold
-                                        1 => ('·', mint),               // Fading - mint
-                                        2 => ('·', Color::DarkGray),    // Almost gone
+                                        0 => ('✧', bright_gold),        // Fresh sparkle - bright gold with shimmer
+                                        1 => ('✧', cream_highlight),    // Highlight - desaturated white/cream
+                                        2 => ('·', warm_tan),           // Fading - warm tan
                                         _ => (' ', Color::Reset),       // Evaporated
                                     };
                                     spans.push(Span::styled(
@@ -330,8 +338,8 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                                     // Original character - dim as sparkles approach
                                     let distance_to_sparkle = pos_from_right - sparkle_count;
                                     let char_style = if distance_to_sparkle <= 2 {
-                                        // Close to being sparkled - start dimming
-                                        Style::default().fg(dim_white)
+                                        // Close to being sparkled - start dimming warmly
+                                        Style::default().fg(dim_warm)
                                     } else {
                                         // Normal white
                                         Style::default().fg(Color::White)
@@ -409,18 +417,24 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
             if !task_present {
                 // Render the phantom celebration entry
                 let phase = celebration.phase();
+                let frame = celebration.frame;
 
-                // Gold/amber color for sparkles
-                let gold = Color::Rgb(255, 200, 80);
-                // Soft mint color for sparkles (alternative)
-                let mint = Color::Rgb(150, 220, 180);
+                // Gold palette with shimmer effect
+                let shimmer = ((frame % 3) as i16 - 1) * 15;
+                let bright_gold = Color::Rgb(
+                    (255_i16 + shimmer).clamp(200, 255) as u8,
+                    (200_i16 + shimmer).clamp(160, 220) as u8,
+                    (60_i16 + shimmer / 2).clamp(40, 80) as u8,
+                );
+                let cream_highlight = Color::Rgb(250, 245, 230);
+                let warm_tan = Color::Rgb(180, 160, 120);
 
                 let mut spans = Vec::new();
 
                 if phase == 1 {
-                    // Phase 1: Confirmation pulse
+                    // Phase 1: Confirmation pulse in warm gold
                     let pulse_style = Style::default()
-                        .fg(Color::Rgb(80, 220, 150))
+                        .fg(Color::Rgb(255, 215, 100))
                         .add_modifier(Modifier::BOLD);
                     spans.push(Span::styled(celebration.original_text.clone(), pulse_style));
                 } else {
@@ -428,7 +442,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let full_chars: Vec<char> = celebration.original_text.chars().collect();
                     let sparkle_count = celebration.sparkle_chars_count();
                     let text_len = full_chars.len();
-                    let dim_white = Color::Rgb(120, 120, 120);
+                    let dim_warm = Color::Rgb(160, 150, 130);
 
                     for (i, &ch) in full_chars.iter().enumerate() {
                         let pos_from_right = text_len.saturating_sub(i + 1);
@@ -436,9 +450,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         if pos_from_right < sparkle_count {
                             let sparkle_age = sparkle_count - pos_from_right - 1;
                             let (sparkle_char, sparkle_color) = match sparkle_age {
-                                0 => ('✧', gold),
-                                1 => ('·', mint),
-                                2 => ('·', Color::DarkGray),
+                                0 => ('✧', bright_gold),
+                                1 => ('✧', cream_highlight),
+                                2 => ('·', warm_tan),
                                 _ => (' ', Color::Reset),
                             };
                             spans.push(Span::styled(
@@ -448,7 +462,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         } else {
                             let distance_to_sparkle = pos_from_right - sparkle_count;
                             let char_style = if distance_to_sparkle <= 2 {
-                                Style::default().fg(dim_white)
+                                Style::default().fg(dim_warm)
                             } else {
                                 Style::default().fg(Color::White)
                             };
