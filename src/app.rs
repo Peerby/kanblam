@@ -3099,6 +3099,11 @@ impl App {
                         }
                         PendingAction::MarkDoneNoMerge(task_id) => {
                             // Mark task as done and clean up worktree without merging
+                            // Stop SDK session first (if running)
+                            if let Some(ref client) = self.sidecar_client {
+                                let _ = client.stop_session(task_id);
+                            }
+
                             // Get task info needed for cleanup
                             let task_info = self.model.active_project().and_then(|p| {
                                 p.tasks.iter()
@@ -3185,6 +3190,11 @@ impl App {
                         }
                         PendingAction::DeclineTask(task_id) => {
                             // Decline task: discard all changes and mark as done
+                            // Stop SDK session first (if running)
+                            if let Some(ref client) = self.sidecar_client {
+                                let _ = client.stop_session(task_id);
+                            }
+
                             // Get task info needed for cleanup
                             let task_info = self.model.active_project().and_then(|p| {
                                 p.tasks.iter()
