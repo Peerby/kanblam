@@ -1726,10 +1726,10 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     lines.push(Line::from(""));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 7-DAY ACTIVITY CHART
+    // 11-DAY ACTIVITY CHART
     // ═══════════════════════════════════════════════════════════════════════
     lines.push(Line::from(vec![
-        Span::styled("  ┌── 7-DAY ACTIVITY ─────────────────┐", Style::default().fg(accent_color)),
+        Span::styled("  ┌── 11-DAY ACTIVITY ───────────────────────────────┐", Style::default().fg(accent_color)),
     ]));
 
     let daily_counts = stats.completions_by_day();
@@ -1741,7 +1741,8 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     for row in (0..bar_height).rev() {
         let mut spans = vec![Span::styled("  │ ", Style::default().fg(accent_color))];
 
-        for (day_offset, count) in &daily_counts {
+        // Iterate in reverse order: oldest (10 days ago) first, today (0) last
+        for (day_offset, count) in daily_counts.iter().rev() {
             let fill_level = (*count as f64 / max_count as f64) * bar_height as f64;
             let char_idx = if fill_level > row as f64 + 0.875 {
                 7
@@ -1760,11 +1761,15 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
             let color = match *day_offset {
                 0 => bar_full,
                 1 => Color::Rgb(0, 220, 120),
-                2 => Color::Rgb(0, 190, 100),
-                3 => Color::Rgb(0, 160, 80),
-                4 => Color::Rgb(0, 130, 60),
-                5 => Color::Rgb(0, 100, 40),
-                _ => Color::Rgb(0, 80, 30),
+                2 => Color::Rgb(0, 200, 110),
+                3 => Color::Rgb(0, 180, 95),
+                4 => Color::Rgb(0, 160, 80),
+                5 => Color::Rgb(0, 140, 70),
+                6 => Color::Rgb(0, 120, 55),
+                7 => Color::Rgb(0, 100, 45),
+                8 => Color::Rgb(0, 85, 35),
+                9 => Color::Rgb(0, 70, 25),
+                _ => Color::Rgb(0, 55, 20),
             };
 
             spans.push(Span::styled(format!(" {} ", bar_char), Style::default().fg(color)));
@@ -1774,21 +1779,21 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
         lines.push(Line::from(spans));
     }
 
-    // X-axis labels
-    let day_labels = ["T", "Y", "2", "3", "4", "5", "6"];
-    let mut label_spans = vec![Span::styled("  │ ", Style::default().fg(accent_color))];
+    // X-axis labels (oldest to newest: -10 days ago to today)
+    let day_labels = ["-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", " Y", " T"];
+    let mut label_spans = vec![Span::styled("  │", Style::default().fg(accent_color))];
     for (i, label) in day_labels.iter().enumerate() {
-        let color = if i == 0 { bar_full } else { Color::DarkGray };
-        label_spans.push(Span::styled(format!(" {} ", label), Style::default().fg(color)));
+        let color = if i == 10 { bar_full } else { Color::DarkGray };
+        label_spans.push(Span::styled(format!("{} ", label), Style::default().fg(color)));
     }
-    label_spans.push(Span::styled("    │", Style::default().fg(accent_color)));
+    label_spans.push(Span::styled("   │", Style::default().fg(accent_color)));
     lines.push(Line::from(label_spans));
 
     lines.push(Line::from(vec![
-        Span::styled("  └─────────────────────────────────────┘", Style::default().fg(accent_color)),
+        Span::styled("  └─────────────────────────────────────────────────────┘", Style::default().fg(accent_color)),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("    T=today  Y=yesterday  2-6=days ago", Style::default().fg(Color::DarkGray)),
+        Span::styled("    T=today  Y=yesterday  -N=days ago", Style::default().fg(Color::DarkGray)),
     ]));
 
     // ═══════════════════════════════════════════════════════════════════════

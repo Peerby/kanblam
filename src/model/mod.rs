@@ -2279,18 +2279,18 @@ impl TaskStatistics {
             .count() as u32
     }
 
-    /// Get completion counts per day for the last 7 days (for bar chart)
+    /// Get completion counts per day for the last 11 days (for bar chart)
     /// Returns vec of (day_offset, count) where day_offset 0 = today, 1 = yesterday, etc.
     pub fn completions_by_day(&self) -> Vec<(u32, u32)> {
         let now = Utc::now();
         let today_start = now.date_naive();
 
-        let mut counts = vec![0u32; 7];
+        let mut counts = vec![0u32; 11];
 
         for ts in &self.completion_timestamps {
             let ts_date = ts.date_naive();
             let days_ago = (today_start - ts_date).num_days();
-            if days_ago >= 0 && days_ago < 7 {
+            if days_ago >= 0 && days_ago < 11 {
                 counts[days_ago as usize] += 1;
             }
         }
