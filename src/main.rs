@@ -29,6 +29,7 @@ use ratatui::{
     Terminal,
 };
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -45,6 +46,21 @@ fn process_commands_recursively(app: &mut App, commands: Vec<Message>) {
 /// Channel for receiving results from async background tasks
 type AsyncResultReceiver = mpsc::UnboundedReceiver<Message>;
 
+/// Parse --state-file argument from command line args
+fn parse_state_file_arg(args: &[String]) -> Option<PathBuf> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--state-file" {
+            // --state-file <path>
+            return iter.next().map(PathBuf::from);
+        } else if let Some(path) = arg.strip_prefix("--state-file=") {
+            // --state-file=<path>
+            return Some(PathBuf::from(path));
+        }
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Check for CLI subcommands (used by hooks)
@@ -57,8 +73,11 @@ async fn main() -> anyhow::Result<()> {
         return handle_signal_command(&args[2..]);
     }
 
-    // Load saved state
-    let model = load_state().unwrap_or_default();
+    // Parse --state-file option
+    let state_file_path = parse_state_file_arg(&args);
+
+    // Load saved state (from custom file if specified)
+    let model = load_state(state_file_path.as_ref()).unwrap_or_default();
 
     // Start sidecar and connect (keep handle to kill on exit)
     let _sidecar_child = match sidecar::ensure_sidecar_running() {
@@ -74,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let (async_sender, async_receiver) = mpsc::unbounded_channel::<Message>();
 
     let mut app = App::with_model(model)
+        .with_state_file(state_file_path)
         .with_sidecar(sidecar_client)
         .with_async_sender(async_sender);
 
@@ -135,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
     terminal.show_cursor()?;
 
     // Save state on exit
-    if let Err(e) = save_state(&app.model) {
+    if let Err(e) = save_state(&app.model, app.state_file_path.as_ref()) {
         eprintln!("Failed to save state: {}", e);
     }
 
@@ -315,7 +335,7 @@ where
 
         if app.should_restart {
             // Save state before restart
-            if let Err(e) = save_state(&app.model) {
+            if let Err(e) = save_state(&app.model, app.state_file_path.as_ref()) {
                 eprintln!("Warning: Failed to save state before restart: {}", e);
             }
 

@@ -42,6 +42,8 @@ pub struct App {
     pub sidecar_client: Option<SidecarClient>,
     /// Channel to send results from async background tasks back to the main loop
     pub async_sender: Option<AsyncTaskSender>,
+    /// Custom state file path (if specified via --state-file)
+    pub state_file_path: Option<PathBuf>,
 }
 
 impl App {
@@ -52,6 +54,7 @@ impl App {
             should_restart: false,
             sidecar_client: None,
             async_sender: None,
+            state_file_path: None,
         }
     }
 
@@ -62,7 +65,13 @@ impl App {
             should_restart: false,
             sidecar_client: None,
             async_sender: None,
+            state_file_path: None,
         }
+    }
+
+    pub fn with_state_file(mut self, path: Option<PathBuf>) -> Self {
+        self.state_file_path = path;
+        self
     }
 
     pub fn with_sidecar(mut self, client: Option<SidecarClient>) -> Self {
@@ -2945,7 +2954,7 @@ impl App {
                         // Reset selection
                         self.model.ui_state.selected_task_idx = None;
                         // Save global state so closed project doesn't reappear
-                        if let Err(e) = save_state(&self.model) {
+                        if let Err(e) = save_state(&self.model, self.state_file_path.as_ref()) {
                             eprintln!("Warning: Failed to save state after closing project: {}", e);
                         }
                     }
@@ -3043,7 +3052,7 @@ impl App {
                                 // Reset selection
                                 self.model.ui_state.selected_task_idx = None;
                                 // Save global state so closed project doesn't reappear
-                                if let Err(e) = save_state(&self.model) {
+                                if let Err(e) = save_state(&self.model, self.state_file_path.as_ref()) {
                                     eprintln!("Warning: Failed to save state after closing project: {}", e);
                                 }
                             }
@@ -6940,15 +6949,23 @@ impl App {
     }
 }
 
+/// Get the default state file path
+pub fn default_state_file_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("kanblam")
+        .join("state.json")
+}
+
 /// Load application state from disk
-pub fn load_state() -> Result<AppModel> {
+/// If custom_path is provided, uses that file; otherwise uses the default location
+pub fn load_state(custom_path: Option<&PathBuf>) -> Result<AppModel> {
     use crate::model::ProjectTaskData;
 
-    let data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanblam");
-
-    let state_file = data_dir.join("state.json");
+    let state_file = match custom_path {
+        Some(path) => path.clone(),
+        None => default_state_file_path(),
+    };
 
     if state_file.exists() {
         let content = std::fs::read_to_string(&state_file)?;
@@ -6973,12 +6990,17 @@ pub fn load_state() -> Result<AppModel> {
 
 /// Save application state to disk
 /// Also saves tasks to per-project .kanblam/tasks.json files
-pub fn save_state(model: &AppModel) -> Result<()> {
-    let data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("kanblam");
+/// If custom_path is provided, uses that file; otherwise uses the default location
+pub fn save_state(model: &AppModel, custom_path: Option<&PathBuf>) -> Result<()> {
+    let state_file = match custom_path {
+        Some(path) => path.clone(),
+        None => default_state_file_path(),
+    };
 
-    std::fs::create_dir_all(&data_dir)?;
+    // Ensure parent directory exists
+    if let Some(parent) = state_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     // Save tasks to each project's .kanblam directory
     for project in &model.projects {
@@ -6989,7 +7011,6 @@ pub fn save_state(model: &AppModel) -> Result<()> {
 
     // Save global state (still includes tasks for backwards compatibility,
     // but we prefer loading from project dirs)
-    let state_file = data_dir.join("state.json");
     let content = serde_json::to_string_pretty(model)?;
     std::fs::write(state_file, content)?;
 
