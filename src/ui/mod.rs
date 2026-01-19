@@ -896,11 +896,8 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskDetailTab::Git => {
             render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
         }
-        crate::model::TaskDetailTab::Claude => {
-            render_claude_tab(&mut lines, task, &label_style, &value_style, &dim_style);
-        }
         crate::model::TaskDetailTab::Activity => {
-            render_activity_tab(&mut lines, task, &label_style, &dim_style);
+            render_activity_tab(&mut lines, task, &label_style, &value_style, &dim_style);
         }
         crate::model::TaskDetailTab::Help => {
             render_help_tab(&mut lines, task, &key_style, &label_style, &dim_style);
@@ -1362,15 +1359,15 @@ fn style_diff_line(line: &str) -> Line<'static> {
     ))
 }
 
-/// Render the Claude tab content (SDK logs)
-fn render_claude_tab<'a>(
+/// Render the Activity tab content (session info + activity log)
+fn render_activity_tab<'a>(
     lines: &mut Vec<Line<'a>>,
     task: &crate::model::Task,
     label_style: &Style,
     value_style: &Style,
     dim_style: &Style,
 ) {
-    // Session info
+    // Session info section
     if let Some(ref session_id) = task.claude_session_id {
         lines.push(Line::from(vec![
             Span::styled("Session ID: ", *label_style),
@@ -1428,55 +1425,7 @@ fn render_claude_tab<'a>(
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
-    lines.push(Line::from(Span::styled("SDK Activity Log", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
-    lines.push(Line::from(""));
-
-    // Show SDK activity from the activity log (filter for SDK-related entries)
-    if task.activity_log.is_empty() {
-        lines.push(Line::from(Span::styled("No activity logged yet", *dim_style)));
-    } else {
-        // Show all activity entries (up to 20 for the claude tab)
-        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(20).collect();
-        for entry in entries_to_show.iter().rev() {
-            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
-            let time_ago = if elapsed.num_seconds() < 5 {
-                "now".to_string()
-            } else if elapsed.num_seconds() < 60 {
-                format!("{}s ago", elapsed.num_seconds())
-            } else if elapsed.num_minutes() < 60 {
-                format!("{}m ago", elapsed.num_minutes())
-            } else {
-                format!("{}h ago", elapsed.num_hours())
-            };
-
-            let msg_color = if entry.message.starts_with("Using ") || entry.message.starts_with("Tool:") {
-                Color::Cyan
-            } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
-                Color::Red
-            } else if entry.message.contains("success") || entry.message.contains("complete") || entry.message.contains("started") {
-                Color::Green
-            } else if entry.message.contains("Working") || entry.message.contains("Waiting") {
-                Color::Yellow
-            } else {
-                Color::White
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
-                Span::styled(truncate_string(&entry.message, 45), Style::default().fg(msg_color)),
-            ]));
-        }
-    }
-}
-
-/// Render the Activity tab content (user actions + SDK commands)
-fn render_activity_tab<'a>(
-    lines: &mut Vec<Line<'a>>,
-    task: &crate::model::Task,
-    label_style: &Style,
-    dim_style: &Style,
-) {
-    lines.push(Line::from(Span::styled("Command History", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+    lines.push(Line::from(Span::styled("Activity Log", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
     lines.push(Line::from(""));
 
     if task.activity_log.is_empty() {
@@ -1488,8 +1437,8 @@ fn render_activity_tab<'a>(
         lines.push(Line::from(Span::styled("  • Open terminals and modals", *dim_style)));
         lines.push(Line::from(Span::styled("  • Merge or discard changes", *dim_style)));
     } else {
-        // Show all activity entries (up to 25 for the activity tab)
-        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(25).collect();
+        // Show activity entries (up to 20)
+        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(20).collect();
         for entry in entries_to_show.iter().rev() {
             let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
             let time_ago = if elapsed.num_seconds() < 5 {

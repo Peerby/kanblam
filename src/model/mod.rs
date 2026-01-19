@@ -1816,7 +1816,6 @@ pub enum TaskDetailTab {
     #[default]
     General,
     Git,
-    Claude,
     Activity,
     Help,
 }
@@ -1827,7 +1826,6 @@ impl TaskDetailTab {
         &[
             TaskDetailTab::General,
             TaskDetailTab::Git,
-            TaskDetailTab::Claude,
             TaskDetailTab::Activity,
             TaskDetailTab::Help,
         ]
@@ -1838,7 +1836,6 @@ impl TaskDetailTab {
         match self {
             TaskDetailTab::General => "general",
             TaskDetailTab::Git => "git",
-            TaskDetailTab::Claude => "claude",
             TaskDetailTab::Activity => "activity",
             TaskDetailTab::Help => "help",
         }
@@ -1848,8 +1845,7 @@ impl TaskDetailTab {
     pub fn next(&self) -> TaskDetailTab {
         match self {
             TaskDetailTab::General => TaskDetailTab::Git,
-            TaskDetailTab::Git => TaskDetailTab::Claude,
-            TaskDetailTab::Claude => TaskDetailTab::Activity,
+            TaskDetailTab::Git => TaskDetailTab::Activity,
             TaskDetailTab::Activity => TaskDetailTab::Help,
             TaskDetailTab::Help => TaskDetailTab::General,
         }
@@ -1860,8 +1856,7 @@ impl TaskDetailTab {
         match self {
             TaskDetailTab::General => TaskDetailTab::Help,
             TaskDetailTab::Git => TaskDetailTab::General,
-            TaskDetailTab::Claude => TaskDetailTab::Git,
-            TaskDetailTab::Activity => TaskDetailTab::Claude,
+            TaskDetailTab::Activity => TaskDetailTab::Git,
             TaskDetailTab::Help => TaskDetailTab::Activity,
         }
     }
