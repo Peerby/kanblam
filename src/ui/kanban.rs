@@ -294,13 +294,13 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             };
                             (format!("↓{}", task.git_commits_behind), style)
                         } else {
-                            // Synced with main - show checkmark (ready to apply)
+                            // Synced with main - show neutral indicator (ready to apply)
                             let style = if is_task_selected {
                                 Style::default().fg(contrast_fg).bg(color)
                             } else {
-                                Style::default().fg(Color::Green)
+                                Style::default().fg(Color::DarkGray)
                             };
-                            ("✓".to_string(), style)
+                            ("=".to_string(), style)
                         };
                         let indicator_len = indicator_text.chars().count();
 
