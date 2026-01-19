@@ -103,6 +103,13 @@ async fn main() -> anyhow::Result<()> {
     let commands = app.update(Message::StartGitFetch);
     process_commands_recursively(&mut app, commands);
 
+    // Start watcher if it was enabled (sidecar doesn't persist state between restarts)
+    // Check global setting since project.watcher_enabled is not persisted
+    if app.model.global_settings.mascot_advice_enabled == Some(true) {
+        let commands = app.update(Message::StartWatcher);
+        process_commands_recursively(&mut app, commands);
+    }
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
