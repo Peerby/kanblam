@@ -1205,6 +1205,24 @@ impl ActivityLogEntry {
     }
 }
 
+/// A single feedback entry (persisted)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackEntry {
+    /// When the feedback was sent
+    pub timestamp: DateTime<Utc>,
+    /// The feedback content
+    pub content: String,
+}
+
+impl FeedbackEntry {
+    pub fn new(content: impl Into<String>) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            content: content.into(),
+        }
+    }
+}
+
 /// Claude session state within a worktree
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ClaudeSessionState {
@@ -1314,6 +1332,9 @@ pub struct Task {
     /// Used when user sends feedback while SDK/CLI is actively working
     #[serde(skip)]
     pub pending_feedback: Option<String>,
+    /// History of all feedback sent to Claude (persisted)
+    #[serde(default)]
+    pub feedback_history: Vec<FeedbackEntry>,
 
     // === Task queueing ===
 
@@ -1385,6 +1406,7 @@ impl Task {
             sdk_command_count: 0,
             cli_opened_at_command_count: 0,
             pending_feedback: None,
+            feedback_history: Vec::new(),
             // Queueing
             queued_for_session: None,
             // Activity tracking
@@ -1419,6 +1441,11 @@ impl Task {
     /// Clear the activity log (e.g., when starting a new accept/update)
     pub fn clear_activity_log(&mut self) {
         self.activity_log.clear();
+    }
+
+    /// Add feedback to the history (persisted)
+    pub fn add_feedback(&mut self, content: impl Into<String>) {
+        self.feedback_history.push(FeedbackEntry::new(content));
     }
 
     /// Check if this task can be started (not already active)

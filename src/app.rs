@@ -5160,6 +5160,7 @@ impl App {
                                                 feedback.clone()
                                             };
                                             task.log_activity(&format!("Live feedback: {}", truncated));
+                                            task.add_feedback(&feedback);
                                             task.last_activity_at = Some(chrono::Utc::now());
                                             task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                                             task.session_mode = crate::model::SessionMode::SdkManaged;
@@ -5201,6 +5202,7 @@ impl App {
                                                     feedback.clone()
                                                 };
                                                 task.log_activity(&format!("Feedback sent: {}", truncated));
+                                                task.add_feedback(&feedback);
                                             }
                                             project.needs_attention = false;
                                             notify::clear_attention_indicator();

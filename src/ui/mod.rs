@@ -988,6 +988,28 @@ fn render_general_tab<'a>(
         lines.push(Line::from(""));
     }
 
+    // Feedback history
+    if !task.feedback_history.is_empty() {
+        lines.push(Line::from(Span::styled("─ Feedback History ─", *dim_style)));
+        for entry in &task.feedback_history {
+            let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
+            let time_ago = if elapsed.num_seconds() < 60 {
+                "just now".to_string()
+            } else if elapsed.num_minutes() < 60 {
+                format!("{}m ago", elapsed.num_minutes())
+            } else if elapsed.num_hours() < 24 {
+                format!("{}h ago", elapsed.num_hours())
+            } else {
+                format!("{}d ago", elapsed.num_days())
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>8} ", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(entry.content.clone(), Style::default().fg(Color::Cyan)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
     // Attachments
     if !task.images.is_empty() {
         lines.push(Line::from(vec![
