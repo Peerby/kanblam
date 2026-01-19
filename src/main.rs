@@ -1,4 +1,5 @@
 // Core application modules
+// See CLAUDE.md for architecture overview and development commands
 mod app;
 mod hooks;
 mod image;
