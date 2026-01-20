@@ -821,6 +821,9 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
                         DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
                         LineBreak(1).execute(&mut app.model.ui_state.editor_state);
                         vec![]
+                    } else if text.trim().is_empty() {
+                        // Empty input: unfocus instead of submitting
+                        vec![Message::FocusChanged(FocusArea::KanbanBoard)]
                     } else {
                         vec![Message::InputSubmit]
                     }
