@@ -4066,9 +4066,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             }
                             "input-provided" => {
                                 task.log_activity("Input received, continuing...");
-                                // Don't change status if task is in a special state (including QA/Testing)
+                                // Don't change status if task is in a special state (including QA/Testing/Review)
                                 if !was_accepting && !was_updating && !was_applying && !is_terminal
                                     && task.status != TaskStatus::Testing
+                                    && task.status != TaskStatus::Review
                                 {
                                     // Move to end of InProgress column so newly active tasks appear at bottom
                                     project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
@@ -4088,9 +4089,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // Skip - task already completed, this is a replayed signal
                                 } else {
                                     task.log_activity("Working...");
-                                    // Don't override special statuses (rebase or QA)
+                                    // Don't override special statuses (rebase, QA, or Review)
                                     if !was_accepting && !was_updating && !was_applying
                                         && task.status != TaskStatus::Testing
+                                        && task.status != TaskStatus::Review
                                     {
                                         // Move to end of InProgress column so newly active tasks appear at bottom
                                         project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
