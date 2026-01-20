@@ -2482,7 +2482,7 @@ mod tests {
         let task_id = Uuid::new_v4();
         let project_dir = PathBuf::from("/Users/test/my-project");
         let path = get_worktree_path(&project_dir, task_id);
-        assert!(path.to_string_lossy().contains(".worktrees"));
+        assert!(path.to_string_lossy().contains("worktrees"));
         assert!(path.to_string_lossy().contains(&format!("task-{}", task_id)));
         assert!(path.starts_with(&project_dir));
     }

@@ -1715,6 +1715,10 @@ pub struct UiState {
     /// If set, a merge celebration animation is playing for this task
     /// Contains the task ID being animated and the original display text
     pub merge_celebration: Option<MergeCelebrationState>,
+
+    // Vim replace mode state
+    /// If true, we're waiting for a character to replace the current character under cursor
+    pub pending_replace_char: bool,
 }
 
 /// State for the merge celebration "gold dust sweep" animation
@@ -2168,6 +2172,8 @@ impl Default for UiState {
             watcher_insight_scroll_offset: 0,
             // Merge celebration animation
             merge_celebration: None,
+            // Vim replace mode state
+            pending_replace_char: false,
         }
     }
 }

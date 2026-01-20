@@ -766,6 +766,40 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
 
     let _super_key = key.modifiers.contains(KeyModifiers::SUPER);
 
+    // Handle pending replace character FIRST, before any other key processing
+    // This ensures the replacement character isn't intercepted by other bindings
+    if app.model.ui_state.pending_replace_char {
+        if let KeyCode::Char(ch) = key.code {
+            use edtui::actions::{Execute, DeleteCharForward, InsertChar, MoveBackward};
+
+            // Get current cursor position and text
+            let cursor_pos = app.model.ui_state.editor_state.cursor;
+            let text = app.model.ui_state.get_input_text();
+            let lines: Vec<&str> = text.lines().collect();
+
+            // Only replace if there's a character under the cursor
+            if cursor_pos.row < lines.len() {
+                let line = lines[cursor_pos.row];
+                if cursor_pos.col < line.chars().count() {
+                    // Delete the character under cursor (forward delete)
+                    DeleteCharForward(1).execute(&mut app.model.ui_state.editor_state);
+                    // Insert replacement character
+                    InsertChar(ch).execute(&mut app.model.ui_state.editor_state);
+                    // Move cursor back to original position
+                    MoveBackward(1).execute(&mut app.model.ui_state.editor_state);
+                }
+            }
+
+            // Clear pending replace mode
+            app.model.ui_state.pending_replace_char = false;
+            return vec![];
+        } else {
+            // Cancel replace mode on non-character key (Esc, arrows, etc.)
+            app.model.ui_state.pending_replace_char = false;
+            // Fall through to normal handling for the key
+        }
+    }
+
     match key.code {
         // Ctrl+S: Submit and immediately start the task
         KeyCode::Char('s') if ctrl => {
@@ -810,6 +844,8 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
         // Escape: always pass to edtui for vim mode switching (Insert -> Normal)
         // Never unfocuses - use Ctrl+C or Up at position 0 to exit
         KeyCode::Esc => {
+            // Clear pending replace mode if active
+            app.model.ui_state.pending_replace_char = false;
             app.model.ui_state.editor_event_handler.on_key_event(
                 key,
                 &mut app.model.ui_state.editor_state,
@@ -819,6 +855,8 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
 
         // Ctrl+C unfocuses editor, cancels edit/feedback if active (keeps content for new tasks)
         KeyCode::Char('c') if ctrl => {
+            // Clear pending replace mode if active
+            app.model.ui_state.pending_replace_char = false;
             if app.model.ui_state.feedback_task_id.is_some() {
                 vec![Message::CancelFeedbackMode]
             } else if app.model.ui_state.editing_task_id.is_some() {
@@ -866,6 +904,8 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
         KeyCode::Up => {
             let cursor = app.model.ui_state.editor_state.cursor;
             if cursor.row == 0 && cursor.col == 0 {
+                // Clear pending replace mode if active
+                app.model.ui_state.pending_replace_char = false;
                 // Just unfocus, keep the content
                 vec![Message::FocusChanged(FocusArea::KanbanBoard)]
             } else {
@@ -880,11 +920,24 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
 
         // All other keys (including plain Enter for newlines) go to edtui editor
         _ => {
-            app.model.ui_state.editor_event_handler.on_key_event(
-                key,
-                &mut app.model.ui_state.editor_state,
-            );
-            vec![]
+            use edtui::EditorMode;
+
+            // 'r' in Normal mode enters replace character mode
+            if app.model.ui_state.editor_state.mode == EditorMode::Normal
+                && key.code == KeyCode::Char('r')
+                && !ctrl
+                && !alt
+            {
+                app.model.ui_state.pending_replace_char = true;
+                vec![]
+            } else {
+                // Normal edtui handling
+                app.model.ui_state.editor_event_handler.on_key_event(
+                    key,
+                    &mut app.model.ui_state.editor_state,
+                );
+                vec![]
+            }
         }
     }
 }
