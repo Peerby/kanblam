@@ -54,10 +54,12 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         calculate_input_height(&app.model.ui_state.editor_state.lines.to_string(), frame_width)
     };
 
-    // Determine header height based on available space
-    // Show full 3-line logo header when terminal is wide enough and tall enough
+    // Determine header height based on available space and project bar width
+    // Show full 3-line logo header when terminal is wide enough, tall enough,
+    // AND the project tabs don't overlap with the logo
     // (mascot overlays the project bar line to save vertical space)
-    let logo_size = logo::get_logo_size(frame.area().width, frame.area().height);
+    let project_bar_width = calculate_project_bar_width(app);
+    let logo_size = logo::get_logo_size_for_project_bar(frame.area().width, frame.area().height, project_bar_width);
     let show_full_header = matches!(logo_size, logo::LogoSize::Full | logo::LogoSize::Medium);
     let header_height = if show_full_header { 3 } else { 1 };
 
@@ -203,6 +205,46 @@ fn calculate_input_height(content: &str, available_width: usize) -> u16 {
     let needed_height = (visual_lines + 3) as u16;
 
     needed_height.clamp(MIN_HEIGHT, MAX_HEIGHT)
+}
+
+/// Calculate the total width needed for the project bar (all tabs)
+/// This includes the +project button, all project tabs with their names, attention badges, and separators
+fn calculate_project_bar_width(app: &App) -> u16 {
+    let num_projects = app.model.projects.len();
+
+    let mut width: usize = 1; // Leading space
+
+    // +project button (index 0)
+    if num_projects < 9 {
+        // " [!] +project " = 14 chars when no projects, " [!] + " = 7 chars otherwise
+        let label_len = if num_projects == 0 { 14 } else { 7 };
+        width += label_len;
+        width += 3; // " │ " separator
+    }
+
+    // Project tabs
+    for (idx, project) in app.model.projects.iter().enumerate() {
+        // Tab text: " [X] name " where X is the shift char
+        if idx + 1 < 10 {
+            // " [X] name " = 6 + name.len()
+            width += 6 + project.name.len();
+        } else {
+            // " name " = 2 + name.len()
+            width += 2 + project.name.len();
+        }
+
+        // Attention badge: " N " where N is the count
+        let attention_count = project.attention_count();
+        if attention_count > 0 {
+            // " N " for single digit, " NN " for double digit, etc.
+            width += 3 + attention_count.to_string().len() - 1;
+        }
+
+        // Separator: " │ "
+        width += 3;
+    }
+
+    width as u16
 }
 
 /// Render the header area (project bar + optional logo)

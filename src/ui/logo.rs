@@ -482,30 +482,54 @@ const MAX_MEDIUM_LOGO_WIDTH_PERCENT: f32 = 0.70;
 /// Below this threshold, show text-only "KANBLAM" to preserve vertical space
 pub const MIN_HEIGHT_FOR_FULL_LOGO: u16 = 30;
 
-/// Determine which logo size to show based on terminal dimensions
+/// Determine which logo size to show based on terminal dimensions and project bar width
+///
+/// The logo size is determined by checking if project tabs would overlap with the logo.
+/// We try each logo variant in order (Full → Medium → Compact) and pick the largest
+/// one that fits without overlapping.
+///
 /// Returns:
-/// - Full: when terminal is tall enough (>=30 lines) and full logo takes <= 60% width
-/// - Medium: when terminal is tall enough and full logo would exceed 60% but medium is <= 70%
+/// - Full: when terminal is tall enough (>=30 lines) and project bar fits in remaining space
+/// - Medium: when terminal is tall enough and project bar fits with medium logo
 /// - Compact: otherwise (text-only "KANBLAM")
 pub fn get_logo_size(terminal_width: u16, terminal_height: u16) -> LogoSize {
+    // Call the new function with 0 project bar width for backwards compatibility
+    get_logo_size_for_project_bar(terminal_width, terminal_height, 0)
+}
+
+/// Determine which logo size to show based on terminal dimensions and project bar width
+///
+/// This function considers the actual width needed by project tabs to avoid overlap.
+/// It tries logo variants in order of preference (Full → Medium → Compact) and picks
+/// the largest one where the project bar still fits in the remaining space.
+///
+/// # Arguments
+/// * `terminal_width` - Total terminal width in columns
+/// * `terminal_height` - Total terminal height in lines
+/// * `project_bar_width` - Width needed for all project tabs (including +project button)
+pub fn get_logo_size_for_project_bar(terminal_width: u16, terminal_height: u16, project_bar_width: u16) -> LogoSize {
     // Height check: need at least 30 lines for mascot
     if terminal_height < MIN_HEIGHT_FOR_FULL_LOGO {
         return LogoSize::Compact;
     }
 
-    // Width check for full logo (mascot + KANBLAM): should not exceed 60% of terminal width
+    // Try Full logo first (mascot + KANBLAM)
+    // Check both: fits within 60% of terminal AND doesn't overlap with project bar
     let full_logo_percent = FULL_LOGO_WIDTH as f32 / terminal_width as f32;
-    if full_logo_percent <= MAX_FULL_LOGO_WIDTH_PERCENT {
+    let full_logo_available = terminal_width.saturating_sub(FULL_LOGO_WIDTH);
+    if full_logo_percent <= MAX_FULL_LOGO_WIDTH_PERCENT && project_bar_width <= full_logo_available {
         return LogoSize::Full;
     }
 
-    // Width check for medium logo (mascot + KB): should not exceed 70% of terminal width
+    // Try Medium logo (mascot + KB)
+    // Check both: fits within 70% of terminal AND doesn't overlap with project bar
     let medium_logo_percent = MEDIUM_LOGO_WIDTH as f32 / terminal_width as f32;
-    if medium_logo_percent <= MAX_MEDIUM_LOGO_WIDTH_PERCENT {
+    let medium_logo_available = terminal_width.saturating_sub(MEDIUM_LOGO_WIDTH);
+    if medium_logo_percent <= MAX_MEDIUM_LOGO_WIDTH_PERCENT && project_bar_width <= medium_logo_available {
         return LogoSize::Medium;
     }
 
-    // Fall back to compact text-only
+    // Fall back to compact text-only (KANBLAM is right-aligned in the project bar itself)
     LogoSize::Compact
 }
 
