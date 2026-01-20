@@ -894,6 +894,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         crate::model::TaskDetailTab::General => {
             render_general_tab(&mut lines, task, app, &label_style, &value_style, &dim_style);
         }
+        crate::model::TaskDetailTab::Spec => {
+            render_spec_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
+        }
         crate::model::TaskDetailTab::Git => {
             render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
         }
@@ -1149,6 +1152,115 @@ fn render_general_tab<'a>(
             Span::styled("Path: ", *label_style),
             Span::styled(wt_path.display().to_string(), *dim_style),
         ]));
+    }
+}
+
+/// Render the Spec tab content with scrolling and subtle scrollbar
+fn render_spec_tab<'a>(
+    lines: &mut Vec<Line<'a>>,
+    task: &crate::model::Task,
+    app: &App,
+    _label_style: &Style,
+    _value_style: &Style,
+    dim_style: &Style,
+    key_style: &Style,
+) {
+    if let Some(ref spec) = task.spec {
+        let spec_lines: Vec<&str> = spec.lines().collect();
+        let total_lines = spec_lines.len();
+        let scroll_offset = app.model.ui_state.spec_scroll_offset;
+        let visible_lines = 20; // How many lines to show at once
+
+        // Show scroll hints if content is scrollable
+        if total_lines > visible_lines {
+            lines.push(Line::from(vec![
+                Span::styled("j", *key_style),
+                Span::styled("/", *dim_style),
+                Span::styled("k", *key_style),
+                Span::styled(" scroll  ", *dim_style),
+                Span::styled("PgUp", *key_style),
+                Span::styled("/", *dim_style),
+                Span::styled("PgDn", *key_style),
+                Span::styled(" page  ", *dim_style),
+                Span::styled("gg", *key_style),
+                Span::styled("/", *dim_style),
+                Span::styled("G", *key_style),
+                Span::styled(" jump", *dim_style),
+            ]));
+
+            // Show scroll position indicator
+            let percentage = if total_lines > 0 {
+                ((scroll_offset as f64 / total_lines.saturating_sub(visible_lines).max(1) as f64) * 100.0).min(100.0) as usize
+            } else {
+                0
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("Lines {}-{} of {} ({}%)",
+                        scroll_offset + 1,
+                        (scroll_offset + visible_lines).min(total_lines),
+                        total_lines,
+                        percentage
+                    ),
+                    *dim_style,
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
+
+        // Render visible spec lines with simple markdown styling
+        for line in spec_lines.iter().skip(scroll_offset).take(visible_lines) {
+            let styled_line = if line.starts_with("> ") {
+                // Blockquote - important instruction in yellow/bold
+                let content = &line[2..];
+                Line::from(vec![
+                    Span::styled("│ ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        content.to_string(),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                ])
+            } else if line.starts_with("## ") {
+                // Section headers in cyan bold
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+            } else if line.starts_with("- ") || line.starts_with("* ") {
+                // Bullet points with green bullet
+                let content = &line[2..];
+                Line::from(vec![
+                    Span::styled("• ", Style::default().fg(Color::Green)),
+                    Span::styled(content.to_string(), Style::default().fg(Color::White)),
+                ])
+            } else if line.trim().is_empty() {
+                Line::from("")
+            } else {
+                Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White)))
+            };
+            lines.push(styled_line);
+        }
+
+        // Show "more below" indicator with subtle scrollbar hint
+        let remaining = total_lines.saturating_sub(scroll_offset + visible_lines);
+        if remaining > 0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("... {} more lines below (j/G to scroll) ...", remaining),
+                *dim_style,
+            )));
+        }
+    } else {
+        // No spec yet
+        lines.push(Line::from(Span::styled(
+            "No spec generated yet.",
+            *dim_style,
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "A spec will be generated when the task is created or edited.",
+            *dim_style,
+        )));
     }
 }
 
@@ -2708,6 +2820,90 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled(ConfigField::MascotAdviceInterval.hint(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // QA Validation field
+    let is_selected = config.selected_field == ConfigField::QaEnabled;
+    let qa_enabled = config.temp_qa_enabled;
+    let qa_value = if qa_enabled { "On" } else { "Off" };
+
+    let (prefix, style, value_style) = if is_selected {
+        (
+            "► ",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            if qa_enabled {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Red)
+            }
+        )
+    } else {
+        (
+            "  ",
+            Style::default(),
+            if qa_enabled {
+                Style::default().fg(Color::Green).add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+            }
+        )
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled("QA Validation: ", style),
+        Span::styled(qa_value, value_style),
+        Span::styled(if is_selected { "  (Enter to toggle)" } else { "" }, Style::default().fg(Color::DarkGray)),
+    ]));
+    if is_selected {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(ConfigField::QaEnabled.hint(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Max QA Attempts field (only shown when QA is enabled)
+    if qa_enabled {
+        let is_selected = config.selected_field == ConfigField::MaxQaAttempts;
+        let is_editing = is_selected && config.editing;
+
+        let attempts_value = if is_editing {
+            if config.edit_buffer.is_empty() {
+                "_".to_string()
+            } else {
+                format!("{}_", config.edit_buffer)
+            }
+        } else {
+            config.temp_max_qa_attempts.to_string()
+        };
+
+        let (prefix, style, value_style) = if is_selected {
+            (
+                "► ",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                if is_editing {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                }
+            )
+        } else {
+            ("  ", Style::default(), Style::default().fg(Color::DarkGray))
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", ConfigField::MaxQaAttempts.label()), style),
+            Span::styled(attempts_value, value_style),
+        ]));
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(ConfigField::MaxQaAttempts.hint(), Style::default().fg(Color::DarkGray)),
             ]));
         }
         lines.push(Line::from(""));

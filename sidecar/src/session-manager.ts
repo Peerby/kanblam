@@ -107,6 +107,7 @@ export class SessionManager {
       cwd: worktree_path,
       abortController,
       pathToClaudeCodeExecutable: claudePath,
+      env: { ...process.env, KANBLAM_SDK_SESSION: '1' },  // Tag SDK sessions for hook detection
     };
 
     // Create a promise that resolves when session ID is captured
@@ -157,6 +158,7 @@ export class SessionManager {
       cwd: worktree_path,
       abortController,
       pathToClaudeCodeExecutable: claudePath,
+      env: { ...process.env, KANBLAM_SDK_SESSION: '1' },  // Tag SDK sessions for hook detection
     };
 
     // Start processing with resume
@@ -195,13 +197,38 @@ export class SessionManager {
   }
 
   /**
-   * Summarize a long task title into a short, clear summary for display in the kanban board.
-   * Uses a one-shot SDK query to generate the summary.
+   * Summarize a long task title into a short, clear summary and generate a spec document.
+   * Uses a one-shot SDK query to generate both the summary and spec.
    */
   async summarizeTitle(params: SummarizeTitleParams): Promise<SummarizeTitleResult> {
     const { task_id, title } = params;
 
-    const prompt = `Summarize this task description into a brief, clear title (max 30 chars) for a kanban board card. Return ONLY the summary, nothing else.
+    const prompt = `OUTPUT ONLY THE TITLE AND SPEC BELOW. NO introduction, NO explanation, NO "I'll analyze" - just the raw output.
+
+Given this task description, generate:
+1. A brief, clear title (max 30 chars) for a kanban board card
+2. An agent execution spec
+
+Your ENTIRE response must be EXACTLY in this format (first line is the short title, then a blank line, then the spec):
+
+<short title here>
+
+> Preserve existing behavior unless explicitly instructed otherwise.
+
+## Objective
+<One clear sentence describing the exact outcome. State what must change or be produced, not why.>
+
+## Non-Goals
+<What the agent must NOT do. Prevents overreach and unwanted changes. Use "None" if not applicable.>
+
+## Constraints
+<Hard rules: no behavior changes, backward compatibility, performance limits, style rules, etc. Use "None" if not applicable.>
+
+## Outputs
+<What must exist when done: modified files, new files, tests, etc.>
+
+## Definition of Done
+<Concrete, verifiable conditions. How do we know this is finished?>
 
 Task: ${title}`;
 
@@ -214,7 +241,7 @@ Task: ${title}`;
       maxTurns: 1, // Single-turn query for summarization
     };
 
-    let shortTitle = '';
+    let fullResponse = '';
 
     try {
       const response = query({ prompt, options });
@@ -226,7 +253,7 @@ Task: ${title}`;
           if (apiMessage && apiMessage.content) {
             for (const block of apiMessage.content) {
               if (block.type === 'text' && 'text' in block) {
-                shortTitle += (block as { type: 'text'; text: string }).text;
+                fullResponse += (block as { type: 'text'; text: string }).text;
               }
             }
           }
@@ -234,26 +261,69 @@ Task: ${title}`;
       }
     } catch (err) {
       console.error(`[SessionManager] Error summarizing title for task ${task_id}:`, err);
-      // Fall back to truncating the original title
-      shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
+      // Fall back to truncating the original title, no spec
+      const shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
+      return { short_title: shortTitle, spec: undefined };
     } finally {
       abortController.abort();
     }
 
-    // Clean up the response - remove quotes, extra whitespace, and limit length
-    shortTitle = shortTitle.trim().replace(/^["']|["']$/g, '').trim();
+    // Parse response: first line is short title, spec starts at first '>' or '##'
+    const lines = fullResponse.trim().split('\n');
+
+    // Skip any preamble lines (conversational text like "I'll analyze...")
+    // Find the first line that looks like a title (short, no preamble patterns)
+    const preamblePatterns = /^(I'll|I will|Here|Let me|Sure|Okay|Ok,|This|The task|Based on|Looking at|Analyzing)/i;
+    let titleLineIndex = 0;
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const line = lines[i]?.trim() || '';
+      // Skip empty lines and preamble
+      if (!line || preamblePatterns.test(line) || line.endsWith(':')) {
+        continue;
+      }
+      // Found a non-preamble line - this is likely the title
+      titleLineIndex = i;
+      break;
+    }
+
+    let shortTitle = lines[titleLineIndex]?.trim().replace(/^["']|["']$/g, '').trim() || '';
+
+    // Extract spec - find where it starts (first '>' blockquote or '##' header)
+    let spec: string | undefined = undefined;
+    const specStartIndex = lines.findIndex((line, i) =>
+      i > titleLineIndex && (line.trim().startsWith('>') || line.trim().startsWith('##'))
+    );
+
+    if (specStartIndex > titleLineIndex) {
+      spec = lines.slice(specStartIndex).join('\n').trim();
+    } else {
+      // Fallback: try blank line approach after title
+      const firstBlankIndex = lines.findIndex((line, i) => i > titleLineIndex && line.trim() === '');
+      if (firstBlankIndex > titleLineIndex && firstBlankIndex < lines.length - 1) {
+        spec = lines.slice(firstBlankIndex + 1).join('\n').trim();
+      }
+    }
+
+    // Clean up short title - remove any markdown that leaked in
+    shortTitle = shortTitle.replace(/^[#>*\-]+\s*/, '').trim();
     if (shortTitle.length > 30) {
       shortTitle = shortTitle.slice(0, 27) + '...';
     }
 
-    // If we didn't get a meaningful response, fall back to truncation
+    // If we didn't get a meaningful short title, fall back to truncation
     if (!shortTitle || shortTitle.length < 3) {
       shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
     }
 
     console.log(`[SessionManager] Summarized title for task ${task_id}: "${shortTitle}"`);
+    console.log(`[SessionManager] Full response (${fullResponse.length} chars):\n${fullResponse.slice(0, 500)}...`);
+    if (spec) {
+      console.log(`[SessionManager] Generated spec for task ${task_id}: ${spec.length} chars`);
+    } else {
+      console.log(`[SessionManager] No spec extracted for task ${task_id}`);
+    }
 
-    return { short_title: shortTitle };
+    return { short_title: shortTitle, spec };
   }
 
   stopSession(taskId: string): void {
@@ -322,6 +392,9 @@ Task: ${title}`;
         options,
       });
 
+      // Accumulate full output for QA marker detection
+      let fullOutput = '';
+
       for await (const message of response) {
         // Capture session ID from init message
         if (message.type === 'system' && message.subtype === 'init') {
@@ -367,6 +440,7 @@ Task: ${title}`;
             }
 
             if (textContent) {
+              fullOutput += textContent;
               this.onEvent({
                 task_id: taskId,
                 event: 'output',
@@ -396,11 +470,13 @@ Task: ${title}`;
         }
 
         if (message.type === 'result') {
-          // Session completed
+          // Session completed - include full output for QA marker detection
+          console.log(`[SessionManager] Result received for task ${taskId}, fullOutput length: ${fullOutput.length}, has [QA:PASS]: ${fullOutput.includes('[QA:PASS]')}`);
           this.onEvent({
             task_id: taskId,
             event: 'stopped',
             session_id: sessionId,
+            output: fullOutput,
           });
         }
       }

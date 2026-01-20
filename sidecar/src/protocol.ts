@@ -70,6 +70,7 @@ export interface ResumeSessionResult {
 
 export interface SummarizeTitleResult {
   short_title: string;
+  spec?: string;
 }
 
 // Notification types to Rust

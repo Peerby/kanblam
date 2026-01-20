@@ -59,7 +59,7 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
 
     // Render each column in 2x3 layout:
     // Row 1: Planned | InProgress
-    // Row 2: Testing | NeedsWork
+    // Row 2: QA | NeedsWork
     // Row 3: Review | Done
     render_column(frame, row1_cols[0], app, TaskStatus::Planned);
     render_column(frame, row1_cols[1], app, TaskStatus::InProgress);
@@ -79,7 +79,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
     let (num, title, color, contrast_fg) = match status {
         TaskStatus::Planned => ("1", "Planned", Color::Blue, Color::White),
         TaskStatus::InProgress => ("2", "In Progress", Color::Yellow, Color::Black),
-        TaskStatus::Testing => ("3", "Testing", Color::Cyan, Color::Black),
+        TaskStatus::Testing => ("3", "QA", Color::Cyan, Color::Black),
         TaskStatus::NeedsWork => ("4", "Needs Work", Color::Red, Color::White),
         TaskStatus::Review | TaskStatus::Accepting | TaskStatus::Updating | TaskStatus::Applying => ("5", "Review", Color::Magenta, Color::White),
         TaskStatus::Done => ("6", "Done", Color::Green, Color::Black),
@@ -235,39 +235,73 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let apply_frames = ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈']; // Rotating dot for applying
                     // Building blocks animation - foundation being laid (worktree preparation)
                     let building_frames = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂'];
-                    let prefix = match task.status {
+                    // Spec generation animation - multi-phase with meaning
+                    // Phase A (frames 0-3): probing/scan with ¼ filled quadrants - fast, "starting"
+                    // Phase B (frames 4-7): accumulation with ½ filled blocks - heavier, "committed"
+                    // Phase C (frames 8-11): consolidation with inverted quadrants - "almost done"
+                    // Phase D (frames 12-14): completion with full block - held longer, "intentional"
+                    let spec_phase_a = ['▖', '▘', '▝', '▗']; // ¼ filled, clockwise
+                    let spec_phase_b = ['▄', '▌', '▀', '▐']; // ½ filled, clockwise
+                    // Phase C uses spec_phase_a with inverted colors
+                    let spec_phase_d = '█'; // Full block, completion
+                    // QA validation animation - magnifying glass search pattern
+                    let qa_frames = ['∘', '󰍉', '󰍊', '󰍋', '󰍊', '󰍉', '∘'];
+
+                    // Check for spec generation first (can happen in any status)
+                    let (prefix, prefix_inverted) = if task.generating_spec {
+                        // Slow down: change every 2 ticks (200ms per frame)
+                        let anim_frame = (app.model.ui_state.animation_frame / 2) % 15;
+                        let (ch, inverted) = match anim_frame {
+                            0..=3 => (spec_phase_a[anim_frame], false),           // Phase A
+                            4..=7 => (spec_phase_b[anim_frame - 4], false),       // Phase B
+                            8..=11 => (spec_phase_a[anim_frame - 8], true),       // Phase C (inverted)
+                            _ => (spec_phase_d, false),                            // Phase D (12-14)
+                        };
+                        (format!("{} ", ch), inverted)
+                    } else {
+                        match task.status {
                         TaskStatus::InProgress if matches!(
                             task.session_state,
                             crate::model::ClaudeSessionState::Creating | crate::model::ClaudeSessionState::Starting
                         ) => {
                             // Building animation while worktree is being prepared
                             let frame = app.model.ui_state.animation_frame % building_frames.len();
-                            format!("{} ", building_frames[frame])
+                            (format!("{} ", building_frames[frame]), false)
                         }
                         TaskStatus::InProgress => {
                             // Spinner when Claude is actively working
                             // Slow down spinner: change every 2 ticks (200ms per frame)
                             let frame = (app.model.ui_state.animation_frame / 2) % spinner_frames.len();
-                            format!("{} ", spinner_frames[frame])
+                            (format!("{} ", spinner_frames[frame]), false)
+                        }
+                        TaskStatus::NeedsWork if task.qa_exceeded_warning => {
+                            // Show warning indicator for tasks that exceeded max QA attempts
+                            ("⚠ ".to_string(), false)
                         }
                         TaskStatus::NeedsWork if task.session_state == crate::model::ClaudeSessionState::Paused => {
                             // Only show blinking prompt when Claude is actively waiting for input
                             let frame = app.model.ui_state.animation_frame % prompt_frames.len();
-                            format!("{} ", prompt_frames[frame])
+                            (format!("{} ", prompt_frames[frame]), false)
                         }
                         TaskStatus::Accepting => {
                             let frame = app.model.ui_state.animation_frame % merge_frames.len();
-                            format!("{} ", merge_frames[frame])
+                            (format!("{} ", merge_frames[frame]), false)
                         }
                         TaskStatus::Updating => {
                             let frame = app.model.ui_state.animation_frame % rebase_frames.len();
-                            format!("{} ", rebase_frames[frame])
+                            (format!("{} ", rebase_frames[frame]), false)
                         }
                         TaskStatus::Applying => {
                             let frame = app.model.ui_state.animation_frame % apply_frames.len();
-                            format!("{} ", apply_frames[frame])
+                            (format!("{} ", apply_frames[frame]), false)
                         }
-                        _ => String::new(),
+                        TaskStatus::Testing => {
+                            // QA validation animation
+                            let frame = (app.model.ui_state.animation_frame / 2) % qa_frames.len();
+                            (format!("{} ", qa_frames[frame]), false)
+                        }
+                        _ => (String::new(), false),
+                    }
                     };
 
                     // Check if this task is being celebrated with the gold dust sweep animation
@@ -358,7 +392,18 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     } else {
                         // Normal rendering
                         if !prefix.is_empty() {
-                            spans.push(Span::styled(prefix.clone(), title_style));
+                            if prefix_inverted {
+                                // Phase C of spec animation: swap fg/bg for "consolidation" feel
+                                // Only invert the character, not the trailing space
+                                let char_part: String = prefix.chars().take_while(|c| !c.is_whitespace()).collect();
+                                let space_part: String = prefix.chars().skip_while(|c| !c.is_whitespace()).collect();
+                                spans.push(Span::styled(char_part, Style::default().fg(Color::Black).bg(Color::White)));
+                                if !space_part.is_empty() {
+                                    spans.push(Span::styled(space_part, title_style));
+                                }
+                            } else {
+                                spans.push(Span::styled(prefix.clone(), title_style));
+                            }
                         }
                         spans.push(Span::styled("[", bracket_style));
                         spans.push(Span::styled(task_id_short.to_string(), code_style));
@@ -759,9 +804,7 @@ const HINT_MERGE: HintDef = HintDef::new("m", "rg", "erge");
 const HINT_DISCARD: HintDef = HintDef::new("d", "is", "iscard");
 const HINT_CHECK: HintDef = HintDef::new("c", "hk", "heck");
 const HINT_FEEDBACK: HintDef = HintDef::new("f", "b", "eedback");
-const HINT_NEEDS_WORK: HintDef = HintDef::new("n", "w", "eeds-work");
 const HINT_OPEN: HintDef = HintDef::new("o", "pen", "pen");
-const HINT_RESET: HintDef = HintDef::new("x", "-rst", "-reset");
 
 /// Get prioritized hint definitions for Review status based on context
 /// Returns 4-5 most relevant hints based on task state
@@ -808,7 +851,10 @@ fn get_status_hint_defs(status: TaskStatus) -> Vec<HintDef> {
             HintDef::new("r", "ev", "eview"),
             HintDef::new("x", "-rst", "-reset"),
         ],
-        TaskStatus::Testing => vec![],
+        TaskStatus::Testing => vec![
+            HintDef::new("r", "ev", "eview"),
+            HintDef::new("x", "-rst", "-reset"),
+        ],
         TaskStatus::Done => vec![
             HintDef::new("e", "dit", "dit"),
             HintDef::new("d", "el", "elete"),

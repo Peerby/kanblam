@@ -127,6 +127,38 @@ impl App {
         }
     }
 
+    /// Build the QA validation prompt for a task
+    fn build_qa_prompt(description: &str, spec: Option<&str>) -> String {
+        let mut prompt = String::from(
+r#"## QA Validation
+
+Your work on this task has completed. Please verify the implementation:
+
+1. **Tests**: Run the project's test suite and verify all tests pass
+2. **Build**: Verify the project compiles/builds without errors
+3. **Spec Compliance**: Review your changes against the task requirements
+
+### Task Requirements
+"#);
+        prompt.push_str(description);
+
+        if let Some(spec_content) = spec {
+            prompt.push_str("\n\n### Spec\n");
+            prompt.push_str(spec_content);
+        }
+
+        prompt.push_str(r#"
+
+### Instructions
+- Run tests and fix any failures
+- If everything passes and requirements are met, respond with: `[QA:PASS]`
+- If you find issues you cannot fix, respond with: `[QA:FAIL]` and explain why
+
+Do not ask for permission - run tests and fix any issues you find."#);
+
+        prompt
+    }
+
     /// Calculate and save the current visual scroll position for the current column
     /// Call this before switching to a different column
     fn save_scroll_offset(&mut self) {
@@ -463,6 +495,26 @@ impl App {
             // === Worktree-based task lifecycle ===
 
             Message::StartTaskWithWorktree(task_id) => {
+                // Check if spec is still being generated - if so, queue the start
+                let is_generating_spec = self.model.active_project_mut()
+                    .and_then(|p| p.tasks.iter_mut().find(|t| t.id == task_id))
+                    .map(|task| {
+                        if task.generating_spec {
+                            task.start_after_spec = true;
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+
+                if is_generating_spec {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Waiting for spec to complete...".to_string()
+                    )));
+                    return commands;
+                }
+
                 // Get project info first to validate
                 let project_info = self.model.active_project().map(|p| {
                     (p.working_dir.clone(), p.is_git_repo())
@@ -483,6 +535,10 @@ impl App {
                             task.session_state = crate::model::ClaudeSessionState::Creating;
                             task.status = TaskStatus::InProgress;
                             task.started_at = Some(Utc::now());
+                            // Reset QA state for new work cycle
+                            task.qa_attempts = 0;
+                            task.qa_exceeded_warning = false;
+                            task.in_qa_session = false;
                             task.log_activity("User started task");
                         }
                     }
@@ -3829,7 +3885,8 @@ impl App {
 
                         // Check if we're waiting for CLI to exit (SDK handoff case)
                         // Only trigger SDK resume if CLI is NOT actively working
-                        if was_waiting_for_cli && matches!(signal.event.as_str(), "stop" | "end") {
+                        // Skip during signal replay - we don't want to auto-resume sessions on startup
+                        if !replaying_signals && was_waiting_for_cli && matches!(signal.event.as_str(), "stop" | "end") {
                             // CLI exited - resume SDK session
                             // Note: Don't overwrite claude_session_id here - the signal uses task_id,
                             // but we want to keep the real SDK session_id that was set when session started
@@ -3869,10 +3926,11 @@ impl App {
                                     }
                                     // Don't play attention sound - we're continuing automatically
                                     commands.push(Message::SendQueuedTask { finished_task_id: task_id });
+                                } else if signal.source == "sdk" {
+                                    // SDK-sourced signal - ignore, SDK Stopped event handles QA/Review
+                                    // (SDK events include session output for QA marker detection)
                                 } else {
-                                    // Normal stop - move to review and notify
-                                    // Move to end of Review tasks so first-finished appears at top
-                                    // (only if not already in Review from a duplicate hook)
+                                    // CLI-sourced signal - move to review and notify (no QA for CLI)
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     if task.status != TaskStatus::Review {
                                         project.move_task_to_end_of_status(task_id, TaskStatus::Review);
@@ -3910,17 +3968,23 @@ impl App {
                                         commands.push(Message::SetStatusMessage(Some(
                                             "Apply cancelled: Claude session ended during rebase.".to_string()
                                         )));
+                                        project.needs_attention = true;
+                                        if !replaying_signals {
+                                            notify::play_attention_sound();
+                                        }
+                                        notify::set_attention_indicator(&project.name);
+                                    } else if signal.source == "sdk" {
+                                        // SDK-sourced signal - ignore, SDK Ended event handles it
                                     } else if task.status != TaskStatus::Review {
-                                        // Normal end - move to end of Review tasks so first-finished appears at top
-                                        // (only if not already in Review from a duplicate hook)
+                                        // CLI-sourced signal - move to review and notify (no QA for CLI)
                                         task.session_state = crate::model::ClaudeSessionState::Ended;
                                         project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.needs_attention = true;
+                                        if !replaying_signals {
+                                            notify::play_attention_sound();
+                                        }
+                                        notify::set_attention_indicator(&project.name);
                                     }
-                                    project.needs_attention = true;
-                                    if !replaying_signals {
-                                        notify::play_attention_sound();
-                                    }
-                                    notify::set_attention_indicator(&project.name);
                                 }
                             }
                             "needs-input" => {
@@ -3974,8 +4038,10 @@ impl App {
                             }
                             "input-provided" => {
                                 task.log_activity("Input received, continuing...");
-                                // Don't change status if task is in a special state
-                                if !was_accepting && !was_updating && !was_applying && !is_terminal {
+                                // Don't change status if task is in a special state (including QA/Testing)
+                                if !was_accepting && !was_updating && !was_applying && !is_terminal
+                                    && task.status != TaskStatus::Testing
+                                {
                                     // Move to end of InProgress column so newly active tasks appear at bottom
                                     project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                 }
@@ -3994,8 +4060,10 @@ impl App {
                                     // Skip - task already completed, this is a replayed signal
                                 } else {
                                     task.log_activity("Working...");
-                                    // Don't override Accepting/Updating/Applying status if mid-rebase
-                                    if !was_accepting && !was_updating && !was_applying {
+                                    // Don't override special statuses (rebase or QA)
+                                    if !was_accepting && !was_updating && !was_applying
+                                        && task.status != TaskStatus::Testing
+                                    {
                                         // Move to end of InProgress column so newly active tasks appear at bottom
                                         project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                     }
@@ -4171,8 +4239,14 @@ impl App {
                 // Get task info for SDK call
                 let task_info = self.model.active_project().and_then(|project| {
                     project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        // Build prompt from title and spec
+                        let prompt = if let Some(ref spec) = task.spec {
+                            format!("# Task\n{}\n\n# Spec\n{}", task.title, spec)
+                        } else {
+                            task.title.clone()
+                        };
                         (
-                            task.title.clone(),
+                            prompt,
                             task.images.clone(),
                             task.worktree_path.clone(),
                             project.working_dir.clone(),
@@ -4180,7 +4254,7 @@ impl App {
                     })
                 });
 
-                if let Some((title, images, Some(worktree_path), project_dir)) = task_info {
+                if let Some((prompt, images, Some(worktree_path), project_dir)) = task_info {
                     // Check if sidecar is available before spawning background task
                     if self.sidecar_client.is_none() {
                         // No sidecar available - cannot start task
@@ -4216,7 +4290,7 @@ impl App {
                                 crate::sidecar::SidecarClient::start_session_standalone(
                                     task_id,
                                     worktree_path_for_call,
-                                    title,
+                                    prompt,
                                     images_str,
                                 )
                             }).await;
@@ -4244,7 +4318,7 @@ impl App {
                                 None
                             };
 
-                            match client.start_session(task_id, &worktree_path, &title, images_str) {
+                            match client.start_session(task_id, &worktree_path, &prompt, images_str) {
                                 Ok(session_id) => {
                                     commands.push(Message::SdkSessionStarted { task_id, session_id });
                                 }
@@ -4270,11 +4344,6 @@ impl App {
 
                 for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        // Update session_id if provided
-                        if let Some(ref session_id) = event.session_id {
-                            task.claude_session_id = Some(session_id.clone());
-                        }
-
                         // Check if task was in Accepting/Updating/Applying status (rebase in progress)
                         was_accepting = task.status == TaskStatus::Accepting;
                         was_updating = task.status == TaskStatus::Updating;
@@ -4282,8 +4351,19 @@ impl App {
 
                         match event.event_type {
                             SessionEventType::Started => {
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Update session_id from Started event (safe - it's a new session)
+                                if let Some(ref session_id) = event.session_id {
+                                    task.claude_session_id = Some(session_id.clone());
+                                }
+                                // Don't override special statuses (rebase sessions, QA, or Review)
+                                // Review is protected because QA completion moves to Review, and
+                                // a late Started event from the QA session shouldn't undo that
+                                if task.status != TaskStatus::Accepting
+                                    && task.status != TaskStatus::Updating
+                                    && task.status != TaskStatus::Applying
+                                    && task.status != TaskStatus::Testing
+                                    && task.status != TaskStatus::Review
+                                {
                                     task.status = TaskStatus::InProgress; // Session started, Claude is now working
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -4292,23 +4372,54 @@ impl App {
                             }
                             SessionEventType::Stopped => {
                                 task.log_activity("Session stopped");
-                                // If task was accepting/updating/applying (rebase) OR is already done/review, don't change status
-                                // Note: Both stopped and ended events may arrive - if stopped triggered
-                                // CompleteAcceptTask/CompleteUpdateTask/CompleteApplyTask which moved task, we must not reset it to Review
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done && task.status != TaskStatus::Review {
-                                    // Move to end of Review tasks so first-finished appears at top
-                                    task.session_state = crate::model::ClaudeSessionState::Paused;
+                                // Skip if terminal state or special operations in progress
+                                if was_accepting || was_updating || was_applying || task.status == TaskStatus::Done {
+                                    // Let CompleteAcceptTask/etc handlers take care of it
+                                } else if task.in_qa_session && task.status == TaskStatus::Testing {
+                                    // QA session ending - check for result markers in output
+                                    let output = event.output.as_deref().unwrap_or("");
                                     let task_id = task.id;
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
-                                    project.needs_attention = true;
-                                    notify::play_attention_sound();
-                                    notify::set_attention_indicator(&project.name);
+
+                                    if output.contains("[QA:PASS]") {
+                                        commands.push(Message::QaValidationPassed(task_id));
+                                    } else if output.contains("[QA:FAIL]") {
+                                        commands.push(Message::QaValidationNeedsWork {
+                                            task_id,
+                                            feedback: output.to_string()
+                                        });
+                                    }
+                                    // No markers = stale event from before QA started, ignore
+                                } else if task.status == TaskStatus::InProgress {
+                                    // Work finished - start QA or move to Review
+                                    let should_qa = project.qa_enabled && !task.skip_qa;
+                                    let task_id = task.id;
+
+                                    if should_qa {
+                                        task.status = TaskStatus::Testing;
+                                        commands.push(Message::StartQaValidation(task_id));
+                                    } else {
+                                        task.session_state = crate::model::ClaudeSessionState::Paused;
+                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.needs_attention = true;
+                                        notify::play_attention_sound();
+                                        notify::set_attention_indicator(&project.name);
+                                    }
                                 }
+                                // Other statuses (Testing w/o in_qa_session, NeedsWork, Review): do nothing
                             }
                             SessionEventType::Ended => {
                                 task.log_activity("Session ended");
-                                if !was_accepting && !was_updating && !was_applying && task.status != TaskStatus::Done && task.status != TaskStatus::Review {
-                                    // Move to end of Review tasks so first-finished appears at top
+                                // Ended is a fallback - Stopped handler is primary for QA logic
+                                // Only act if task is still InProgress (Stopped may have already handled it)
+                                if was_accepting || was_updating || was_applying
+                                    || task.status == TaskStatus::Done
+                                    || task.status == TaskStatus::Review
+                                    || task.status == TaskStatus::Testing
+                                {
+                                    // Already handled or in QA - skip
+                                } else if task.status == TaskStatus::InProgress {
+                                    // Ended without Stopped handling it - move to Review
+                                    // (QA start is only triggered by Stopped which has the output)
                                     task.session_state = crate::model::ClaudeSessionState::Ended;
                                     let task_id = task.id;
                                     project.move_task_to_end_of_status(task_id, TaskStatus::Review);
@@ -4319,8 +4430,10 @@ impl App {
                             }
                             SessionEventType::NeedsInput => {
                                 task.log_activity("Waiting for input...");
-                                // Don't change status if task is Accepting/Updating/Applying (mid-rebase)
-                                if !was_accepting && !was_updating && !was_applying {
+                                // Don't change status if task is Accepting/Updating/Applying/Testing (mid-rebase or QA)
+                                if !was_accepting && !was_updating && !was_applying
+                                    && task.status != TaskStatus::Testing
+                                {
                                     task.status = TaskStatus::NeedsWork;
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     project.needs_attention = true;
@@ -4330,8 +4443,8 @@ impl App {
                             }
                             SessionEventType::Working => {
                                 task.log_activity("Working...");
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -4347,8 +4460,8 @@ impl App {
                                     "Using tool...".to_string()
                                 };
                                 task.log_activity(&tool_msg);
-                                // Don't override Accepting/Updating/Applying status if this is a rebase session
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying {
+                                // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
                                     task.status = TaskStatus::InProgress;
                                 }
                                 task.session_state = crate::model::ClaudeSessionState::Working;
@@ -4434,12 +4547,20 @@ impl App {
             }
 
             Message::RequestTitleSummary { task_id } => {
-                // Get the task title for summarization
-                let title = self.model.active_project()
-                    .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
-                    .map(|t| t.title.clone());
+                // Get the task title for summarization and mark as generating
+                let title = self.model.active_project_mut()
+                    .and_then(|p| p.tasks.iter_mut().find(|t| t.id == task_id))
+                    .map(|t| {
+                        t.generating_spec = true;
+                        t.title.clone()
+                    });
 
                 if let Some(title) = title {
+                    // Show status message
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Generating spec...".to_string()
+                    )));
+
                     // Spawn the summarization request in background
                     if let Some(sender) = self.async_sender.clone() {
                         tokio::spawn(async move {
@@ -4449,13 +4570,14 @@ impl App {
                             }).await;
 
                             let msg = match result {
-                                Ok(Ok(short_title)) => {
-                                    Message::TitleSummaryReceived { task_id, short_title }
+                                Ok(Ok((short_title, spec))) => {
+                                    Message::TitleSummaryReceived { task_id, short_title, spec }
                                 }
                                 Ok(Err(e)) => {
                                     // Log error but don't show to user - summarization is optional
                                     eprintln!("[Summarization] Failed for task {}: {}", task_id, e);
-                                    return; // Don't send a message
+                                    // Still send a message to clear the generating flag
+                                    Message::TitleSummaryReceived { task_id, short_title: String::new(), spec: None }
                                 }
                                 Err(e) => {
                                     eprintln!("[Summarization] Task panicked for {}: {}", task_id, e);
@@ -4469,13 +4591,33 @@ impl App {
                 }
             }
 
-            Message::TitleSummaryReceived { task_id, short_title } => {
-                // Update the task with the short title
+            Message::TitleSummaryReceived { task_id, short_title, spec } => {
+                // Update the task with the short title and spec
+                let mut should_start = false;
                 for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.short_title = Some(short_title);
+                        // Only update if we got a meaningful short title
+                        if !short_title.is_empty() {
+                            task.short_title = Some(short_title);
+                        }
+                        task.spec = spec;
+                        task.generating_spec = false;
+
+                        // Check if we should auto-start the task
+                        if task.start_after_spec {
+                            task.start_after_spec = false;
+                            should_start = true;
+                        }
                         break;
                     }
+                }
+
+                // Clear the status message
+                commands.push(Message::SetStatusMessage(None));
+
+                // Auto-start the task if it was waiting for spec
+                if should_start {
+                    commands.push(Message::StartTaskWithWorktree(task_id));
                 }
             }
 
@@ -5435,6 +5577,171 @@ impl App {
                 }
             }
 
+            Message::StartQaValidation(task_id) => {
+                // Start QA validation for a task
+                // Guard: If already in QA session, skip (prevents duplicate triggers)
+                // Note: We only check in_qa_session, NOT status == Testing, because
+                // the caller sets status = Testing BEFORE pushing this message
+                let already_in_qa = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        task.in_qa_session
+                    })
+                }).unwrap_or(false);
+
+                if already_in_qa {
+                    // Already in QA - skip duplicate trigger
+                    return commands;
+                }
+
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.claude_session_id.clone(),
+                            task.worktree_path.clone(),
+                            task.description.clone(),
+                            task.spec.clone(),
+                        )
+                    })
+                });
+
+                if let Some((session_id_opt, worktree_path_opt, description, spec)) = task_info {
+                    if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
+                        // Build the QA prompt
+                        let qa_prompt = Self::build_qa_prompt(&description, spec.as_deref());
+
+                        if let Some(ref client) = self.sidecar_client {
+                            match client.resume_session(task_id, session_id, worktree_path, Some(&qa_prompt)) {
+                                Ok(new_session_id) => {
+                                    if let Some(project) = self.model.active_project_mut() {
+                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                            task.claude_session_id = Some(new_session_id);
+                                            task.status = TaskStatus::Testing;
+                                            task.session_state = crate::model::ClaudeSessionState::Working;
+                                            task.in_qa_session = true;
+                                            task.log_activity("QA validation started");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    // QA failed to start - treat as pass and move to Review
+                                    commands.push(Message::Error(format!("QA validation failed to start: {}", e)));
+                                    commands.push(Message::QaValidationPassed(task_id));
+                                }
+                            }
+                        } else {
+                            // No sidecar - skip QA, move to Review
+                            commands.push(Message::QaValidationPassed(task_id));
+                        }
+                    } else {
+                        // No session/worktree - skip QA, move to Review
+                        commands.push(Message::QaValidationPassed(task_id));
+                    }
+                }
+            }
+
+            Message::QaValidationPassed(task_id) => {
+                // QA passed - move task to Review
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.in_qa_session = false;
+                        task.session_state = crate::model::ClaudeSessionState::Paused;
+                        task.log_activity("QA validation passed");
+                    }
+                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                    project.needs_attention = true;
+                    notify::play_attention_sound();
+                    notify::set_attention_indicator(&project.name);
+                }
+            }
+
+            Message::QaValidationNeedsWork { task_id, feedback: _ } => {
+                // QA found issues - check if we should retry or move to NeedsWork
+                let task_info = self.model.active_project().and_then(|project| {
+                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                        (
+                            task.claude_session_id.clone(),
+                            task.worktree_path.clone(),
+                            task.qa_attempts,
+                            project.max_qa_attempts,
+                        )
+                    })
+                });
+
+                if let Some((session_id_opt, worktree_path_opt, current_attempts, max_attempts)) = task_info {
+                    let new_attempts = current_attempts + 1;
+
+                    // Update attempts count
+                    if let Some(project) = self.model.active_project_mut() {
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                            task.qa_attempts = new_attempts;
+                            task.log_activity(&format!("QA attempt {} failed", new_attempts));
+                        }
+                    }
+
+                    if new_attempts >= max_attempts {
+                        // Max attempts exceeded - move to NeedsWork with warning
+                        commands.push(Message::QaMaxAttemptsExceeded(task_id));
+                    } else {
+                        // Still have attempts left - resume session with retry prompt
+                        if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
+                            let retry_prompt = format!(
+                                "QA validation failed (attempt {}/{}). Please try again:\n\n\
+                                1. Run tests and fix any failures\n\
+                                2. Verify the build succeeds\n\
+                                3. If everything passes, respond with: `[QA:PASS]`\n\
+                                4. If you still cannot fix the issues, respond with: `[QA:FAIL]`",
+                                new_attempts, max_attempts
+                            );
+
+                            if let Some(ref client) = self.sidecar_client {
+                                match client.resume_session(task_id, session_id, worktree_path, Some(&retry_prompt)) {
+                                    Ok(new_session_id) => {
+                                        if let Some(project) = self.model.active_project_mut() {
+                                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                                task.claude_session_id = Some(new_session_id);
+                                                task.session_state = crate::model::ClaudeSessionState::Working;
+                                                task.log_activity("Retrying QA validation...");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Retry failed - move to NeedsWork
+                                        if let Some(project) = self.model.active_project_mut() {
+                                            if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                                task.log_activity(&format!("QA retry failed: {}", e));
+                                            }
+                                        }
+                                        commands.push(Message::QaMaxAttemptsExceeded(task_id));
+                                    }
+                                }
+                            } else {
+                                // No sidecar - move to NeedsWork
+                                commands.push(Message::QaMaxAttemptsExceeded(task_id));
+                            }
+                        } else {
+                            // No session/worktree - move to NeedsWork
+                            commands.push(Message::QaMaxAttemptsExceeded(task_id));
+                        }
+                    }
+                }
+            }
+
+            Message::QaMaxAttemptsExceeded(task_id) => {
+                // Max QA attempts exceeded - move to NeedsWork with warning
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.in_qa_session = false;
+                        task.qa_exceeded_warning = true;
+                        task.session_state = crate::model::ClaudeSessionState::Paused;
+                        task.log_activity("QA max attempts exceeded - needs manual review");
+                    }
+                    project.move_task_to_end_of_status(task_id, TaskStatus::NeedsWork);
+                    project.needs_attention = true;
+                    notify::play_attention_sound();
+                    notify::set_attention_indicator(&project.name);
+                }
+            }
+
             Message::StartUpdateRebaseSession { task_id } => {
                 // Start an SDK session for rebasing during update (NOT accept)
                 // Uses Updating status so completion doesn't merge to main
@@ -6148,15 +6455,19 @@ impl App {
 
             Message::ToggleTaskPreview => {
                 self.model.ui_state.show_task_preview = !self.model.ui_state.show_task_preview;
-                // Reset to general tab when opening the modal
+                // Reset to general tab and scroll position when opening the modal
                 if self.model.ui_state.show_task_preview {
                     self.model.ui_state.task_detail_tab = crate::model::TaskDetailTab::default();
+                    self.model.ui_state.spec_scroll_offset = 0;
                 }
             }
 
             Message::TaskDetailNextTab => {
                 let new_tab = self.model.ui_state.task_detail_tab.next();
                 self.model.ui_state.task_detail_tab = new_tab;
+
+                // Reset scroll offsets when switching tabs
+                self.model.ui_state.spec_scroll_offset = 0;
 
                 // Load git diff when switching to Git tab
                 if new_tab == crate::model::TaskDetailTab::Git {
@@ -6176,6 +6487,9 @@ impl App {
             Message::TaskDetailPrevTab => {
                 let new_tab = self.model.ui_state.task_detail_tab.prev();
                 self.model.ui_state.task_detail_tab = new_tab;
+
+                // Reset scroll offsets when switching tabs
+                self.model.ui_state.spec_scroll_offset = 0;
 
                 // Load git diff when switching to Git tab
                 if new_tab == crate::model::TaskDetailTab::Git {
@@ -6231,6 +6545,30 @@ impl App {
                         }
                     }
                 }
+            }
+
+            Message::ScrollSpecUp(lines) => {
+                self.model.ui_state.spec_scroll_offset =
+                    self.model.ui_state.spec_scroll_offset.saturating_sub(lines);
+            }
+
+            Message::ScrollSpecDown(lines) => {
+                // Get the number of lines in the spec to cap scrolling
+                let max_lines = self.model.active_project()
+                    .and_then(|project| {
+                        let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
+                        self.model.ui_state.selected_task_idx
+                            .and_then(|idx| tasks.get(idx).copied())
+                    })
+                    .and_then(|task| task.spec.as_ref().map(|s| s.lines().count()))
+                    .unwrap_or(0);
+                let max_scroll = max_lines.saturating_sub(10); // Leave some visible lines
+                self.model.ui_state.spec_scroll_offset = self
+                    .model
+                    .ui_state
+                    .spec_scroll_offset
+                    .saturating_add(lines)
+                    .min(max_scroll);
             }
 
             Message::Tick => {
@@ -6484,10 +6822,10 @@ impl App {
             Message::ShowConfigModal => {
                 use crate::model::{ConfigModalState, ConfigField};
 
-                // Get current project commands (or defaults)
-                let temp_commands = self.model.active_project()
-                    .map(|p| p.commands.clone())
-                    .unwrap_or_default();
+                // Get current project commands and QA settings (or defaults)
+                let (temp_commands, temp_qa_enabled, temp_max_qa_attempts) = self.model.active_project()
+                    .map(|p| (p.commands.clone(), p.qa_enabled, p.max_qa_attempts))
+                    .unwrap_or_else(|| (Default::default(), true, 3));
                 let temp_editor = self.model.global_settings.default_editor;
                 let temp_mascot_advice = self.model.global_settings.mascot_advice_enabled;
                 let temp_mascot_interval = self.model.global_settings.mascot_advice_interval_minutes;
@@ -6500,6 +6838,8 @@ impl App {
                     temp_editor,
                     temp_mascot_advice,
                     temp_mascot_interval,
+                    temp_qa_enabled,
+                    temp_max_qa_attempts,
                 });
             }
 
@@ -6510,14 +6850,16 @@ impl App {
             Message::ConfigNavigateDown => {
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
                     let mascot_enabled = config.temp_mascot_advice.unwrap_or(true);
-                    config.selected_field = config.selected_field.next_visible(mascot_enabled);
+                    let qa_enabled = config.temp_qa_enabled;
+                    config.selected_field = config.selected_field.next_visible(mascot_enabled, qa_enabled);
                 }
             }
 
             Message::ConfigNavigateUp => {
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
                     let mascot_enabled = config.temp_mascot_advice.unwrap_or(true);
-                    config.selected_field = config.selected_field.prev_visible(mascot_enabled);
+                    let qa_enabled = config.temp_qa_enabled;
+                    config.selected_field = config.selected_field.prev_visible(mascot_enabled, qa_enabled);
                 }
             }
 
@@ -6544,6 +6886,15 @@ impl App {
                             config.edit_buffer = config.temp_mascot_interval.to_string();
                             config.editing = true;
                         }
+                    } else if config.selected_field == ConfigField::QaEnabled {
+                        // Toggle QA on/off
+                        config.temp_qa_enabled = !config.temp_qa_enabled;
+                    } else if config.selected_field == ConfigField::MaxQaAttempts {
+                        // Max attempts field - enter text edit mode
+                        if !config.editing {
+                            config.edit_buffer = config.temp_max_qa_attempts.to_string();
+                            config.editing = true;
+                        }
                     } else {
                         // Command field - enter text edit mode
                         if !config.editing {
@@ -6554,7 +6905,8 @@ impl App {
                                 ConfigField::TestCommand => config.temp_commands.test.clone().unwrap_or_default(),
                                 ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
                                 ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
-                                ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval => String::new(),
+                                ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
+                                | ConfigField::QaEnabled | ConfigField::MaxQaAttempts => String::new(),
                             };
                             config.editing = true;
                         }
@@ -6598,6 +6950,16 @@ impl App {
                         // If parse fails, keep previous value
                         config.editing = false;
                         config.edit_buffer.clear();
+                    } else if config.selected_field == ConfigField::QaEnabled {
+                        // QaEnabled is toggled directly, no edit mode
+                    } else if config.selected_field == ConfigField::MaxQaAttempts {
+                        // Parse and validate max attempts (1-10)
+                        if let Ok(attempts) = config.edit_buffer.parse::<u32>() {
+                            config.temp_max_qa_attempts = attempts.clamp(1, 10);
+                        }
+                        // If parse fails, keep previous value
+                        config.editing = false;
+                        config.edit_buffer.clear();
                     } else {
                         // Command field - save buffer to temp_commands
                         let value = if config.edit_buffer.is_empty() {
@@ -6612,7 +6974,8 @@ impl App {
                             ConfigField::TestCommand => config.temp_commands.test = value,
                             ConfigField::FormatCommand => config.temp_commands.format = value,
                             ConfigField::LintCommand => config.temp_commands.lint = value,
-                            ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval => {}
+                            ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
+                            | ConfigField::QaEnabled | ConfigField::MaxQaAttempts => {}
                         }
 
                         config.editing = false;
@@ -6630,10 +6993,10 @@ impl App {
 
             Message::ConfigSave => {
                 // Extract values before borrowing mutably
-                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval) = if let Some(ref config) = self.model.ui_state.config_modal {
-                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval)
+                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval, temp_qa_enabled, temp_max_qa_attempts) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval, config.temp_qa_enabled, config.temp_max_qa_attempts)
                 } else {
-                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes)
+                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes, true, 3)
                 };
 
                 // Check if mascot advice setting changed
@@ -6646,9 +7009,11 @@ impl App {
                 self.model.global_settings.mascot_advice_enabled = temp_mascot_advice;
                 self.model.global_settings.mascot_advice_interval_minutes = temp_mascot_interval;
 
-                // Save project commands
+                // Save project commands and QA settings
                 if let Some(project) = self.model.active_project_mut() {
                     project.commands = temp_commands;
+                    project.qa_enabled = temp_qa_enabled;
+                    project.max_qa_attempts = temp_max_qa_attempts;
                 }
 
                 // If mascot advice setting changed, update all projects and start/stop watcher

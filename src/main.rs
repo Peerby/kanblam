@@ -175,6 +175,9 @@ where
     // Deferred commands are processed after the next render for responsive UI
     let mut deferred_commands: std::collections::VecDeque<Message> = std::collections::VecDeque::new();
 
+    // Track last reconnection attempt for sidecar event receiver
+    let mut last_sidecar_reconnect = std::time::Instant::now();
+
     loop {
         // Render first for responsive UI
         terminal.draw(|frame| ui::view(frame, app))?;
@@ -232,8 +235,18 @@ where
                         process_commands_recursively(app, commands);
                     }
                     Ok(None) => break, // No more events
-                    Err(_) => break,   // Error, stop polling
+                    Err(_) => {
+                        // Connection lost, clear receiver to trigger reconnect
+                        sidecar_receiver = None;
+                        break;
+                    }
                 }
+            }
+        } else if last_sidecar_reconnect.elapsed() >= Duration::from_secs(5) {
+            // Try to reconnect to sidecar if receiver is None
+            last_sidecar_reconnect = std::time::Instant::now();
+            if let Ok(receiver) = sidecar::SidecarEventReceiver::connect() {
+                sidecar_receiver = Some(receiver);
             }
         }
 
@@ -684,7 +697,7 @@ fn handle_mouse_event(
 /// Convert a watcher event to a message
 fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
     match event {
-        WatcherEvent::ClaudeStopped { session_id, project_dir } => {
+        WatcherEvent::ClaudeStopped { session_id, project_dir, source } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "stop".to_string(),
                 session_id,
@@ -692,9 +705,10 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 timestamp: Utc::now(),
                 transcript_path: None,
                 input_type: String::new(),
+                source,
             }))
         }
-        WatcherEvent::SessionEnded { session_id, project_dir, .. } => {
+        WatcherEvent::SessionEnded { session_id, project_dir, source, .. } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "end".to_string(),
                 session_id,
@@ -702,9 +716,10 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 timestamp: Utc::now(),
                 transcript_path: None,
                 input_type: String::new(),
+                source,
             }))
         }
-        WatcherEvent::NeedsWork { session_id, project_dir, input_type } => {
+        WatcherEvent::NeedsWork { session_id, project_dir, input_type, source } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "needs-input".to_string(),
                 session_id,
@@ -712,9 +727,10 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 timestamp: Utc::now(),
                 transcript_path: None,
                 input_type,
+                source,
             }))
         }
-        WatcherEvent::InputProvided { session_id, project_dir } => {
+        WatcherEvent::InputProvided { session_id, project_dir, source } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "input-provided".to_string(),
                 session_id,
@@ -722,9 +738,10 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 timestamp: Utc::now(),
                 transcript_path: None,
                 input_type: String::new(),
+                source,
             }))
         }
-        WatcherEvent::Working { session_id, project_dir } => {
+        WatcherEvent::Working { session_id, project_dir, source } => {
             Some(Message::HookSignalReceived(HookSignal {
                 event: "working".to_string(),
                 session_id,
@@ -732,6 +749,7 @@ fn convert_watcher_event(event: WatcherEvent) -> Option<Message> {
                 timestamp: Utc::now(),
                 transcript_path: None,
                 input_type: String::new(),
+                source,
             }))
         }
         WatcherEvent::Error(e) => {
@@ -1366,15 +1384,15 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // 'r' key: Move to Review (from InProgress, NeedsWork, Done)
+        // 'r' key: Move to Review (from InProgress, NeedsWork, Testing, Done)
         KeyCode::Char('r') => {
             let column = app.model.ui_state.selected_column;
             if let Some(project) = app.model.active_project() {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // Move to Review from InProgress, NeedsWork, or Done
-                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Done) {
+                        // Move to Review from InProgress, NeedsWork, Testing, or Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Testing | TaskStatus::Done) {
                             return vec![Message::MoveTask {
                                 task_id: task.id,
                                 to_status: model::TaskStatus::Review,
@@ -1449,8 +1467,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
                 let tasks = project.tasks_by_status(column);
                 if let Some(idx) = app.model.ui_state.selected_task_idx {
                     if let Some(task) = tasks.get(idx) {
-                        // Reset works on InProgress, NeedsWork, Review, Done
-                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
+                        // Reset works on InProgress, NeedsWork, Testing, Review, Done
+                        if matches!(column, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Testing | TaskStatus::Review | TaskStatus::Done) {
                             let title = task.short_title.as_ref().unwrap_or(&task.title);
                             let title = if title.len() > 30 {
                                 format!("{}...", &title[..27])
@@ -1762,8 +1780,10 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         return vec![Message::ToggleTaskPreview];
     };
 
-    // Check if we're on the git tab for scroll handling
+    // Check which tab we're on for scroll handling
     let on_git_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Git;
+    let on_spec_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Spec;
+    let scrollable_tab = on_git_tab || on_spec_tab;
 
     match key.code {
         // Close modal only on Esc, Enter, Space
@@ -1771,7 +1791,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::ToggleTaskPreview]
         }
 
-        // Tab navigation: left/right/h/l (but not h/l on git tab - those are for scrolling)
+        // Tab navigation: left/right/h/l (but not h/l on scrollable tabs - those are for scrolling)
         KeyCode::Left => {
             vec![Message::TaskDetailPrevTab]
         }
@@ -1779,24 +1799,26 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             vec![Message::TaskDetailNextTab]
         }
         KeyCode::Char('h') => {
-            if on_git_tab {
+            if scrollable_tab {
                 vec![] // Reserved for future horizontal scroll
             } else {
                 vec![Message::TaskDetailPrevTab]
             }
         }
         KeyCode::Char('l') => {
-            if on_git_tab {
+            if scrollable_tab {
                 vec![] // Reserved for future horizontal scroll
             } else {
                 vec![Message::TaskDetailNextTab]
             }
         }
 
-        // Scroll git diff (j/k on git tab, or arrow keys)
+        // Scroll content (j/k on scrollable tabs, or arrow keys)
         KeyCode::Char('j') | KeyCode::Down => {
             if on_git_tab {
                 vec![Message::ScrollGitDiffDown(1)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecDown(1)]
             } else {
                 vec![]
             }
@@ -1804,6 +1826,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         KeyCode::Char('k') | KeyCode::Up => {
             if on_git_tab {
                 vec![Message::ScrollGitDiffUp(1)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecUp(1)]
             } else {
                 vec![]
             }
@@ -1811,6 +1835,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         KeyCode::PageDown => {
             if on_git_tab {
                 vec![Message::ScrollGitDiffDown(20)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecDown(20)]
             } else {
                 vec![]
             }
@@ -1818,6 +1844,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         KeyCode::PageUp => {
             if on_git_tab {
                 vec![Message::ScrollGitDiffUp(20)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecUp(20)]
             } else {
                 vec![]
             }
@@ -1826,6 +1854,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             if on_git_tab {
                 // Scroll to top by subtracting a large number
                 vec![Message::ScrollGitDiffUp(100000)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecUp(100000)]
             } else {
                 vec![]
             }
@@ -1834,6 +1864,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             if on_git_tab {
                 // Scroll to bottom by adding a large number (will be capped)
                 vec![Message::ScrollGitDiffDown(100000)]
+            } else if on_spec_tab {
+                vec![Message::ScrollSpecDown(100000)]
             } else {
                 vec![]
             }
@@ -1996,7 +2028,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
 
         // Reset task (cleanup worktree and move to Planned)
         KeyCode::Char('x') => {
-            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Review | TaskStatus::Done) {
+            if matches!(task.status, TaskStatus::InProgress | TaskStatus::NeedsWork | TaskStatus::Testing | TaskStatus::Review | TaskStatus::Done) {
                 let title = task.short_title.as_ref().unwrap_or(&task.title);
                 let title = if title.len() > 30 {
                     format!("{}...", &title[..27])

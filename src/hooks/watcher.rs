@@ -15,28 +15,33 @@ pub enum WatcherEvent {
     ClaudeStopped {
         session_id: String,
         project_dir: PathBuf,
+        source: String,
     },
     /// Session ended (SessionEnd hook)
     SessionEnded {
         session_id: String,
         project_dir: PathBuf,
         reason: String,
+        source: String,
     },
     /// Claude needs work/input (Notification hook - permission_prompt or idle_prompt)
     NeedsWork {
         session_id: String,
         project_dir: PathBuf,
         input_type: String,
+        source: String,
     },
     /// User provided input (UserPromptSubmit hook)
     InputProvided {
         session_id: String,
         project_dir: PathBuf,
+        source: String,
     },
     /// Claude is working/using a tool (PreToolUse hook)
     Working {
         session_id: String,
         project_dir: PathBuf,
+        source: String,
     },
     /// Error occurred
     Error(String),
@@ -53,6 +58,13 @@ pub struct HookSignalFile {
     pub reason: String,
     #[serde(default)]
     pub input_type: String,
+    /// Source of the signal: "sdk" or "cli" (defaults to "cli" for backwards compatibility)
+    #[serde(default = "default_source")]
+    pub source: String,
+}
+
+fn default_source() -> String {
+    "cli".to_string()
 }
 
 /// Watches the signal directory for hook notifications
@@ -137,24 +149,29 @@ impl HookWatcher {
                             "stop" => Some(WatcherEvent::ClaudeStopped {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
+                                source: signal.source,
                             }),
                             "end" => Some(WatcherEvent::SessionEnded {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
                                 reason: signal.reason,
+                                source: signal.source,
                             }),
                             "needs-input" => Some(WatcherEvent::NeedsWork {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
                                 input_type: signal.input_type,
+                                source: signal.source,
                             }),
                             "input-provided" => Some(WatcherEvent::InputProvided {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
+                                source: signal.source,
                             }),
                             "working" => Some(WatcherEvent::Working {
                                 session_id: signal.session_id,
                                 project_dir: signal.project_dir,
+                                source: signal.source,
                             }),
                             _ => None,
                         };
@@ -222,24 +239,29 @@ impl HookWatcher {
                         "stop" => Some(WatcherEvent::ClaudeStopped {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
+                            source: signal.source,
                         }),
                         "end" => Some(WatcherEvent::SessionEnded {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
                             reason: signal.reason,
+                            source: signal.source,
                         }),
                         "needs-input" => Some(WatcherEvent::NeedsWork {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
                             input_type: signal.input_type,
+                            source: signal.source,
                         }),
                         "input-provided" => Some(WatcherEvent::InputProvided {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
+                            source: signal.source,
                         }),
                         "working" => Some(WatcherEvent::Working {
                             session_id: signal.session_id,
                             project_dir: signal.project_dir,
+                            source: signal.source,
                         }),
                         _ => None,
                     };
@@ -298,9 +320,17 @@ pub fn get_signal_dir() -> Result<PathBuf> {
 }
 
 /// Write a signal file (called by hook script via CLI)
+/// Automatically detects SDK vs CLI source based on KANBLAM_SDK_SESSION env var
 pub fn write_signal(event: &str, session_id: &str, project_dir: &PathBuf, input_type: Option<&str>) -> Result<()> {
     let signal_dir = get_signal_dir()?;
     std::fs::create_dir_all(&signal_dir)?;
+
+    // Detect source: if KANBLAM_SDK_SESSION=1 is set, this is an SDK-driven session
+    let source = if std::env::var("KANBLAM_SDK_SESSION").map(|v| v == "1").unwrap_or(false) {
+        "sdk"
+    } else {
+        "cli"
+    };
 
     let signal = HookSignalFile {
         event: event.to_string(),
@@ -309,6 +339,7 @@ pub fn write_signal(event: &str, session_id: &str, project_dir: &PathBuf, input_
         timestamp: chrono::Utc::now().to_rfc3339(),
         reason: String::new(),
         input_type: input_type.unwrap_or("").to_string(),
+        source: source.to_string(),
     };
 
     let filename = format!("signal-{}-{}.json", event, chrono::Utc::now().timestamp_millis());

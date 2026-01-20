@@ -121,6 +121,8 @@ pub struct GetSessionResult {
 #[derive(Debug, Deserialize)]
 pub struct SummarizeTitleResult {
     pub short_title: String,
+    #[serde(default)]
+    pub spec: Option<String>,
 }
 
 // Session event types (notifications from sidecar)

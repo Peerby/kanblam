@@ -218,8 +218,8 @@ pub enum Message {
     // Title summarization
     /// Request a short title summary for a task (sent to sidecar)
     RequestTitleSummary { task_id: Uuid },
-    /// Short title summary received from sidecar
-    TitleSummaryReceived { task_id: Uuid, short_title: String },
+    /// Short title summary and spec received from sidecar
+    TitleSummaryReceived { task_id: Uuid, short_title: String, spec: Option<String> },
 
     // Sidecar/SDK events
     /// Event received from the SDK sidecar
@@ -255,6 +255,16 @@ pub enum Message {
     /// Queue feedback to be sent when Claude finishes current work
     QueueFeedback { task_id: Uuid, feedback: String },
 
+    // QA validation
+    /// Start QA validation for a task (run tests, AI review)
+    StartQaValidation(Uuid),
+    /// QA validation passed - move task to Review
+    QaValidationPassed(Uuid),
+    /// QA validation found issues - provide feedback and retry
+    QaValidationNeedsWork { task_id: Uuid, feedback: String },
+    /// QA validation exceeded max attempts - move to NeedsWork with warning
+    QaMaxAttemptsExceeded(Uuid),
+
     // Image handling
     PasteImage,
     AttachImage { task_id: Uuid, path: PathBuf },
@@ -288,6 +298,8 @@ pub enum Message {
     ScrollGitDiffUp(usize),   // Scroll git diff up by N lines
     ScrollGitDiffDown(usize), // Scroll git diff down by N lines
     LoadGitDiff(Uuid),        // Load/refresh git diff for a task
+    ScrollSpecUp(usize),      // Scroll spec tab up by N lines
+    ScrollSpecDown(usize),    // Scroll spec tab down by N lines
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

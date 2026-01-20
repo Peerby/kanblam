@@ -183,8 +183,9 @@ impl SidecarClient {
         Ok(Some(result))
     }
 
-    /// Request a short title summary for a task description
-    pub fn summarize_title(&self, task_id: uuid::Uuid, title: &str) -> Result<String> {
+    /// Request a short title summary and spec for a task description
+    /// Returns (short_title, Option<spec>)
+    pub fn summarize_title(&self, task_id: uuid::Uuid, title: &str) -> Result<(String, Option<String>)> {
         let params = SummarizeTitleParams {
             task_id: task_id.to_string(),
             title: title.to_string(),
@@ -200,11 +201,12 @@ impl SidecarClient {
             response.result.ok_or_else(|| anyhow!("No result in response"))?,
         )?;
 
-        Ok(result.short_title)
+        Ok((result.short_title, result.spec))
     }
 
-    /// Request a short title summary using a standalone connection (for background threads)
-    pub fn summarize_title_standalone(task_id: uuid::Uuid, title: String) -> Result<String> {
+    /// Request a short title summary and spec using a standalone connection (for background threads)
+    /// Returns (short_title, Option<spec>)
+    pub fn summarize_title_standalone(task_id: uuid::Uuid, title: String) -> Result<(String, Option<String>)> {
         let client = Self::connect()?;
         client.summarize_title(task_id, &title)
     }
