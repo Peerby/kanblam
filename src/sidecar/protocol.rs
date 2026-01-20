@@ -149,8 +149,12 @@ pub struct SessionEventParams {
     pub message: Option<String>,
     #[serde(default)]
     pub tool_name: Option<String>,
+    /// Incremental output (for 'output' events) or final output (for 'stopped' events)
     #[serde(default)]
     pub output: Option<String>,
+    /// Full accumulated output up to this point - available on all events after output starts
+    #[serde(default)]
+    pub full_output: Option<String>,
 }
 
 /// Parsed session event ready for use in app logic
@@ -161,7 +165,10 @@ pub struct SidecarEvent {
     pub session_id: Option<String>,
     pub message: Option<String>,
     pub tool_name: Option<String>,
+    /// Incremental output (for 'output' events) or final output (for 'stopped' events)
     pub output: Option<String>,
+    /// Full accumulated output up to this point - available on all events after output starts
+    pub full_output: Option<String>,
 }
 
 impl TryFrom<SessionEventParams> for SidecarEvent {
@@ -175,6 +182,7 @@ impl TryFrom<SessionEventParams> for SidecarEvent {
             message: params.message,
             tool_name: params.tool_name,
             output: params.output,
+            full_output: params.full_output,
         })
     }
 }
@@ -436,6 +444,7 @@ mod tests {
             message: None,
             tool_name: None,
             output: None,
+            full_output: None,
         };
 
         let event: SidecarEvent = params.try_into().unwrap();
@@ -453,6 +462,7 @@ mod tests {
             message: None,
             tool_name: None,
             output: None,
+            full_output: None,
         };
 
         let result: Result<SidecarEvent, _> = params.try_into();

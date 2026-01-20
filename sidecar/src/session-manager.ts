@@ -446,6 +446,7 @@ Task: ${title}`;
                 event: 'output',
                 session_id: sessionId,
                 output: textContent,
+                full_output: fullOutput,
               });
             }
 
@@ -457,12 +458,14 @@ Task: ${title}`;
                   event: 'tool_use',
                   session_id: sessionId,
                   tool_name: (block as { type: 'tool_use'; name: string }).name,
+                  full_output: fullOutput,
                 });
 
                 this.onEvent({
                   task_id: taskId,
                   event: 'working',
                   session_id: sessionId,
+                  full_output: fullOutput,
                 });
               }
             }
@@ -477,6 +480,7 @@ Task: ${title}`;
             event: 'stopped',
             session_id: sessionId,
             output: fullOutput,
+            full_output: fullOutput,
           });
         }
       }

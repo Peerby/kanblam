@@ -1839,12 +1839,20 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
     // Check which tab we're on for scroll handling
     let on_git_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Git;
     let on_spec_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Spec;
-    let scrollable_tab = on_git_tab || on_spec_tab;
+    let on_activity_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Activity;
+    let scrollable_tab = on_git_tab || on_spec_tab || on_activity_tab;
 
     match key.code {
-        // Close modal only on Esc, Enter, Space
-        KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+        // Close modal on Esc, Space (but Enter toggles expand on activity tab)
+        KeyCode::Esc | KeyCode::Char(' ') => {
             vec![Message::ToggleTaskPreview]
+        }
+        KeyCode::Enter => {
+            if on_activity_tab {
+                vec![Message::ToggleActivityExpand]
+            } else {
+                vec![Message::ToggleTaskPreview]
+            }
         }
 
         // Tab navigation: left/right/h/l (but not h/l on scrollable tabs - those are for scrolling)
@@ -1875,6 +1883,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffDown(1)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecDown(1)]
+            } else if on_activity_tab {
+                vec![Message::ScrollActivityDown(1)]
             } else {
                 vec![]
             }
@@ -1884,6 +1894,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffUp(1)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecUp(1)]
+            } else if on_activity_tab {
+                vec![Message::ScrollActivityUp(1)]
             } else {
                 vec![]
             }

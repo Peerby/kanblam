@@ -4426,7 +4426,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 task.log_activity("Session started");
                             }
                             SessionEventType::Stopped => {
-                                task.log_activity("Session stopped");
+                                task.log_activity_with_output("Session stopped", event.full_output.clone());
                                 // Skip if terminal state or special operations in progress
                                 if was_accepting || was_updating || was_applying || task.status == TaskStatus::Done {
                                     // Let CompleteAcceptTask/etc handlers take care of it
@@ -4463,7 +4463,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 // Other statuses (Testing w/o in_qa_session, NeedsWork, Review): do nothing
                             }
                             SessionEventType::Ended => {
-                                task.log_activity("Session ended");
+                                task.log_activity_with_output("Session ended", event.full_output.clone());
                                 // Ended is a fallback - Stopped handler is primary for QA logic
                                 // Only act if task is still InProgress (Stopped may have already handled it)
                                 if was_accepting || was_updating || was_applying
@@ -4484,7 +4484,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 }
                             }
                             SessionEventType::NeedsInput => {
-                                task.log_activity("Waiting for input...");
+                                task.log_activity_with_output("Waiting for input...", event.full_output.clone());
                                 // Don't change status if task is Accepting/Updating/Applying/Testing (mid-rebase or QA)
                                 if !was_accepting && !was_updating && !was_applying
                                     && task.status != TaskStatus::Testing
@@ -4497,7 +4497,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 }
                             }
                             SessionEventType::Working => {
-                                task.log_activity("Working...");
+                                task.log_activity_with_output("Working...", event.full_output.clone());
                                 // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
                                 if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
                                     task.status = TaskStatus::InProgress;
@@ -4514,7 +4514,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 } else {
                                     "Using tool...".to_string()
                                 };
-                                task.log_activity(&tool_msg);
+                                task.log_activity_with_output(&tool_msg, event.full_output.clone());
                                 // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
                                 if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
                                     task.status = TaskStatus::InProgress;
@@ -4535,7 +4535,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // Log first line of output if it's meaningful
                                     let first_line = output.lines().next().unwrap_or("").trim();
                                     if !first_line.is_empty() && first_line.len() <= 60 {
-                                        task.log_activity(first_line);
+                                        task.log_activity_with_output(first_line, event.full_output.clone());
                                     }
                                 }
                             }
@@ -6639,6 +6639,46 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     .spec_scroll_offset
                     .saturating_add(lines)
                     .min(max_scroll);
+            }
+
+            Message::ScrollActivityUp(entries) => {
+                self.model.ui_state.activity_scroll_offset =
+                    self.model.ui_state.activity_scroll_offset.saturating_sub(entries);
+                // Clear expansion when scrolling
+                self.model.ui_state.activity_expanded_idx = None;
+            }
+
+            Message::ScrollActivityDown(entries) => {
+                // Get number of activity log entries to cap scrolling
+                let max_entries = self.model.active_project()
+                    .and_then(|project| {
+                        let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
+                        self.model.ui_state.selected_task_idx
+                            .and_then(|idx| tasks.get(idx).copied())
+                    })
+                    .map(|task| task.activity_log.len())
+                    .unwrap_or(0);
+                let max_scroll = max_entries.saturating_sub(10); // Leave some visible entries
+                self.model.ui_state.activity_scroll_offset = self
+                    .model
+                    .ui_state
+                    .activity_scroll_offset
+                    .saturating_add(entries)
+                    .min(max_scroll);
+                // Clear expansion when scrolling
+                self.model.ui_state.activity_expanded_idx = None;
+            }
+
+            Message::ToggleActivityExpand => {
+                // Toggle expansion of the entry at the current scroll position
+                let scroll_offset = self.model.ui_state.activity_scroll_offset;
+                if self.model.ui_state.activity_expanded_idx == Some(scroll_offset) {
+                    // Already expanded at this position - collapse
+                    self.model.ui_state.activity_expanded_idx = None;
+                } else {
+                    // Expand the entry at scroll position
+                    self.model.ui_state.activity_expanded_idx = Some(scroll_offset);
+                }
             }
 
             Message::Tick => {

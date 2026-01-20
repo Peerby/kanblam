@@ -89,7 +89,10 @@ export interface SessionEventParams {
   session_id?: string;
   message?: string;
   tool_name?: string;
+  /** Incremental output (for 'output' events) or final output (for 'stopped' events) */
   output?: string;
+  /** Full accumulated output up to this point - available on all events after output starts */
+  full_output?: string;
 }
 
 // Watcher types

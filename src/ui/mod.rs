@@ -943,7 +943,7 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
         }
         crate::model::TaskDetailTab::Activity => {
-            render_activity_tab(&mut lines, task, &label_style, &value_style, &dim_style);
+            render_activity_tab(&mut lines, task, &app.model.ui_state, &label_style, &value_style, &dim_style);
         }
         crate::model::TaskDetailTab::Help => {
             render_help_tab(&mut lines, task, &key_style, &label_style, &dim_style);
@@ -1514,125 +1514,268 @@ fn style_diff_line(line: &str) -> Line<'static> {
     ))
 }
 
-/// Render the Activity tab content (session info + activity log)
+/// Render the Activity tab content (session info + activity log with full output)
 fn render_activity_tab<'a>(
     lines: &mut Vec<Line<'a>>,
     task: &crate::model::Task,
-    label_style: &Style,
-    value_style: &Style,
+    ui_state: &crate::model::UiState,
+    _label_style: &Style,
+    _value_style: &Style,
     dim_style: &Style,
 ) {
-    // Session info section
-    if let Some(ref session_id) = task.claude_session_id {
-        lines.push(Line::from(vec![
-            Span::styled("Session ID: ", *label_style),
-            Span::styled(session_id.clone(), *value_style),
-        ]));
-    }
+    // Calculate total output captured
+    let total_output_chars: usize = task.activity_log.iter()
+        .filter_map(|e| e.full_output.as_ref())
+        .map(|o| o.len())
+        .max()
+        .unwrap_or(0);
 
-    let is_cli_mode = matches!(
-        task.session_mode,
-        crate::model::SessionMode::CliInteractive | crate::model::SessionMode::CliActivelyWorking
-    );
+    let entries_with_output = task.activity_log.iter()
+        .filter(|e| e.full_output.is_some())
+        .count();
 
-    let mode_str = match task.session_mode {
-        crate::model::SessionMode::SdkManaged => "SDK Managed",
-        crate::model::SessionMode::CliInteractive => "CLI Interactive",
-        crate::model::SessionMode::CliActivelyWorking => "CLI Working",
-        crate::model::SessionMode::WaitingForCliExit => "Waiting for CLI Exit",
+    // Header with visual flair
+    lines.push(Line::from(vec![
+        Span::styled("◆ ", Style::default().fg(Color::Magenta)),
+        Span::styled("SESSION ACTIVITY", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(" ◆", Style::default().fg(Color::Magenta)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Session info row with visual flair
+    let session_id_display = task.claude_session_id.as_deref()
+        .map(|s| if s.len() > 20 { format!("{}...", &s[..17]) } else { s.to_string() })
+        .unwrap_or_else(|| "(none)".to_string());
+
+    let mode_icon = match task.session_mode {
+        crate::model::SessionMode::SdkManaged => "⚡",
+        crate::model::SessionMode::CliInteractive => "⌨",
+        crate::model::SessionMode::CliActivelyWorking => "🔄",
+        crate::model::SessionMode::WaitingForCliExit => "⏳",
     };
 
-    if is_cli_mode {
-        // Show tmux session name when in CLI mode
-        let task_id_str = task.id.to_string();
-        let short_id = &task_id_str[..4.min(task_id_str.len())];
-        let session_name = format!("kb-{}", short_id);
+    let mode_str = match task.session_mode {
+        crate::model::SessionMode::SdkManaged => "SDK",
+        crate::model::SessionMode::CliInteractive => "CLI",
+        crate::model::SessionMode::CliActivelyWorking => "CLI Active",
+        crate::model::SessionMode::WaitingForCliExit => "Waiting",
+    };
 
-        lines.push(Line::from(vec![
-            Span::styled("Mode: ", *label_style),
-            Span::styled(mode_str, *value_style),
-            Span::styled(format!("  (tmux: {})", session_name), Style::default().fg(Color::Cyan)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("      ", *label_style),
-            Span::styled("Press ", *dim_style),
-            Span::styled("o", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" to open terminal", *dim_style),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled("Mode: ", *label_style),
-            Span::styled(mode_str, *value_style),
-        ]));
-    }
+    let mode_color = match task.session_mode {
+        crate::model::SessionMode::SdkManaged => Color::Cyan,
+        crate::model::SessionMode::CliInteractive => Color::Yellow,
+        crate::model::SessionMode::CliActivelyWorking => Color::Green,
+        crate::model::SessionMode::WaitingForCliExit => Color::DarkGray,
+    };
 
     lines.push(Line::from(vec![
-        Span::styled("SDK Commands: ", *label_style),
-        Span::styled(task.sdk_command_count.to_string(), *value_style),
+        Span::styled("  ", *dim_style),
+        Span::styled(mode_icon, Style::default().fg(mode_color)),
+        Span::styled(format!(" {} ", mode_str), Style::default().fg(mode_color).add_modifier(Modifier::BOLD)),
+        Span::styled("│", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" {} ", session_id_display), Style::default().fg(Color::DarkGray)),
     ]));
 
-    if let Some(ref tool_name) = task.last_tool_name {
+    // Stats bar with output info
+    if total_output_chars > 0 {
+        let output_display = if total_output_chars >= 1000 {
+            format!("{:.1}k", total_output_chars as f64 / 1000.0)
+        } else {
+            total_output_chars.to_string()
+        };
+
         lines.push(Line::from(vec![
-            Span::styled("Last Tool: ", *label_style),
-            Span::styled(tool_name.clone(), *value_style),
+            Span::styled("  📊 ", Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{} chars captured", output_display), Style::default().fg(Color::Cyan)),
+            Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} commands", task.sdk_command_count), Style::default().fg(Color::Yellow)),
+            if let Some(ref tool) = task.last_tool_name {
+                Span::styled(format!(" │ 🔧 {}", truncate_string(tool, 12)), Style::default().fg(Color::Magenta))
+            } else {
+                Span::raw("")
+            },
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("  📊 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} commands", task.sdk_command_count), Style::default().fg(Color::Yellow)),
+            if let Some(ref tool) = task.last_tool_name {
+                Span::styled(format!(" │ 🔧 {}", truncate_string(tool, 15)), Style::default().fg(Color::Magenta))
+            } else {
+                Span::raw("")
+            },
         ]));
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("─".repeat(40), *dim_style)));
-    lines.push(Line::from(Span::styled("Activity Log", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
-    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("─────────────────────────────────────────────", Style::default().fg(Color::DarkGray))));
 
     if task.activity_log.is_empty() {
-        lines.push(Line::from(Span::styled("No activity logged yet", *dim_style)));
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Activity will appear here as you:", *label_style)));
-        lines.push(Line::from(Span::styled("  • Start and stop tasks", *dim_style)));
-        lines.push(Line::from(Span::styled("  • Send feedback to Claude", *dim_style)));
-        lines.push(Line::from(Span::styled("  • Open terminals and modals", *dim_style)));
-        lines.push(Line::from(Span::styled("  • Merge or discard changes", *dim_style)));
+        lines.push(Line::from(vec![
+            Span::styled("  ", *dim_style),
+            Span::styled("○", Style::default().fg(Color::DarkGray)),
+            Span::styled("  Waiting for activity...", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  Activity appears as Claude works:", Style::default().fg(Color::DarkGray))));
+        lines.push(Line::from(Span::styled("    • Tool invocations", Style::default().fg(Color::DarkGray))));
+        lines.push(Line::from(Span::styled("    • Status changes", Style::default().fg(Color::DarkGray))));
+        lines.push(Line::from(Span::styled("    • Session output", Style::default().fg(Color::DarkGray))));
     } else {
-        // Show activity entries (up to 20)
-        let entries_to_show: Vec<_> = task.activity_log.iter().rev().take(20).collect();
-        for entry in entries_to_show.iter().rev() {
+        // Timeline view with entries
+        let scroll_offset = ui_state.activity_scroll_offset;
+        let expanded_idx = ui_state.activity_expanded_idx;
+
+        // Calculate visible window (show ~15 entries with room for expansion)
+        let total_entries = task.activity_log.len();
+        let visible_count = 15.min(total_entries);
+        let start_idx = scroll_offset.min(total_entries.saturating_sub(visible_count));
+        let end_idx = (start_idx + visible_count).min(total_entries);
+
+        // Show scroll indicator if needed
+        if start_idx > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("  ", *dim_style),
+                Span::styled("▲", Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" {} more above", start_idx), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        for (display_idx, entry) in task.activity_log.iter().enumerate().skip(start_idx).take(end_idx - start_idx) {
             let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
             let time_ago = if elapsed.num_seconds() < 5 {
                 "now".to_string()
             } else if elapsed.num_seconds() < 60 {
-                format!("{}s ago", elapsed.num_seconds())
+                format!("{}s", elapsed.num_seconds())
             } else if elapsed.num_minutes() < 60 {
-                format!("{}m ago", elapsed.num_minutes())
+                format!("{}m", elapsed.num_minutes())
+            } else if elapsed.num_hours() < 24 {
+                format!("{}h", elapsed.num_hours())
             } else {
-                format!("{}h ago", elapsed.num_hours())
+                format!("{}d", elapsed.num_hours() / 24)
             };
 
-            // Categorize and color activity entries
-            let (icon, msg_color) = if entry.message.starts_with("Using ") || entry.message.starts_with("Tool:") {
-                ("🔧", Color::Cyan)
+            // Categorize with enhanced visual style
+            let (icon, msg_color, is_major) = if entry.message.starts_with("Using ") || entry.message.starts_with("Tool:") {
+                ("🔧", Color::Cyan, false)
             } else if entry.message.contains("started") || entry.message.contains("Starting") {
-                ("▶", Color::Green)
-            } else if entry.message.contains("stopped") || entry.message.contains("ended") || entry.message.contains("Ended") {
-                ("⏹", Color::Yellow)
+                ("▶", Color::Green, true)
+            } else if entry.message.contains("stopped") {
+                ("⏹", Color::Yellow, true)
+            } else if entry.message.contains("ended") || entry.message.contains("Ended") {
+                ("⏹", Color::DarkGray, true)
             } else if entry.message.contains("Waiting") || entry.message.contains("input") {
-                ("⏸", Color::Yellow)
+                ("⏸", Color::Yellow, true)
             } else if entry.message.contains("Working") {
-                ("⚙", Color::Green)
+                ("⚙", Color::Green, false)
             } else if entry.message.contains("feedback") || entry.message.contains("Feedback") {
-                ("💬", Color::Magenta)
+                ("💬", Color::Magenta, true)
             } else if entry.message.contains("merge") || entry.message.contains("Merge") || entry.message.contains("Rebasing") {
-                ("🔀", Color::Magenta)
+                ("🔀", Color::Magenta, true)
             } else if entry.message.contains("error") || entry.message.contains("failed") || entry.message.contains("cancelled") {
-                ("✗", Color::Red)
-            } else if entry.message.contains("success") || entry.message.contains("complete") {
-                ("✓", Color::Green)
+                ("✗", Color::Red, true)
+            } else if entry.message.contains("success") || entry.message.contains("complete") || entry.message.contains("PASS") {
+                ("✓", Color::Green, true)
+            } else if entry.message.contains("FAIL") {
+                ("✗", Color::Red, true)
             } else {
-                ("•", Color::White)
+                ("•", Color::White, false)
             };
 
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:>7} ", time_ago), Style::default().fg(Color::DarkGray)),
+            // Timeline connector
+            let is_last = display_idx == total_entries.saturating_sub(1);
+            let connector = if is_last { "└" } else { "│" };
+            let connector_color = if is_major { msg_color } else { Color::DarkGray };
+
+            // Check if this entry has output
+            let has_output = entry.full_output.as_ref().map(|o| !o.is_empty()).unwrap_or(false);
+            let output_len = entry.full_output.as_ref().map(|o| o.len()).unwrap_or(0);
+            let is_expanded = expanded_idx == Some(display_idx);
+
+            // Build the main line
+            let msg_style = if is_major {
+                Style::default().fg(msg_color).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(msg_color)
+            };
+
+            let mut spans = vec![
+                Span::styled(format!("{:>4} ", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} ", connector), Style::default().fg(connector_color)),
                 Span::styled(format!("{} ", icon), Style::default().fg(msg_color)),
-                Span::styled(truncate_string(&entry.message, 42), Style::default().fg(msg_color)),
+                Span::styled(truncate_string(&entry.message, 35), msg_style),
+            ];
+
+            // Add output indicator
+            if has_output {
+                let output_hint = if output_len >= 1000 {
+                    format!(" [{:.1}k]", output_len as f64 / 1000.0)
+                } else {
+                    format!(" [{}]", output_len)
+                };
+                spans.push(Span::styled(output_hint, Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)));
+            }
+
+            lines.push(Line::from(spans));
+
+            // Show expanded output preview
+            if is_expanded && has_output {
+                if let Some(ref output) = entry.full_output {
+                    lines.push(Line::from(vec![
+                        Span::styled("     ", *dim_style),
+                        Span::styled("┌", Style::default().fg(Color::Cyan)),
+                        Span::styled("───── Output Preview ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled("─────────────────────", Style::default().fg(Color::Cyan)),
+                    ]));
+
+                    // Show last ~10 lines of output (most recent is most relevant)
+                    let output_lines: Vec<&str> = output.lines().collect();
+                    let preview_lines = output_lines.len().min(10);
+                    let start_line = output_lines.len().saturating_sub(preview_lines);
+
+                    for line in output_lines.iter().skip(start_line) {
+                        let truncated = truncate_string(line, 50);
+                        lines.push(Line::from(vec![
+                            Span::styled("     │ ", Style::default().fg(Color::Cyan)),
+                            Span::styled(truncated, Style::default().fg(Color::White)),
+                        ]));
+                    }
+
+                    if output_lines.len() > preview_lines {
+                        lines.push(Line::from(vec![
+                            Span::styled("     │ ", Style::default().fg(Color::Cyan)),
+                            Span::styled(format!("... {} more lines", output_lines.len() - preview_lines), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                        ]));
+                    }
+
+                    lines.push(Line::from(vec![
+                        Span::styled("     ", *dim_style),
+                        Span::styled("└─────────────────────────────────────────", Style::default().fg(Color::Cyan)),
+                    ]));
+                }
+            }
+        }
+
+        // Show scroll indicator if more below
+        let remaining = total_entries.saturating_sub(end_idx);
+        if remaining > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("  ", *dim_style),
+                Span::styled("▼", Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" {} more below", remaining), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        // Navigation hint at bottom
+        lines.push(Line::from(""));
+        if entries_with_output > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("  ", *dim_style),
+                Span::styled("j/k", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(" scroll  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(" expand output", Style::default().fg(Color::DarkGray)),
             ]));
         }
     }

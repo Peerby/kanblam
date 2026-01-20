@@ -300,6 +300,9 @@ pub enum Message {
     LoadGitDiff(Uuid),        // Load/refresh git diff for a task
     ScrollSpecUp(usize),      // Scroll spec tab up by N lines
     ScrollSpecDown(usize),    // Scroll spec tab down by N lines
+    ScrollActivityUp(usize),  // Scroll activity tab up by N entries
+    ScrollActivityDown(usize), // Scroll activity tab down by N entries
+    ToggleActivityExpand,     // Toggle expansion of selected activity entry
 
     // Confirmation dialogs
     ShowConfirmation { message: String, action: PendingAction },

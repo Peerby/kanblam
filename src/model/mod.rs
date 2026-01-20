@@ -1212,6 +1212,8 @@ pub struct ActivityLogEntry {
     pub timestamp: DateTime<Utc>,
     /// Short description of the activity
     pub message: String,
+    /// Full accumulated output at this point (if available)
+    pub full_output: Option<String>,
 }
 
 impl ActivityLogEntry {
@@ -1219,6 +1221,16 @@ impl ActivityLogEntry {
         Self {
             timestamp: Utc::now(),
             message: message.into(),
+            full_output: None,
+        }
+    }
+
+    /// Create an activity log entry with full output
+    pub fn with_output(message: impl Into<String>, full_output: Option<String>) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            message: message.into(),
+            full_output,
         }
     }
 }
@@ -1492,6 +1504,15 @@ impl Task {
         }
     }
 
+    /// Add an entry to the activity log with full output (keeps last 30 entries)
+    pub fn log_activity_with_output(&mut self, message: impl Into<String>, full_output: Option<String>) {
+        const MAX_LOG_ENTRIES: usize = 30;
+        self.activity_log.push(ActivityLogEntry::with_output(message, full_output));
+        if self.activity_log.len() > MAX_LOG_ENTRIES {
+            self.activity_log.remove(0);
+        }
+    }
+
     /// Clear the activity log (e.g., when starting a new accept/update)
     pub fn clear_activity_log(&mut self) {
         self.activity_log.clear();
@@ -1627,6 +1648,10 @@ pub struct UiState {
     pub show_task_preview: bool,
     /// Currently selected tab in the task detail modal
     pub task_detail_tab: TaskDetailTab,
+    /// Scroll offset in the activity tab (which entry is at top)
+    pub activity_scroll_offset: usize,
+    /// Which activity entry is expanded to show full output (None = all collapsed)
+    pub activity_expanded_idx: Option<usize>,
 
     // Interactive terminal modal
     /// If set, the interactive modal is open for this task
@@ -2138,6 +2163,8 @@ impl Default for UiState {
             queue_dialog_selected_idx: 0,
             show_task_preview: false,
             task_detail_tab: TaskDetailTab::default(),
+            activity_scroll_offset: 0,
+            activity_expanded_idx: None,
             interactive_modal: None,
             open_project_dialog_slot: None,
             directory_browser: None,
