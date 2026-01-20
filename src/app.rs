@@ -1458,6 +1458,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let _ = crate::worktree::delete_branch(&project_dir, task_id);
                     }
 
+                    // Clean up signal files for this task to prevent stale signals
+                    // from affecting state when the app restarts
+                    // Note: Signal files use task_id as the session identifier
+                    let _ = crate::hooks::cleanup_signals_for_session(&task_id.to_string());
+
                     // Reset task state to fresh Planned and move to top of Planned list
                     if let Some(project) = self.model.active_project_mut() {
                         // Find and remove the task from its current position

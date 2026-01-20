@@ -319,6 +319,34 @@ pub fn get_signal_dir() -> Result<PathBuf> {
     Ok(home.join(".kanblam").join("signals"))
 }
 
+/// Clean up all signal files for a given session ID
+/// Used when resetting a task to prevent stale signals from affecting state on restart
+pub fn cleanup_signals_for_session(session_id: &str) -> Result<()> {
+    let signal_dir = get_signal_dir()?;
+
+    if !signal_dir.exists() {
+        return Ok(());
+    }
+
+    let entries = std::fs::read_dir(&signal_dir)?;
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().map(|e| e == "json").unwrap_or(false) {
+            // Read and check if this signal belongs to the session
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
+                    if signal.session_id == session_id {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Write a signal file (called by hook script via CLI)
 /// Automatically detects SDK vs CLI source based on KANBLAM_SDK_SESSION env var
 pub fn write_signal(event: &str, session_id: &str, project_dir: &PathBuf, input_type: Option<&str>) -> Result<()> {
