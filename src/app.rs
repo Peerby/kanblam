@@ -86,28 +86,53 @@ impl App {
 
     /// Sync selected_task_idx based on selected_task_id
     /// Call this after any operation that might change task order/status
+    /// If the selected task moved to a different column, follows it there
     pub fn sync_selection(&mut self) {
         let task_id = self.model.ui_state.selected_task_id;
         let column = self.model.ui_state.selected_column;
 
         if let Some(task_id) = task_id {
-            // Gather task info without holding borrow
-            let (new_idx, fallback_id, is_empty) = if let Some(project) = self.model.active_project() {
+            // First, try to find the task in the current column
+            let current_column_result = if let Some(project) = self.model.active_project() {
                 let tasks = project.tasks_by_status(column);
                 let new_idx = tasks.iter().position(|t| t.id == task_id);
                 let fallback_id = tasks.first().map(|t| t.id);
-                (new_idx, fallback_id, tasks.is_empty())
+                let is_empty = tasks.is_empty();
+                (new_idx, fallback_id, is_empty)
             } else {
                 (None, None, true)
             };
 
-            // Now update the ui_state
-            if let Some(idx) = new_idx {
+            if let Some(idx) = current_column_result.0 {
+                // Task still in current column - just update index
                 self.model.ui_state.selected_task_idx = Some(idx);
             } else {
-                // Task no longer in this column - clear selection
-                self.model.ui_state.selected_task_idx = if !is_empty { Some(0) } else { None };
-                self.model.ui_state.selected_task_id = fallback_id;
+                // Task not in current column - search all columns to follow it
+                let found_in_other_column = if let Some(project) = self.model.active_project() {
+                    let mut found: Option<(TaskStatus, usize)> = None;
+                    for status in TaskStatus::all() {
+                        let tasks = project.tasks_by_status(status);
+                        if let Some(idx) = tasks.iter().position(|t| t.id == task_id) {
+                            found = Some((status, idx));
+                            break;
+                        }
+                    }
+                    found
+                } else {
+                    None
+                };
+
+                if let Some((new_column, idx)) = found_in_other_column {
+                    // Task moved to a different column - follow it
+                    self.model.ui_state.selected_column = new_column;
+                    self.model.ui_state.selected_task_idx = Some(idx);
+                    // selected_task_id stays the same
+                } else {
+                    // Task no longer exists - fall back to first task in original column
+                    let (fallback_id, is_empty) = (current_column_result.1, current_column_result.2);
+                    self.model.ui_state.selected_task_idx = if !is_empty { Some(0) } else { None };
+                    self.model.ui_state.selected_task_id = fallback_id;
+                }
             }
         }
     }
