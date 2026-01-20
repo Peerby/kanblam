@@ -2037,23 +2037,54 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     lines.push(Line::from(""));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 11-DAY ACTIVITY CHART
+    // DYNAMIC ACTIVITY CHART
     // ═══════════════════════════════════════════════════════════════════════
+    // Calculate how many days we can fit based on available width
+    // Layout: "  │" (3) + " X " per day (3 each) + "│" (1) = 4 + 3*num_days
+    // The area.width includes modal borders (2 chars), so inner width = area.width - 2
+    let inner_width = area.width.saturating_sub(2) as usize;
+    // Minimum: left "  │" (3) + at least 1 day " X " (3) + right "│" (1) = 7 chars
+    // Each additional day adds 3 chars
+    let max_days = if inner_width >= 7 {
+        (inner_width - 4) / 3  // (inner_width - left(3) - right(1)) / 3
+    } else {
+        1
+    };
+    let num_days = max_days.min(11).max(1);  // Cap at 11 days, minimum 1
+
+    // Width between the vertical bars of the chart box
+    let chart_inner_width = num_days * 3;
+
+    // Build the title with proper centering
+    let title = format!(" {}-DAY ACTIVITY ", num_days);
+    let title_len = title.len();
+    let dashes_total = chart_inner_width.saturating_sub(title_len);
+    let dashes_left = dashes_total / 2;
+    let dashes_right = dashes_total - dashes_left;
+
+    let top_border = format!(
+        "  ┌{}{}{}┐",
+        "─".repeat(dashes_left),
+        title,
+        "─".repeat(dashes_right)
+    );
     lines.push(Line::from(vec![
-        Span::styled("  ┌── 11-DAY ACTIVITY ───────────────────────────────┐", Style::default().fg(accent_color)),
+        Span::styled(top_border, Style::default().fg(accent_color)),
     ]));
 
     let daily_counts = stats.completions_by_day();
-    let max_count = daily_counts.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+    // Take only the most recent num_days days
+    let days_to_show: Vec<_> = daily_counts.iter().take(num_days).collect();
+    let max_count = days_to_show.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
 
     let bar_height = 5;
     let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
     for row in (0..bar_height).rev() {
-        let mut spans = vec![Span::styled("  │ ", Style::default().fg(accent_color))];
+        let mut spans = vec![Span::styled("  │", Style::default().fg(accent_color))];
 
-        // Iterate in reverse order: oldest (10 days ago) first, today (0) last
-        for (day_offset, count) in daily_counts.iter().rev() {
+        // Iterate in reverse order: oldest first, today (0) last
+        for (day_offset, count) in days_to_show.iter().rev() {
             let fill_level = (*count as f64 / max_count as f64) * bar_height as f64;
             let char_idx = if fill_level > row as f64 + 0.875 {
                 7
@@ -2086,22 +2117,33 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
             spans.push(Span::styled(format!(" {} ", bar_char), Style::default().fg(color)));
         }
 
-        spans.push(Span::styled("    │", Style::default().fg(accent_color)));
+        spans.push(Span::styled("│", Style::default().fg(accent_color)));
         lines.push(Line::from(spans));
     }
 
-    // X-axis labels (oldest to newest: -10 days ago to today)
-    let day_labels = ["-10", "-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", " Y", " T"];
+    // X-axis labels (oldest to newest, dynamically generated)
     let mut label_spans = vec![Span::styled("  │", Style::default().fg(accent_color))];
-    for (i, label) in day_labels.iter().enumerate() {
-        let color = if i == 10 { bar_full } else { Color::DarkGray };
-        label_spans.push(Span::styled(format!("{} ", label), Style::default().fg(color)));
+    for i in (0..num_days).rev() {
+        let (label, is_today) = match i {
+            0 => ("T".to_string(), true),    // Today
+            1 => (" Y".to_string(), false),  // Yesterday
+            _ => (format!("{:>2}", -(i as i32)), false),  // -2, -3, etc.
+        };
+        let color = if is_today { bar_full } else { Color::DarkGray };
+        // Today gets one less trailing space so it aligns better with the border
+        let formatted = if is_today {
+            format!("{}", label)
+        } else {
+            format!("{} ", label)
+        };
+        label_spans.push(Span::styled(formatted, Style::default().fg(color)));
     }
-    label_spans.push(Span::styled("   │", Style::default().fg(accent_color)));
+    label_spans.push(Span::styled(" │", Style::default().fg(accent_color)));
     lines.push(Line::from(label_spans));
 
+    let bottom_border = format!("  └{}┘", "─".repeat(chart_inner_width));
     lines.push(Line::from(vec![
-        Span::styled("  └─────────────────────────────────────────────────────┘", Style::default().fg(accent_color)),
+        Span::styled(bottom_border, Style::default().fg(accent_color)),
     ]));
     lines.push(Line::from(vec![
         Span::styled("    T=today  Y=yesterday  -N=days ago", Style::default().fg(Color::DarkGray)),
