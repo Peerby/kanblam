@@ -317,9 +317,26 @@ where
                     } else {
                         let messages = handle_key_event(key, app);
                         for msg in messages {
-                            let commands = app.update(msg);
-                            // Defer commands to next iteration for responsive UI
-                            deferred_commands.extend(commands);
+                            // Handle spec editor specially - needs terminal access
+                            if let Message::OpenSpecEditor(task_id) = msg {
+                                // Get the spec content for the task
+                                let spec_content = app.model.active_project()
+                                    .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
+                                    .and_then(|t| t.spec.clone())
+                                    .unwrap_or_default();
+
+                                if let Some(result) = open_spec_editor(terminal, &spec_content) {
+                                    let commands = app.update(Message::SpecEditorFinished {
+                                        task_id,
+                                        spec: result
+                                    });
+                                    process_commands_recursively(app, commands);
+                                }
+                            } else {
+                                let commands = app.update(msg);
+                                // Defer commands to next iteration for responsive UI
+                                deferred_commands.extend(commands);
+                            }
                         }
                     }
                 }
@@ -438,6 +455,84 @@ fn open_external_editor<B: ratatui::backend::Backend + std::io::Write>(
     let _ = terminal.clear();
 
     // Check if vim succeeded and read result
+    match status {
+        Ok(exit_status) if exit_status.success() => {
+            // Read the edited content
+            match fs::read_to_string(&temp_file) {
+                Ok(content) => {
+                    let _ = fs::remove_file(&temp_file);
+                    Some(content)
+                }
+                Err(_) => {
+                    let _ = fs::remove_file(&temp_file);
+                    None
+                }
+            }
+        }
+        _ => {
+            // User cancelled or editor failed
+            let _ = fs::remove_file(&temp_file);
+            None
+        }
+    }
+}
+
+/// Open a task's spec in the configured external editor, returning the edited text.
+/// Suspends the terminal, runs the editor on a temp file, then resumes.
+/// Returns Some(text) if user saved and exited, None if user cancelled.
+fn open_spec_editor<B: ratatui::backend::Backend + std::io::Write>(
+    terminal: &mut Terminal<B>,
+    spec_content: &str,
+) -> Option<String> {
+    use std::fs;
+    use std::process::Command;
+
+    // Create temp file with spec content
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join(format!("kanblam_spec_{}.md", std::process::id()));
+
+    // Write spec content to temp file
+    if let Err(e) = fs::write(&temp_file, spec_content) {
+        eprintln!("Failed to create temp file: {}", e);
+        return None;
+    }
+
+    // Suspend terminal - leave alternate screen and disable raw mode
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
+    let _ = terminal.show_cursor();
+
+    // Use $EDITOR environment variable, falling back to vim
+    let editor_cmd = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    // Split command in case it has arguments (e.g., "code --wait")
+    let parts: Vec<&str> = editor_cmd.split_whitespace().collect();
+    let status = if parts.len() > 1 {
+        Command::new(parts[0])
+            .args(&parts[1..])
+            .arg(&temp_file)
+            .status()
+    } else {
+        Command::new(&editor_cmd)
+            .arg(&temp_file)
+            .status()
+    };
+
+    // Resume terminal - re-enter alternate screen and enable raw mode
+    let _ = enable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    );
+    let _ = terminal.hide_cursor();
+    // Force a full redraw
+    let _ = terminal.clear();
+
+    // Check if editor succeeded and read result
     match status {
         Ok(exit_status) if exit_status.success() => {
             // Read the edited content
@@ -1917,6 +2012,10 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             } else {
                 vec![]
             }
+        }
+        // Ctrl+G: Open spec in external editor (only on spec tab)
+        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) && on_spec_tab => {
+            vec![Message::OpenSpecEditor(task.id)]
         }
         KeyCode::Home | KeyCode::Char('g') => {
             if on_git_tab {

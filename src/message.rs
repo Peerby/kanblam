@@ -300,6 +300,10 @@ pub enum Message {
     LoadGitDiff(Uuid),        // Load/refresh git diff for a task
     ScrollSpecUp(usize),      // Scroll spec tab up by N lines
     ScrollSpecDown(usize),    // Scroll spec tab down by N lines
+    /// Open spec in external editor (Ctrl+G in spec tab)
+    OpenSpecEditor(Uuid),
+    /// External spec editor finished - update spec content
+    SpecEditorFinished { task_id: Uuid, spec: String },
     ScrollActivityUp(usize),  // Scroll activity tab up by N entries
     ScrollActivityDown(usize), // Scroll activity tab down by N entries
     ToggleActivityExpand,     // Toggle expansion of selected activity entry

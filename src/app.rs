@@ -6251,6 +6251,25 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 // Focus stays on TaskInput after external editor
             }
 
+            Message::OpenSpecEditor(_) => {
+                // This is handled specially in main.rs where we have terminal access
+                // If it reaches here, something went wrong - just ignore it
+            }
+
+            Message::SpecEditorFinished { task_id, spec } => {
+                // Update the task's spec with the edited content
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        let trimmed = spec.trim().to_string();
+                        task.spec = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                    }
+                }
+            }
+
             Message::FocusChanged(area) => {
                 self.model.ui_state.focus = area;
             }
