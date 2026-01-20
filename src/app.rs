@@ -495,24 +495,47 @@ Do not ask for permission - run tests and fix any issues you find."#);
             // === Worktree-based task lifecycle ===
 
             Message::StartTaskWithWorktree(task_id) => {
-                // Check if spec is still being generated - if so, queue the start
-                let is_generating_spec = self.model.active_project_mut()
+                // Check if spec exists or is being generated
+                // We need the spec before starting the SDK session
+                let spec_status = self.model.active_project_mut()
                     .and_then(|p| p.tasks.iter_mut().find(|t| t.id == task_id))
                     .map(|task| {
                         if task.generating_spec {
+                            // Already generating - just queue the start
                             task.start_after_spec = true;
-                            true
+                            "generating"
+                        } else if task.spec.is_none() {
+                            // No spec yet - trigger generation and queue the start
+                            task.start_after_spec = true;
+                            "needs_generation"
                         } else {
-                            false
+                            // Spec exists - proceed
+                            "ready"
                         }
                     })
-                    .unwrap_or(false);
+                    .unwrap_or("not_found");
 
-                if is_generating_spec {
-                    commands.push(Message::SetStatusMessage(Some(
-                        "Waiting for spec to complete...".to_string()
-                    )));
-                    return commands;
+                match spec_status {
+                    "generating" => {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Waiting for spec to complete...".to_string()
+                        )));
+                        return commands;
+                    }
+                    "needs_generation" => {
+                        // Trigger spec generation - it will auto-start the task when done
+                        commands.push(Message::RequestTitleSummary { task_id });
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Generating spec...".to_string()
+                        )));
+                        return commands;
+                    }
+                    "not_found" => {
+                        return commands;
+                    }
+                    _ => {
+                        // "ready" - proceed with starting
+                    }
                 }
 
                 // Get project info first to validate
@@ -5587,27 +5610,30 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 // Guard: If already in QA session, skip (prevents duplicate triggers)
                 // Note: We only check in_qa_session, NOT status == Testing, because
                 // the caller sets status = Testing BEFORE pushing this message
-                let already_in_qa = self.model.active_project().and_then(|project| {
-                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
-                        task.in_qa_session
-                    })
-                }).unwrap_or(false);
+                // Search ALL projects (task may be in non-active project if user switched tabs)
+                let already_in_qa = self.model.projects.iter()
+                    .flat_map(|p| p.tasks.iter())
+                    .find(|t| t.id == task_id)
+                    .map(|task| task.in_qa_session)
+                    .unwrap_or(false);
 
                 if already_in_qa {
                     // Already in QA - skip duplicate trigger
                     return commands;
                 }
 
-                let task_info = self.model.active_project().and_then(|project| {
-                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                // Search ALL projects for the task (may be in non-active project)
+                let task_info = self.model.projects.iter()
+                    .flat_map(|p| p.tasks.iter())
+                    .find(|t| t.id == task_id)
+                    .map(|task| {
                         (
                             task.claude_session_id.clone(),
                             task.worktree_path.clone(),
                             task.description.clone(),
                             task.spec.clone(),
                         )
-                    })
-                });
+                    });
 
                 if let Some((session_id_opt, worktree_path_opt, description, spec)) = task_info {
                     if let (Some(ref session_id), Some(ref worktree_path)) = (&session_id_opt, &worktree_path_opt) {
@@ -5617,13 +5643,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         if let Some(ref client) = self.sidecar_client {
                             match client.resume_session(task_id, session_id, worktree_path, Some(&qa_prompt)) {
                                 Ok(new_session_id) => {
-                                    if let Some(project) = self.model.active_project_mut() {
+                                    // Update task in whichever project it belongs to
+                                    for project in &mut self.model.projects {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                             task.claude_session_id = Some(new_session_id);
                                             task.status = TaskStatus::Testing;
                                             task.session_state = crate::model::ClaudeSessionState::Working;
                                             task.in_qa_session = true;
                                             task.log_activity("QA validation started");
+                                            break;
                                         }
                                     }
                                 }
@@ -5646,40 +5674,45 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::QaValidationPassed(task_id) => {
                 // QA passed - move task to Review
-                if let Some(project) = self.model.active_project_mut() {
+                // Search ALL projects for the task (may be in non-active project)
+                for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.in_qa_session = false;
                         task.session_state = crate::model::ClaudeSessionState::Paused;
                         task.log_activity("QA validation passed");
+                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                        project.needs_attention = true;
+                        notify::play_attention_sound();
+                        notify::set_attention_indicator(&project.name);
+                        break;
                     }
-                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
-                    project.needs_attention = true;
-                    notify::play_attention_sound();
-                    notify::set_attention_indicator(&project.name);
                 }
             }
 
             Message::QaValidationNeedsWork { task_id, feedback: _ } => {
                 // QA found issues - check if we should retry or move to NeedsWork
-                let task_info = self.model.active_project().and_then(|project| {
-                    project.tasks.iter().find(|t| t.id == task_id).map(|task| {
-                        (
-                            task.claude_session_id.clone(),
-                            task.worktree_path.clone(),
-                            task.qa_attempts,
-                            project.max_qa_attempts,
-                        )
-                    })
-                });
+                // Search ALL projects for the task (may be in non-active project)
+                let task_info = self.model.projects.iter()
+                    .find_map(|project| {
+                        project.tasks.iter().find(|t| t.id == task_id).map(|task| {
+                            (
+                                task.claude_session_id.clone(),
+                                task.worktree_path.clone(),
+                                task.qa_attempts,
+                                project.max_qa_attempts,
+                            )
+                        })
+                    });
 
                 if let Some((session_id_opt, worktree_path_opt, current_attempts, max_attempts)) = task_info {
                     let new_attempts = current_attempts + 1;
 
-                    // Update attempts count
-                    if let Some(project) = self.model.active_project_mut() {
+                    // Update attempts count in whichever project contains the task
+                    for project in &mut self.model.projects {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.qa_attempts = new_attempts;
                             task.log_activity(&format!("QA attempt {} failed", new_attempts));
+                            break;
                         }
                     }
 
@@ -5701,19 +5734,22 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             if let Some(ref client) = self.sidecar_client {
                                 match client.resume_session(task_id, session_id, worktree_path, Some(&retry_prompt)) {
                                     Ok(new_session_id) => {
-                                        if let Some(project) = self.model.active_project_mut() {
+                                        // Update task in whichever project contains it
+                                        for project in &mut self.model.projects {
                                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                                 task.claude_session_id = Some(new_session_id);
                                                 task.session_state = crate::model::ClaudeSessionState::Working;
                                                 task.log_activity("Retrying QA validation...");
+                                                break;
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        // Retry failed - move to NeedsWork
-                                        if let Some(project) = self.model.active_project_mut() {
+                                        // Retry failed - log error and move to NeedsWork
+                                        for project in &mut self.model.projects {
                                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                                 task.log_activity(&format!("QA retry failed: {}", e));
+                                                break;
                                             }
                                         }
                                         commands.push(Message::QaMaxAttemptsExceeded(task_id));
@@ -5733,17 +5769,19 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::QaMaxAttemptsExceeded(task_id) => {
                 // Max QA attempts exceeded - move to NeedsWork with warning
-                if let Some(project) = self.model.active_project_mut() {
+                // Search ALL projects for the task (may be in non-active project)
+                for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.in_qa_session = false;
                         task.qa_exceeded_warning = true;
                         task.session_state = crate::model::ClaudeSessionState::Paused;
                         task.log_activity("QA max attempts exceeded - needs manual review");
+                        project.move_task_to_end_of_status(task_id, TaskStatus::NeedsWork);
+                        project.needs_attention = true;
+                        notify::play_attention_sound();
+                        notify::set_attention_indicator(&project.name);
+                        break;
                     }
-                    project.move_task_to_end_of_status(task_id, TaskStatus::NeedsWork);
-                    project.needs_attention = true;
-                    notify::play_attention_sound();
-                    notify::set_attention_indicator(&project.name);
                 }
             }
 
