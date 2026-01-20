@@ -402,7 +402,19 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                                     spans.push(Span::styled(space_part, title_style));
                                 }
                             } else {
-                                spans.push(Span::styled(prefix.clone(), title_style));
+                                // Use Claude's brand orange for InProgress spinner animation
+                                let prefix_style = if task.status == TaskStatus::InProgress && !task.generating_spec {
+                                    // Claude orange (#DA7756) for the spinner
+                                    let claude_orange = Color::Rgb(218, 119, 86);
+                                    if is_task_selected {
+                                        Style::default().fg(claude_orange).bg(color)
+                                    } else {
+                                        Style::default().fg(claude_orange)
+                                    }
+                                } else {
+                                    title_style
+                                };
+                                spans.push(Span::styled(prefix.clone(), prefix_style));
                             }
                         }
                         spans.push(Span::styled("[", bracket_style));
