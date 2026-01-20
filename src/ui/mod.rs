@@ -1053,13 +1053,27 @@ fn render_general_tab<'a>(
         lines.push(Line::from(""));
     }
 
-    // Attachments
+    // Attachments with ANSI image preview
     if !task.images.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("📎 ", *dim_style),
             Span::styled(format!("{} image(s) attached", task.images.len()), Style::default().fg(Color::Cyan)),
         ]));
         lines.push(Line::from(""));
+
+        // Render ANSI preview of the first image
+        if let Some(first_image) = task.images.first() {
+            let config = crate::image::AnsiRenderConfig {
+                max_width: 32,
+                max_height: 12,
+            };
+            if let Some(ansi_lines) = crate::image::try_render_image_to_ansi(first_image, &config) {
+                for line in ansi_lines {
+                    lines.push(line);
+                }
+                lines.push(Line::from(""));
+            }
+        }
     }
 
     // Phase-specific timing info
