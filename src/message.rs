@@ -319,7 +319,10 @@ pub enum Message {
     TriggerLogoShimmer,
     /// Trigger the merge celebration "gold dust sweep" animation for a task
     /// The task will be visually swept away with sparkles from right to left
-    TriggerMergeCelebration { task_id: Uuid, display_text: String, column_status: TaskStatus, task_index: usize },
+    /// If pending_completion is true, complete_task() will be called when animation finishes
+    TriggerMergeCelebration { task_id: Uuid, display_text: String, column_status: TaskStatus, task_index: usize, pending_completion: bool },
+    /// Complete task after merge celebration animation finishes (called from Tick handler)
+    FinishMergeCelebration(Uuid),
     /// Trigger a blink animation (called when clicking the mascot)
     TriggerMascotBlink,
     /// Trigger an immediate watcher observation (called when clicking mascot with watcher enabled)

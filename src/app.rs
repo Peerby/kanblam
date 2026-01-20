@@ -793,7 +793,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         )));
                     }
 
-                    // Capture celebration info BEFORE moving the task
+                    // Capture celebration info for animation (task stays in place during animation)
                     let celebration_info = self.model.active_project().and_then(|project| {
                         let tasks_in_review = project.tasks_by_status(TaskStatus::Review);
                         tasks_in_review.iter().enumerate()
@@ -806,20 +806,14 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             })
                     });
 
-                    // Complete task (records stats) and move to Done
+                    // Log activity before animation starts (task completion deferred until animation ends)
                     if let Some(project) = self.model.active_project_mut() {
-                        // Log activity before completion
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.log_activity("User merged changes");
                         }
-                        project.complete_task(task_id);
-                        project.needs_attention = project.review_count() > 0;
-                        if !project.needs_attention {
-                            notify::clear_attention_indicator();
-                        }
                     }
 
-                    // Trigger celebratory animations
+                    // Trigger celebratory animations - task completion deferred until animation ends
                     commands.push(Message::TriggerLogoShimmer);
                     if let Some((display_text, task_index)) = celebration_info {
                         commands.push(Message::TriggerMergeCelebration {
@@ -827,7 +821,17 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             display_text,
                             column_status: TaskStatus::Review,
                             task_index,
+                            pending_completion: true,
                         });
+                    } else {
+                        // No animation - complete immediately
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.complete_task(task_id);
+                            project.needs_attention = project.review_count() > 0;
+                            if !project.needs_attention {
+                                notify::clear_attention_indicator();
+                            }
+                        }
                     }
 
                     commands.push(Message::SetStatusMessage(Some(
@@ -1132,7 +1136,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         )));
                     }
 
-                    // Capture celebration info BEFORE moving the task
+                    // Capture celebration info for animation (task stays in place during animation)
                     // Note: Task might be in Accepting status (shown in Review column)
                     let celebration_info = self.model.active_project().and_then(|project| {
                         // For Accepting tasks, they appear in Review column
@@ -1147,18 +1151,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             })
                     });
 
-                    // Complete task (records stats) and move to Done
+                    // Release the lock - merge completed successfully (do this before animation)
                     if let Some(project) = self.model.active_project_mut() {
-                        project.complete_task(task_id);
-                        project.needs_attention = project.review_count() > 0;
-                        if !project.needs_attention {
-                            notify::clear_attention_indicator();
-                        }
-                        // Release the lock - merge completed successfully
                         project.release_main_worktree_lock(task_id);
                     }
 
-                    // Trigger celebratory animations
+                    // Trigger celebratory animations - task completion deferred until animation ends
                     commands.push(Message::TriggerLogoShimmer);
                     if let Some((display_text, task_index)) = celebration_info {
                         commands.push(Message::TriggerMergeCelebration {
@@ -1166,7 +1164,17 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             display_text,
                             column_status: TaskStatus::Review,
                             task_index,
+                            pending_completion: true,
                         });
+                    } else {
+                        // No animation - complete immediately
+                        if let Some(project) = self.model.active_project_mut() {
+                            project.complete_task(task_id);
+                            project.needs_attention = project.review_count() > 0;
+                            if !project.needs_attention {
+                                notify::clear_attention_indicator();
+                            }
+                        }
                     }
 
                     // Check if there are tracked stashes to offer popping
@@ -1350,7 +1358,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     project.applied_with_conflict_resolution = false;
                 }
 
-                // Trigger celebratory animations
+                // Trigger celebratory animations (no completion - task stays in Review)
                 commands.push(Message::TriggerLogoShimmer);
                 if let Some((display_text, task_index)) = celebration_info {
                     commands.push(Message::TriggerMergeCelebration {
@@ -1358,6 +1366,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         display_text,
                         column_status: TaskStatus::Review,
                         task_index,
+                        pending_completion: false,
                     });
                 }
 
@@ -3473,16 +3482,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         // Delete branch
                                         let _ = crate::worktree::delete_branch(&project_dir, task_id);
 
-                                        // Complete task (records stats) and move to Done
-                                        if let Some(project) = self.model.active_project_mut() {
-                                            project.complete_task(task_id);
-                                            project.needs_attention = project.review_count() > 0;
-                                            if !project.needs_attention {
-                                                notify::clear_attention_indicator();
-                                            }
-                                        }
-
-                                        // Trigger celebratory animations
+                                        // Trigger celebratory animations - task completion deferred until animation ends
                                         commands.push(Message::TriggerLogoShimmer);
                                         if let Some((display_text, task_index)) = celebration_info {
                                             commands.push(Message::TriggerMergeCelebration {
@@ -3490,7 +3490,17 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                                 display_text,
                                                 column_status: TaskStatus::Review,
                                                 task_index,
+                                                pending_completion: true,
                                             });
+                                        } else {
+                                            // No animation - complete immediately
+                                            if let Some(project) = self.model.active_project_mut() {
+                                                project.complete_task(task_id);
+                                                project.needs_attention = project.review_count() > 0;
+                                                if !project.needs_attention {
+                                                    notify::clear_attention_indicator();
+                                                }
+                                            }
                                         }
 
                                         commands.push(Message::SetStatusMessage(Some(
@@ -3815,7 +3825,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 self.model.ui_state.eye_animation_ticks_remaining = 10;
             }
 
-            Message::TriggerMergeCelebration { task_id, display_text, column_status, task_index } => {
+            Message::TriggerMergeCelebration { task_id, display_text, column_status, task_index, pending_completion } => {
                 // Start the "gold dust sweep" celebration animation
                 self.model.ui_state.merge_celebration = Some(crate::model::MergeCelebrationState {
                     task_id,
@@ -3823,7 +3833,19 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     frame: 0,
                     column_status,
                     task_index,
+                    pending_completion,
                 });
+            }
+
+            Message::FinishMergeCelebration(task_id) => {
+                // Animation complete - now actually complete the task
+                if let Some(project) = self.model.active_project_mut() {
+                    project.complete_task(task_id);
+                    project.needs_attention = project.review_count() > 0;
+                    if !project.needs_attention {
+                        notify::clear_attention_indicator();
+                    }
+                }
             }
 
             Message::TriggerMascotBlink => {
@@ -6699,8 +6721,20 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 if let Some(ref mut celebration) = self.model.ui_state.merge_celebration {
                     celebration.frame += 1;
                     if celebration.is_complete() {
-                        // Animation complete - clear it
+                        // Animation complete - complete the task synchronously to avoid flash
+                        let task_id = celebration.task_id;
+                        let pending_completion = celebration.pending_completion;
+                        // Clear animation and complete task atomically (before next render)
                         self.model.ui_state.merge_celebration = None;
+                        if pending_completion {
+                            if let Some(project) = self.model.active_project_mut() {
+                                project.complete_task(task_id);
+                                project.needs_attention = project.review_count() > 0;
+                                if !project.needs_attention {
+                                    notify::clear_attention_indicator();
+                                }
+                            }
+                        }
                     }
                 }
 

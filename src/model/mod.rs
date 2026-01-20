@@ -1762,6 +1762,8 @@ pub struct MergeCelebrationState {
     pub column_status: TaskStatus,
     /// Index within the column's task list
     pub task_index: usize,
+    /// If true, complete_task() should be called when animation finishes
+    pub pending_completion: bool,
 }
 
 impl MergeCelebrationState {
