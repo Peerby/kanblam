@@ -36,11 +36,13 @@ Because KanBlam is a TUI (terminal user interface), it scales perfectly to any s
 - **Parallel AI Sessions** — Run multiple Claude Code instances simultaneously, each working on different tasks
 - **Git Worktree Isolation** — Each task gets its own worktree and branch, preventing conflicts between parallel sessions
 - **AI merges** - Let Claude figure out resolve conflicts and to stitch the different worktrees back together
-- **Kanban Workflow** — Visual board with columns: Planned → Queued → In Progress → Review → Done
+- **Kanban Workflow** — Visual board with columns: Planned → In Progress → QA → Review → Done
 - **SDK Integration** — Deep integration with Claude Code Agent SDK for programmatic session control
 - **Interactive Handoff** — Seamlessly switch between automated and interactive Claude sessions
 - **Smart Notifications** — Audio alerts and tmux status updates when tasks need attention
-- **AI task summaries** - Write your messy prompt and Claude will summarize it into a clear task title
+- **AI Task Summaries** — Write your messy prompt and Claude will summarize it into a clear task title
+- **Task Specifications** — Claude auto-generates structured specs with objectives, constraints, and acceptance criteria
+- **Automated QA Validation** — Claude automatically runs tests and verifies spec compliance before review
 - **Image Attachments** — Paste screenshots directly into task descriptions
 
 ## How It Works
@@ -64,11 +66,44 @@ Because KanBlam is a TUI (terminal user interface), it scales perfectly to any s
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Plan** your tasks on the Kanban board
-2. **Queue** them up for Claude to work on
-3. **Watch** as Claude works on multiple tasks in parallel (each in isolation)
+1. **Plan** your tasks on the Kanban board and let Claude spec them
+3. **Watch** as Claude works on multiple tasks in parallel (each in isolation) and tests them
 4. **Review** the changes when Claude finishes
 5. **Accept** to merge into main, or **Discard** to throw away the work
+
+## Task Specifications
+
+When you create or edit a task, KanBlam automatically generates a structured specification document. This spec serves as a contract between you and Claude, ensuring clear expectations and preventing scope creep.
+
+**How it works:**
+- Write a task description in plain language (can be messy/detailed)
+- Claude generates a concise title for the kanban card
+- Claude also generates a structured spec with:
+  - **Objective** — One clear sentence describing the exact outcome
+  - **Non-Goals** — What Claude should NOT do (prevents overreach)
+  - **Constraints** — Hard rules like backward compatibility, style rules
+  - **Outputs** — What must exist when done (files, tests, etc.)
+  - **Definition of Done** — Concrete, verifiable completion criteria
+
+The spec is shown in a dedicated "spec" tab when viewing task details and is used during QA validation.
+
+## Automated QA Validation
+
+When Claude finishes working on a task, KanBlam automatically runs a QA validation phase before moving the task to Review. This catches issues early and reduces back-and-forth.
+
+**QA validation checks:**
+1. **Tests** — Runs the project's test suite
+2. **Build** — Verifies the project compiles without errors
+3. **Spec Compliance** — Reviews changes against task requirements
+
+**QA outcomes:**
+- **Pass** — Task moves to Review for your final approval
+- **Fail** — Claude automatically fixes the issues and retries (up to configurable max attempts)
+- **Max attempts exceeded** — Task moves to NeedsWork with a warning indicator
+
+**Configuration** (via `Ctrl+P` settings):
+- **QA Enabled** — Toggle automatic QA on/off per project
+- **Max QA Attempts** — How many retry attempts before giving up (default: 3)
 
 ## Installation
 
@@ -170,11 +205,18 @@ cargo run --release
                     ┌──────────┐
                     │In Progress│  Claude is working on it
                     └────┬─────┘
+                         │ done
+                         ▼
+                    ┌──────────┐
+                    │ Testing  │  Automated QA validation
+                    └────┬─────┘
                          │
               ┌──────────┴──────────┐
+              │                     │
+         (pass)                (fail/max attempts)
               ▼                     ▼
         ┌──────────┐          ┌──────────┐
-        │  Review  │          │Needs Input│  Claude needs help
+        │  Review  │          │NeedsWork │  QA failed or needs help
         └────┬─────┘          └──────────┘
              │
      ┌───────┴───────┐
@@ -259,5 +301,5 @@ MIT — see [LICENSE](LICENSE)
 <p align="center">
 <b>Built with ❤️ by <a href="https://www.peerby.com">Peerby</a></b><br>
 <i>We're on a mission to build the future of sharing. Interested in AI-powered development?</i><br>
-<a href="https://www.peerby.com/careers">We're hiring!</a>
+<a href="https://www.peerby.com/contact">We're hiring!</a>
 </p>
