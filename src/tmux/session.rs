@@ -314,8 +314,11 @@ pub fn get_pane_size(target: &str) -> Result<(u16, u16)> {
     Ok((width, height))
 }
 
-/// Open a combined tmux session with two panes: Claude on left, shell on right
-/// Creates a session named "kb-{short-task-id}" with horizontal split
+/// Open a combined tmux session with three panes:
+/// - Claude on left (pane 0)
+/// - Shell on right (pane 1)
+/// - Statusbar at bottom (pane 2) - minimal height for dev tools
+/// Creates a session named "kb-{short-task-id}"
 pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> Result<()> {
     // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
     let dir_name = worktree_path
@@ -325,12 +328,12 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
 
     // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
     // Strip "task-" prefix if present and use first 4 chars of UUID
-    let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        &stripped[..4.min(stripped.len())]
+    let (short_name, full_task_id) = if let Some(stripped) = dir_name.strip_prefix("task-") {
+        (&stripped[..4.min(stripped.len())], stripped)
     } else if dir_name.len() > 4 {
-        &dir_name[..4]
+        (&dir_name[..4], dir_name)
     } else {
-        dir_name
+        (dir_name, dir_name)
     };
     let session_name = format!("kb-{}", short_name);
 
@@ -359,10 +362,14 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
             claude_cmd
         );
 
+        // Use -x- and -y- to inherit current terminal size instead of default-size
+        // This fixes split-window -l not being honored in detached sessions (tmux issue #3060)
         let output = Command::new("tmux")
             .args([
                 "new-session",
                 "-d",  // detached
+                "-x-", // use current terminal width
+                "-y-", // use current terminal height
                 "-s", &session_name,
                 "-c", &worktree_path.to_string_lossy(),
                 "bash", "-l", "-c", &shell_cmd,
@@ -389,14 +396,60 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
             return Err(anyhow!("Failed to create shell pane: {}", stderr));
         }
 
+        // Create statusbar pane at the bottom spanning full width
+        // We need to use tmux's -f flag to create a full-width split
+        // Get the kanblam binary path for the statusbar command
+        let kanblam_path = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "kanblam".to_string());
+
+        // Build statusbar command
+        let statusbar_cmd = format!(
+            "cd '{}' && '{}' statusbar {}",
+            worktree_path.to_string_lossy(),
+            kanblam_path,
+            full_task_id
+        );
+
+        // Split vertically with -f flag for full-width pane at bottom
+        // -f creates a new pane spanning the full window width/height
+        // Note: Don't use -l flag here - it's not honored reliably in detached sessions (tmux #3060)
+        // Instead, we resize the pane immediately after creation
+        let output = Command::new("tmux")
+            .args([
+                "split-window",
+                "-t", &session_name,
+                "-f",  // full-width split
+                "-v",  // vertical split (stacked)
+                "-c", &worktree_path.to_string_lossy(),
+                "bash", "-l", "-c", &statusbar_cmd,
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            // Statusbar pane creation failed, but that's not critical - continue without it
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("Note: Could not create statusbar pane: {}", stderr);
+        }
+
         // Select the left pane (Claude) as the active pane
+        // Use {top-left} to select the first pane regardless of base-index
         let _ = Command::new("tmux")
-            .args(["select-pane", "-t", &format!("{}:0.0", session_name)])
+            .args(["select-pane", "-t", &format!("{}:.{{top-left}}", session_name)])
             .output();
 
-        // Switch to the new session
+        // Switch to the new session FIRST - this may cause layout recalculation
         let _ = Command::new("tmux")
             .args(["switch-client", "-t", &session_name])
+            .output();
+
+        // Small delay to let tmux finish the switch and layout calculation
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Resize statusbar pane to exactly 2 lines AFTER switching
+        // Must be done after switch-client because switching recalculates layout
+        let _ = Command::new("tmux")
+            .args(["resize-pane", "-t", &format!("{}:.{{bottom}}", session_name), "-y", "2"])
             .output();
     }
 
@@ -546,7 +599,10 @@ pub struct DetachedSessionResult {
 }
 
 /// Open combined tmux session in detached mode (don't switch to it)
-/// Creates a session with two panes: Claude on left, shell on right
+/// Creates a session with three panes:
+/// - Claude on left (pane 0)
+/// - Shell on right (pane 1)
+/// - Statusbar at bottom (pane 2) - minimal height for dev tools
 /// Returns the session name and whether it was newly created
 pub fn open_popup_detached(
     worktree_path: &std::path::Path,
@@ -559,12 +615,12 @@ pub fn open_popup_detached(
         .unwrap_or("claude");
 
     // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
-    let short_name = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        &stripped[..4.min(stripped.len())]
+    let (short_name, full_task_id) = if let Some(stripped) = dir_name.strip_prefix("task-") {
+        (&stripped[..4.min(stripped.len())], stripped)
     } else if dir_name.len() > 4 {
-        &dir_name[..4]
+        (&dir_name[..4], dir_name)
     } else {
-        dir_name
+        (dir_name, dir_name)
     };
     let session_name = format!("kb-{}", short_name);
 
@@ -589,10 +645,14 @@ pub fn open_popup_detached(
             claude_cmd
         );
 
+        // Use -x- and -y- to inherit current terminal size instead of default-size
+        // This fixes split-window -l not being honored in detached sessions (tmux issue #3060)
         let output = Command::new("tmux")
             .args([
                 "new-session",
                 "-d",
+                "-x-", // use current terminal width
+                "-y-", // use current terminal height
                 "-s", &session_name,
                 "-c", &worktree_path.to_string_lossy(),
                 "bash", "-l", "-c", &shell_cmd,
@@ -619,9 +679,54 @@ pub fn open_popup_detached(
             return Err(anyhow!("Failed to create shell pane: {}", stderr));
         }
 
-        // Select the left pane (Claude) as the active pane
+        // Create statusbar pane at the bottom spanning full width
+        // Get the kanblam binary path for the statusbar command
+        let kanblam_path = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "kanblam".to_string());
+
+        // Build statusbar command
+        let statusbar_cmd = format!(
+            "cd '{}' && '{}' statusbar {}",
+            worktree_path.to_string_lossy(),
+            kanblam_path,
+            full_task_id
+        );
+
+        // Split vertically with -f flag for full-width pane at bottom
+        // -f creates a new pane spanning the full window width/height
+        // Note: Don't use -l flag here - it's not honored reliably in detached sessions (tmux #3060)
+        // Instead, we resize the pane immediately after creation
+        let output = Command::new("tmux")
+            .args([
+                "split-window",
+                "-t", &session_name,
+                "-f",  // full-width split
+                "-v",  // vertical split (stacked)
+                "-c", &worktree_path.to_string_lossy(),
+                "bash", "-l", "-c", &statusbar_cmd,
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            // Statusbar pane creation failed, but that's not critical - continue without it
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("Note: Could not create statusbar pane: {}", stderr);
+        }
+
+        // Small delay to let tmux finish creating the pane
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Resize statusbar pane to exactly 2 lines (minimum for tmux)
+        // This works reliably unlike -l flag in split-window
         let _ = Command::new("tmux")
-            .args(["select-pane", "-t", &format!("{}:0.0", session_name)])
+            .args(["resize-pane", "-t", &format!("{}:.{{bottom}}", session_name), "-y", "2"])
+            .output();
+
+        // Select the left pane (Claude) as the active pane
+        // Use {top-left} to select the first pane regardless of base-index
+        let _ = Command::new("tmux")
+            .args(["select-pane", "-t", &format!("{}:.{{top-left}}", session_name)])
             .output();
     }
 
@@ -678,7 +783,8 @@ pub enum ClaudeCliState {
 pub fn get_claude_cli_state(task_id: &str) -> ClaudeCliState {
     // Session name is kb-{first 4 chars of task_id}
     let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
-    let target = format!("{}:0.0", session_name); // Left pane where Claude runs
+    // Use {top-left} to get first pane regardless of base-index setting
+    let target = format!("{}:.{{top-left}}", session_name); // Left pane where Claude runs
 
     // Check if session exists
     let check = Command::new("tmux")

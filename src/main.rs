@@ -9,6 +9,7 @@ mod message;
 mod model;
 mod notify;
 mod sidecar;
+mod statusbar;
 mod tmux;
 mod ui;
 mod worktree; // Handles git worktree isolation for parallel task execution
@@ -71,6 +72,12 @@ async fn main() -> anyhow::Result<()> {
     // New signal subcommand for worktree-based hooks: kanblam signal <event> <task-id>
     if args.len() > 1 && args[1] == "signal" {
         return handle_signal_command(&args[2..]);
+    }
+
+    // Statusbar subcommand: kanblam statusbar <task-id>
+    // Runs a minimal TUI in a tmux pane alongside the shell for developer tools
+    if args.len() > 1 && args[1] == "statusbar" {
+        return statusbar::main(&args[2..]);
     }
 
     // Parse --state-file option
