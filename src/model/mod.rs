@@ -3,6 +3,7 @@
 use crate::sidecar::protocol::{WatcherMood, WatcherInsight};
 use crate::ui::logo::EyeAnimation;
 use chrono::{DateTime, Utc};
+use ratatui::style::Color;
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, Lines,
     actions::{Action, Composed, SelectInnerWord, DeleteSelection, SwitchMode, MoveWordForwardToEndOfWord, MoveWordBackward, MoveForward, MoveToFirst, MoveToEndOfLine, MoveToStartOfLine},
@@ -1744,6 +1745,60 @@ pub struct UiState {
     // Vim replace mode state
     /// If true, we're waiting for a character to replace the current character under cursor
     pub pending_replace_char: bool,
+
+    // Sidecar control modal
+    /// If set, the sidecar control modal is open with its state
+    pub sidecar_modal: Option<SidecarModalState>,
+}
+
+/// State for the sidecar control modal
+#[derive(Debug, Clone)]
+pub struct SidecarModalState {
+    /// Connection status to the sidecar
+    pub connection_status: SidecarConnectionStatus,
+    /// Number of sidecar processes running (warning if > 1)
+    pub process_count: usize,
+    /// Build timestamp of the running sidecar (if available)
+    pub build_timestamp: Option<String>,
+    /// Selected action index (0=Kill, 1=Compile, 2=Start)
+    pub selected_action: usize,
+    /// Status message from last action (success/error feedback)
+    pub action_status: Option<String>,
+    /// Whether an action is currently in progress
+    pub action_in_progress: bool,
+}
+
+/// Sidecar connection status
+#[derive(Debug, Clone, PartialEq)]
+pub enum SidecarConnectionStatus {
+    /// Connected and responding to pings
+    Connected,
+    /// Socket exists but not responding
+    Unresponsive,
+    /// Socket doesn't exist (not running)
+    NotRunning,
+    /// Currently checking status
+    Checking,
+}
+
+impl SidecarConnectionStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Connected => "Connected",
+            Self::Unresponsive => "Unresponsive",
+            Self::NotRunning => "Not Running",
+            Self::Checking => "Checking...",
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            Self::Connected => Color::Green,
+            Self::Unresponsive => Color::Yellow,
+            Self::NotRunning => Color::Red,
+            Self::Checking => Color::DarkGray,
+        }
+    }
 }
 
 /// State for the merge celebration "gold dust sweep" animation
@@ -2203,7 +2258,16 @@ impl Default for UiState {
             merge_celebration: None,
             // Vim replace mode state
             pending_replace_char: false,
+            // Sidecar control modal
+            sidecar_modal: None,
         }
+    }
+}
+
+impl UiState {
+    /// Check if the sidecar modal is open
+    pub fn is_sidecar_modal_open(&self) -> bool {
+        self.sidecar_modal.is_some()
     }
 }
 

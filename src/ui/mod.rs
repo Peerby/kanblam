@@ -148,6 +148,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_stash_modal(frame, app);
     }
 
+    // Render sidecar control modal if active
+    if app.model.ui_state.is_sidecar_modal_open() {
+        render_sidecar_modal(frame, app);
+    }
+
     // Render watcher insight modal if active
     if app.model.ui_state.show_watcher_insight_modal {
         if let Some(ref project) = app.model.active_project() {
@@ -3373,4 +3378,136 @@ fn render_stash_modal(frame: &mut Frame, app: &App) {
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(modal, area);
+}
+
+/// Render the sidecar control modal
+fn render_sidecar_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(55, 50, frame.area());
+
+    let Some(ref modal) = app.model.ui_state.sidecar_modal else {
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Sidecar Control",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    // Status section
+    let label_style = Style::default().fg(Color::DarkGray);
+    let value_style = Style::default().fg(Color::White);
+
+    // Connection status
+    lines.push(Line::from(vec![
+        Span::styled("  Connection: ", label_style),
+        Span::styled(modal.connection_status.label(), Style::default().fg(modal.connection_status.color())),
+    ]));
+
+    // Process count (with warning if > 1)
+    let process_style = if modal.process_count > 1 {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else if modal.process_count == 1 {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let process_warning = if modal.process_count > 1 { " ⚠ Multiple instances!" } else { "" };
+    lines.push(Line::from(vec![
+        Span::styled("  Processes:  ", label_style),
+        Span::styled(format!("{}", modal.process_count), process_style),
+        Span::styled(process_warning, Style::default().fg(Color::Yellow)),
+    ]));
+
+    // Build timestamp
+    if let Some(ref timestamp) = modal.build_timestamp {
+        lines.push(Line::from(vec![
+            Span::styled("  Built:      ", label_style),
+            Span::styled(timestamp, value_style),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("  Built:      ", label_style),
+            Span::styled("(not found)", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("─".repeat(35), Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(""));
+
+    // Actions section
+    lines.push(Line::from(Span::styled("  Actions", Style::default().add_modifier(Modifier::UNDERLINED))));
+    lines.push(Line::from(""));
+
+    let actions = [
+        ("1", "Kill", "Stop all sidecar processes"),
+        ("2", "Compile", "Run npm build"),
+        ("3", "Start", "Start sidecar process"),
+    ];
+
+    for (idx, (key, name, desc)) in actions.iter().enumerate() {
+        let is_selected = idx == modal.selected_action;
+        let prefix = if is_selected { "  ► " } else { "    " };
+        let style = if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("[{}] ", key), Style::default().fg(Color::DarkGray)),
+            Span::styled(*name, style),
+            Span::styled(format!(" - {}", desc), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    // Action status feedback
+    if let Some(ref status) = modal.action_status {
+        let status_color = if status.starts_with('✓') {
+            Color::Green
+        } else if status.starts_with('✗') {
+            Color::Red
+        } else {
+            Color::Yellow
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  ", label_style),
+            Span::styled(status, Style::default().fg(status_color)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled("─".repeat(35), Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(""));
+
+    // Key hints
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    lines.push(Line::from(vec![
+        Span::styled("  j/k", key_style),
+        Span::styled(" navigate  ", hint_style),
+        Span::styled("Enter", key_style),
+        Span::styled(" execute  ", hint_style),
+        Span::styled("Esc/q/>", key_style),
+        Span::styled(" close", hint_style),
+    ]));
+
+    let modal_widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Sidecar Control ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(modal_widget, area);
 }

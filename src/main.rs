@@ -1184,6 +1184,11 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return handle_config_modal_key(key, app);
     }
 
+    // Handle sidecar modal if open
+    if app.model.ui_state.is_sidecar_modal_open() {
+        return handle_sidecar_modal_key(key);
+    }
+
     // Normal mode keybindings
     match key.code {
         // Quit
@@ -1204,6 +1209,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
 
         // Stats
         KeyCode::Char('/') => vec![Message::ToggleStats],
+
+        // Sidecar control
+        KeyCode::Char('>') => vec![Message::ShowSidecarModal],
 
         // Settings/Config (Ctrl-P)
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => vec![Message::ShowConfigModal],
@@ -1870,6 +1878,53 @@ fn handle_stash_modal_key(key: event::KeyEvent) -> Vec<Message> {
         // Delete selected stash (with confirmation)
         KeyCode::Char('d') => {
             vec![Message::DropSelectedStash]
+        }
+
+        _ => vec![],
+    }
+}
+
+/// Handle key events when the sidecar control modal is open
+/// j/k = navigate actions, Enter = execute, Esc/q/> = close
+fn handle_sidecar_modal_key(key: event::KeyEvent) -> Vec<Message> {
+    match key.code {
+        // Close modal
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('>') => {
+            vec![Message::CloseSidecarModal]
+        }
+
+        // Navigate up
+        KeyCode::Char('k') | KeyCode::Up => {
+            vec![Message::SidecarModalNavigate(-1)]
+        }
+
+        // Navigate down
+        KeyCode::Char('j') | KeyCode::Down => {
+            vec![Message::SidecarModalNavigate(1)]
+        }
+
+        // Execute selected action
+        KeyCode::Enter => {
+            vec![Message::SidecarModalExecuteAction]
+        }
+
+        // Quick action shortcut keys (shown in modal)
+        // These select the action and execute immediately
+        KeyCode::Char('1') => {
+            // Kill (action 0)
+            vec![Message::SidecarModalNavigate(-10), Message::SidecarModalExecuteAction]
+        }
+        KeyCode::Char('2') => {
+            // Compile (action 1) - navigate to middle
+            vec![
+                Message::SidecarModalNavigate(-10), // Go to 0
+                Message::SidecarModalNavigate(1),   // Go to 1
+                Message::SidecarModalExecuteAction
+            ]
+        }
+        KeyCode::Char('3') => {
+            // Start (action 2)
+            vec![Message::SidecarModalNavigate(10), Message::SidecarModalExecuteAction]
         }
 
         _ => vec![],

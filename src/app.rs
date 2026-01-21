@@ -7631,6 +7631,139 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 // Display error in status bar so user actually sees it
                 self.model.ui_state.status_message = Some(format!("❌ {}", err));
             }
+
+            // Sidecar control modal
+            Message::ShowSidecarModal => {
+                use crate::model::{SidecarModalState, SidecarConnectionStatus};
+                use crate::sidecar::SidecarClient;
+
+                // Check current sidecar status
+                let connection_status = if SidecarClient::is_available() {
+                    if let Ok(client) = SidecarClient::connect() {
+                        if client.ping().is_ok() {
+                            SidecarConnectionStatus::Connected
+                        } else {
+                            SidecarConnectionStatus::Unresponsive
+                        }
+                    } else {
+                        SidecarConnectionStatus::Unresponsive
+                    }
+                } else {
+                    SidecarConnectionStatus::NotRunning
+                };
+
+                // Count running sidecar processes
+                let process_count = count_sidecar_processes();
+
+                // Get build timestamp from sidecar binary
+                let build_timestamp = get_sidecar_build_timestamp();
+
+                self.model.ui_state.sidecar_modal = Some(SidecarModalState {
+                    connection_status,
+                    process_count,
+                    build_timestamp,
+                    selected_action: 0,
+                    action_status: None,
+                    action_in_progress: false,
+                });
+            }
+
+            Message::CloseSidecarModal => {
+                self.model.ui_state.sidecar_modal = None;
+            }
+
+            Message::SidecarModalNavigate(delta) => {
+                if let Some(ref mut modal) = self.model.ui_state.sidecar_modal {
+                    let new_idx = (modal.selected_action as i32 + delta).clamp(0, 2) as usize;
+                    modal.selected_action = new_idx;
+                }
+            }
+
+            Message::SidecarModalExecuteAction => {
+                if let Some(ref mut modal) = self.model.ui_state.sidecar_modal {
+                    if modal.action_in_progress {
+                        return commands;
+                    }
+
+                    modal.action_in_progress = true;
+                    modal.action_status = Some("Working...".to_string());
+
+                    match modal.selected_action {
+                        0 => {
+                            // Kill sidecar
+                            let result = kill_sidecar_processes();
+                            commands.push(Message::SidecarActionCompleted {
+                                success: result.is_ok(),
+                                message: result.unwrap_or_else(|e| e),
+                            });
+                        }
+                        1 => {
+                            // Compile sidecar (npm run build)
+                            let result = compile_sidecar();
+                            commands.push(Message::SidecarActionCompleted {
+                                success: result.is_ok(),
+                                message: result.unwrap_or_else(|e| e),
+                            });
+                        }
+                        2 => {
+                            // Start sidecar
+                            let result = start_sidecar();
+                            commands.push(Message::SidecarActionCompleted {
+                                success: result.is_ok(),
+                                message: result.unwrap_or_else(|e| e),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Message::SidecarModalUpdateStatus { connection_status, process_count, build_timestamp } => {
+                if let Some(ref mut modal) = self.model.ui_state.sidecar_modal {
+                    modal.connection_status = connection_status;
+                    modal.process_count = process_count;
+                    modal.build_timestamp = build_timestamp;
+                }
+            }
+
+            Message::SidecarModalSetActionStatus(status) => {
+                if let Some(ref mut modal) = self.model.ui_state.sidecar_modal {
+                    modal.action_status = status;
+                }
+            }
+
+            Message::SidecarActionCompleted { success, message } => {
+                use crate::model::SidecarConnectionStatus;
+                use crate::sidecar::SidecarClient;
+
+                if let Some(ref mut modal) = self.model.ui_state.sidecar_modal {
+                    modal.action_in_progress = false;
+                    modal.action_status = Some(if success {
+                        format!("✓ {}", message)
+                    } else {
+                        format!("✗ {}", message)
+                    });
+
+                    // Refresh status after action
+                    let connection_status = if SidecarClient::is_available() {
+                        if let Ok(client) = SidecarClient::connect() {
+                            if client.ping().is_ok() {
+                                SidecarConnectionStatus::Connected
+                            } else {
+                                SidecarConnectionStatus::Unresponsive
+                            }
+                        } else {
+                            SidecarConnectionStatus::Unresponsive
+                        }
+                    } else {
+                        SidecarConnectionStatus::NotRunning
+                    };
+
+                    modal.connection_status = connection_status;
+                    modal.process_count = count_sidecar_processes();
+                    modal.build_timestamp = get_sidecar_build_timestamp();
+                }
+            }
         }
 
         // Keep selected_task_id in sync with selected_task_idx
@@ -7645,6 +7778,180 @@ Do not ask for permission - run tests and fix any issues you find."#);
         }
 
         commands
+    }
+}
+
+/// Count the number of running sidecar processes
+fn count_sidecar_processes() -> usize {
+    use std::process::Command;
+
+    // Use pgrep to find node processes running sidecar
+    // We look for processes with "node" and "main.cjs" or "sidecar"
+    let output = Command::new("pgrep")
+        .args(["-f", "node.*sidecar.*main\\.cjs"])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                // Count lines in output (each line is a PID)
+                String::from_utf8_lossy(&result.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count()
+            } else {
+                0
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Get the build timestamp of the sidecar binary
+fn get_sidecar_build_timestamp() -> Option<String> {
+    // Try to find the sidecar main.cjs file and get its modification time
+    let sidecar_path = find_sidecar_path()?;
+
+    let metadata = std::fs::metadata(&sidecar_path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let datetime: chrono::DateTime<chrono::Local> = modified.into();
+    Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// Find the sidecar main.cjs path (same logic as client.rs)
+fn find_sidecar_path() -> Option<PathBuf> {
+    // Try production path first (next to executable)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let prod_path = exe_dir.join("sidecar").join("dist").join("main.cjs");
+            if prod_path.exists() {
+                return Some(prod_path);
+            }
+        }
+    }
+
+    // Try development path (relative to Cargo manifest)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let dev_path = PathBuf::from(&manifest_dir)
+            .join("sidecar")
+            .join("dist")
+            .join("main.cjs");
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+    }
+
+    // Try walking up from executable to find sidecar
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut dir = exe_path.parent();
+        while let Some(parent) = dir {
+            let candidate = parent.join("sidecar").join("dist").join("main.cjs");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            dir = parent.parent();
+        }
+    }
+
+    None
+}
+
+/// Find the sidecar source directory (for npm commands)
+fn find_sidecar_dir() -> Option<PathBuf> {
+    // Try development path first
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let dev_path = PathBuf::from(&manifest_dir).join("sidecar");
+        if dev_path.join("package.json").exists() {
+            return Some(dev_path);
+        }
+    }
+
+    // Try production path (next to executable)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let prod_path = exe_dir.join("sidecar");
+            if prod_path.join("package.json").exists() {
+                return Some(prod_path);
+            }
+        }
+    }
+
+    // Try walking up from executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut dir = exe_path.parent();
+        while let Some(parent) = dir {
+            let candidate = parent.join("sidecar");
+            if candidate.join("package.json").exists() {
+                return Some(candidate);
+            }
+            dir = parent.parent();
+        }
+    }
+
+    None
+}
+
+/// Kill all running sidecar processes
+fn kill_sidecar_processes() -> Result<String, String> {
+    use std::process::Command;
+
+    // Use pkill to kill all matching processes
+    let output = Command::new("pkill")
+        .args(["-f", "node.*sidecar.*main\\.cjs"])
+        .output();
+
+    match output {
+        Ok(result) => {
+            // pkill returns 0 if processes were killed, 1 if no processes matched
+            if result.status.success() || result.status.code() == Some(1) {
+                // Also remove the socket file to ensure clean state
+                let socket_path = dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".kanblam")
+                    .join("sidecar.sock");
+                let _ = std::fs::remove_file(socket_path);
+                Ok("Sidecar processes killed".to_string())
+            } else {
+                Err(format!("pkill failed: {}", String::from_utf8_lossy(&result.stderr)))
+            }
+        }
+        Err(e) => Err(format!("Failed to run pkill: {}", e)),
+    }
+}
+
+/// Compile the sidecar (npm run build)
+fn compile_sidecar() -> Result<String, String> {
+    use std::process::Command;
+
+    let sidecar_dir = find_sidecar_dir()
+        .ok_or_else(|| "Sidecar directory not found".to_string())?;
+
+    let output = Command::new("npm")
+        .args(["run", "build"])
+        .current_dir(&sidecar_dir)
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                Ok("Sidecar compiled successfully".to_string())
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                Err(format!("Build failed:\n{}\n{}", stdout, stderr))
+            }
+        }
+        Err(e) => Err(format!("Failed to run npm: {}", e)),
+    }
+}
+
+/// Start the sidecar process
+fn start_sidecar() -> Result<String, String> {
+    use crate::sidecar::ensure_sidecar_running;
+
+    match ensure_sidecar_running() {
+        Ok(_) => Ok("Sidecar started".to_string()),
+        Err(e) => Err(format!("Failed to start sidecar: {}", e)),
     }
 }
 

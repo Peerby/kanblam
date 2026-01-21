@@ -398,4 +398,24 @@ pub enum Message {
     ConfigSave,
     /// Reset project commands to auto-detected defaults
     ConfigResetToDefaults,
+
+    // Sidecar control modal
+    /// Open the sidecar control modal
+    ShowSidecarModal,
+    /// Close the sidecar control modal
+    CloseSidecarModal,
+    /// Navigate actions in sidecar modal
+    SidecarModalNavigate(i32),
+    /// Execute selected action in sidecar modal
+    SidecarModalExecuteAction,
+    /// Update sidecar modal status (after async check)
+    SidecarModalUpdateStatus {
+        connection_status: crate::model::SidecarConnectionStatus,
+        process_count: usize,
+        build_timestamp: Option<String>,
+    },
+    /// Set action status message in sidecar modal
+    SidecarModalSetActionStatus(Option<String>),
+    /// Sidecar action completed
+    SidecarActionCompleted { success: bool, message: String },
 }
