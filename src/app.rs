@@ -4442,9 +4442,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     && task.status != TaskStatus::Review
                                 {
                                     task.status = TaskStatus::InProgress; // Session started, Claude is now working
+                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    task.session_mode = crate::model::SessionMode::SdkManaged;
                                 }
-                                task.session_state = crate::model::ClaudeSessionState::Working;
-                                task.session_mode = crate::model::SessionMode::SdkManaged;
                                 task.log_activity("Session started");
                             }
                             SessionEventType::Stopped => {
@@ -4520,14 +4520,16 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             }
                             SessionEventType::Working => {
                                 task.log_activity_with_output("Working...", event.full_output.clone());
-                                // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
+                                // Don't override special statuses (rebase, QA, or completed Review)
+                                // Review is protected because QA completion moves to Review, and
+                                // late Working events from the QA session shouldn't undo that
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing && task.status != TaskStatus::Review {
                                     task.status = TaskStatus::InProgress;
+                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    project.needs_attention = false;
+                                    notify::clear_attention_indicator();
+                                    task.last_activity_at = Some(chrono::Utc::now());
                                 }
-                                task.session_state = crate::model::ClaudeSessionState::Working;
-                                project.needs_attention = false;
-                                notify::clear_attention_indicator();
-                                task.last_activity_at = Some(chrono::Utc::now());
                             }
                             SessionEventType::ToolUse => {
                                 // Log the tool being used
@@ -4537,17 +4539,19 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     "Using tool...".to_string()
                                 };
                                 task.log_activity_with_output(&tool_msg, event.full_output.clone());
-                                // Don't override Accepting/Updating/Applying/Testing status (rebase or QA sessions)
-                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing {
+                                // Don't override special statuses (rebase, QA, or completed Review)
+                                // Review is protected because QA completion moves to Review, and
+                                // late ToolUse events from the QA session shouldn't undo that
+                                if task.status != TaskStatus::Accepting && task.status != TaskStatus::Updating && task.status != TaskStatus::Applying && task.status != TaskStatus::Testing && task.status != TaskStatus::Review {
                                     task.status = TaskStatus::InProgress;
-                                }
-                                task.session_state = crate::model::ClaudeSessionState::Working;
-                                project.needs_attention = false;
-                                notify::clear_attention_indicator();
-                                // Track activity for merge feedback
-                                task.last_activity_at = Some(chrono::Utc::now());
-                                if let Some(ref tool_name) = event.tool_name {
-                                    task.last_tool_name = Some(tool_name.clone());
+                                    task.session_state = crate::model::ClaudeSessionState::Working;
+                                    project.needs_attention = false;
+                                    notify::clear_attention_indicator();
+                                    // Track activity for merge feedback
+                                    task.last_activity_at = Some(chrono::Utc::now());
+                                    if let Some(ref tool_name) = event.tool_name {
+                                        task.last_tool_name = Some(tool_name.clone());
+                                    }
                                 }
                             }
                             SessionEventType::Output => {
