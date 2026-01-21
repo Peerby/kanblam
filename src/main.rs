@@ -1990,7 +1990,6 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
     let on_git_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Git;
     let on_spec_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Spec;
     let on_activity_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Activity;
-    let scrollable_tab = on_git_tab || on_spec_tab || on_activity_tab;
 
     match key.code {
         // Close modal on Esc, Space (but Enter toggles expand on activity tab)
@@ -2005,26 +2004,12 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
             }
         }
 
-        // Tab navigation: left/right/h/l (but not h/l on scrollable tabs - those are for scrolling)
-        KeyCode::Left => {
+        // Tab navigation: left/right/h/l work on all tabs
+        KeyCode::Left | KeyCode::Char('h') => {
             vec![Message::TaskDetailPrevTab]
         }
-        KeyCode::Right => {
+        KeyCode::Right | KeyCode::Char('l') => {
             vec![Message::TaskDetailNextTab]
-        }
-        KeyCode::Char('h') => {
-            if scrollable_tab {
-                vec![] // Reserved for future horizontal scroll
-            } else {
-                vec![Message::TaskDetailPrevTab]
-            }
-        }
-        KeyCode::Char('l') => {
-            if scrollable_tab {
-                vec![] // Reserved for future horizontal scroll
-            } else {
-                vec![Message::TaskDetailNextTab]
-            }
         }
 
         // Scroll content (j/k on scrollable tabs, or arrow keys)
