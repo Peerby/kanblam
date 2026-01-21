@@ -184,9 +184,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         )
                     };
 
-                    // Get 4-character task identifier (matches tmux session naming)
-                    let task_id_short = &task.id.to_string()[..4];
-                    let id_prefix_len = 7; // "[xxxx] " = 7 chars
+                    // Get display ID: 4-char abbreviation + "-" + 3-char suffix (e.g., "TSKB-a7x")
+                    let display_id = task.display_id();
+                    let id_prefix_len = display_id.len() + 3; // "[ABBR-xyz] " = display_id.len() + 3 chars
 
                     // Handle long titles - marquee scroll for selected, truncate for others
                     // Reserve space for id prefix + some margin
@@ -337,7 +337,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         // Phase 1: Confirmation pulse - show full text in bright celebratory yellow
                         if phase == 1 {
                             // Build the full display text: prefix + "[id] " + title
-                            let full_text = format!("{}[{}] {}", prefix, task_id_short, display_title);
+                            let full_text = format!("{}[{}] {}", prefix, display_id, display_title);
                             // Pulse with bright celebratory yellow
                             let pulse_style = Style::default()
                                 .fg(Color::Rgb(255, 235, 60)) // Bright celebratory yellow!
@@ -346,7 +346,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                         } else {
                             // Phase 2+3: Sparkle substitution from right to left
                             // Build the full display text to match what render_chars was created from
-                            let full_text = format!("{}[{}] {}", prefix, task_id_short, display_title);
+                            let full_text = format!("{}[{}] {}", prefix, display_id, display_title);
                             let full_chars: Vec<char> = full_text.chars().collect();
                             let sparkle_count = celebration.sparkle_chars_count();
                             let text_len = full_chars.len();
@@ -418,7 +418,7 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                             }
                         }
                         spans.push(Span::styled("[", bracket_style));
-                        spans.push(Span::styled(task_id_short.to_string(), code_style));
+                        spans.push(Span::styled(display_id.clone(), code_style));
                         spans.push(Span::styled("] ", bracket_style));
                         spans.push(Span::styled(display_title.clone(), title_style));
                         if !task.images.is_empty() {

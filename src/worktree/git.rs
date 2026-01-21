@@ -5,7 +5,6 @@
 use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
-use uuid::Uuid;
 
 /// Information about a worktree
 #[derive(Debug, Clone)]
@@ -16,23 +15,25 @@ pub struct WorktreeInfo {
 }
 
 /// Get the worktree path for a specific project and task
-/// Worktrees are stored in {project_dir}/worktrees/task-{task_id}/
-pub fn get_worktree_path(project_dir: &PathBuf, task_id: Uuid) -> PathBuf {
+/// Worktrees are stored in {project_dir}/worktrees/{display_id}/
+/// where display_id is like "ABBR-xyz" (4-char abbreviation + 3-char suffix)
+pub fn get_worktree_path(project_dir: &PathBuf, display_id: &str) -> PathBuf {
     project_dir
         .join("worktrees")
-        .join(format!("task-{}", task_id))
+        .join(display_id)
 }
 
 /// Create a new worktree for a task
 ///
-/// Creates a worktree at `{project_dir}/.worktrees/task-{task-id}/`
-/// on branch `claude/{task-id}` based on the current HEAD.
+/// Creates a worktree at `{project_dir}/worktrees/{display_id}/`
+/// on branch `claude/{display_id}` based on the current HEAD.
+/// display_id should be like "ABBR-xyz" (4-char abbreviation + 3-char suffix)
 pub fn create_worktree(
     project_dir: &PathBuf,
-    task_id: Uuid,
+    display_id: &str,
 ) -> Result<PathBuf> {
-    let worktree_path = get_worktree_path(project_dir, task_id);
-    let branch_name = format!("claude/{}", task_id);
+    let worktree_path = get_worktree_path(project_dir, display_id);
+    let branch_name = format!("claude/{}", display_id);
 
     // Ensure parent directory exists
     if let Some(parent) = worktree_path.parent() {
@@ -138,7 +139,7 @@ pub fn has_uncommitted_changes(worktree_path: &PathBuf) -> Result<bool> {
 
 /// Commit any uncommitted changes in a worktree
 /// Returns true if changes were committed, false if nothing to commit
-pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result<bool> {
+pub fn commit_worktree_changes(worktree_path: &PathBuf, display_id: &str) -> Result<bool> {
     // Debug logging to file
     let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");
     let log = |msg: &str| {
@@ -148,7 +149,7 @@ pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result
         }
     };
 
-    log(&format!("=== commit_worktree_changes START: task={} ===", task_id));
+    log(&format!("=== commit_worktree_changes START: task={} ===", display_id));
     log(&format!("worktree_path={:?}", worktree_path));
 
     // Check if there are any changes (staged or unstaged)
@@ -179,7 +180,7 @@ pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result
     }
 
     // Commit
-    let commit_msg = format!("Task {} final changes", task_id);
+    let commit_msg = format!("Task {} final changes", display_id);
     let commit_output = Command::new("git")
         .current_dir(worktree_path)
         .args(["commit", "-m", &commit_msg])
@@ -202,8 +203,8 @@ pub fn commit_worktree_changes(worktree_path: &PathBuf, task_id: Uuid) -> Result
 }
 
 /// Check if a task branch has any changes compared to main
-pub fn has_changes_to_merge(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn has_changes_to_merge(project_dir: &PathBuf, display_id: &str) -> Result<bool> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Get the merge base
     let merge_base_output = Command::new("git")
@@ -276,7 +277,7 @@ pub fn commit_main_changes(project_dir: &PathBuf) -> Result<bool> {
 
 /// Commit applied changes from a task with a descriptive message
 /// Returns Ok(true) if changes were committed, Ok(false) if nothing to commit
-pub fn commit_applied_changes(project_dir: &PathBuf, task_title: &str, task_id: Uuid) -> Result<bool> {
+pub fn commit_applied_changes(project_dir: &PathBuf, task_title: &str, display_id: &str) -> Result<bool> {
     // Check if there are STAGED changes (applied task changes are staged via --3way)
     // Don't use git add -A as that would also commit user's unstaged edits
     let has_staged = Command::new("git")
@@ -291,7 +292,7 @@ pub fn commit_applied_changes(project_dir: &PathBuf, task_title: &str, task_id: 
     }
 
     // Commit only staged changes (task's applied changes)
-    let commit_msg = format!("Merge task {} from Claude session\n\nTask: {}", task_id, task_title);
+    let commit_msg = format!("Merge task {} from Claude session\n\nTask: {}", display_id, task_title);
     let commit_output = Command::new("git")
         .current_dir(project_dir)
         .args(["commit", "-m", &commit_msg])
@@ -312,8 +313,8 @@ pub fn commit_applied_changes(project_dir: &PathBuf, task_title: &str, task_id: 
 
 /// Merge a task branch into the base branch (squash merge)
 /// Requires clean working directory - call commit_main_changes first if needed
-pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn merge_branch(project_dir: &PathBuf, display_id: &str) -> Result<()> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Verify working directory is clean
     // Caller should have called commit_main_changes() first
@@ -364,7 +365,7 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
 
     if !status_output.status.success() {
         // There are staged changes, commit them
-        let commit_msg = format!("Merge task {} from Claude session", task_id);
+        let commit_msg = format!("Merge task {} from Claude session", display_id);
         let output = Command::new("git")
             .current_dir(project_dir)
             .args(["commit", "-m", &commit_msg])
@@ -380,8 +381,8 @@ pub fn merge_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
 }
 
 /// Delete a task branch
-pub fn delete_branch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn delete_branch(project_dir: &PathBuf, display_id: &str) -> Result<()> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Use -D to force delete even if not merged
     let output = Command::new("git")
@@ -485,12 +486,12 @@ fn get_stash_sha(project_dir: &PathBuf) -> Result<String> {
 }
 
 /// Get the path where we save the applied patch for surgical reversal
-fn get_patch_file_path(task_id: Uuid) -> PathBuf {
+fn get_patch_file_path(display_id: &str) -> PathBuf {
     let kanblam_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".kanblam")
         .join("patches");
-    kanblam_dir.join(format!("{}.patch", task_id))
+    kanblam_dir.join(format!("{}.patch", display_id))
 }
 
 /// Parse file paths from unified diff patch content.
@@ -516,16 +517,16 @@ fn parse_patch_files(patch_content: &[u8]) -> Vec<String> {
 
 /// Clean up after accepting an applied task.
 /// Just removes the patch file - stash was already popped immediately after apply.
-pub fn cleanup_applied_state(task_id: Uuid) {
-    let patch_path = get_patch_file_path(task_id);
+pub fn cleanup_applied_state(display_id: &str) {
+    let patch_path = get_patch_file_path(display_id);
     let _ = std::fs::remove_file(&patch_path);
 }
 
 /// Apply a task's changes to the main worktree (for testing)
 /// This stashes any existing changes, applies the diff, and tracks the stash for unapply
 /// Returns the stash ref if there were local changes that were stashed
-pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option<String>> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn apply_task_changes(project_dir: &PathBuf, display_id: &str) -> Result<Option<String>> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Debug logging to file (TUI covers stderr)
     let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");
@@ -536,7 +537,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
         }
     };
 
-    log(&format!("=== apply_task_changes START: task={} ===", task_id));
+    log(&format!("=== apply_task_changes START: task={} ===", display_id));
     log(&format!("project_dir={:?}, branch={}", project_dir, branch_name));
 
     // Check for corrupted state (unmerged files from previous failed operation)
@@ -595,7 +596,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     if has_tracked_changes {
         let stash_output = Command::new("git")
             .current_dir(project_dir)
-            .args(["stash", "push", "-m", &format!("kanblam: before applying task {}", task_id), "--", ".", ":!.kanblam"])
+            .args(["stash", "push", "-m", &format!("kanblam: before applying task {}", display_id), "--", ".", ":!.kanblam"])
             .output()?;
 
         if !stash_output.status.success() {
@@ -658,7 +659,7 @@ pub fn apply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Option
     }
 
     // Save the patch file for surgical reversal later
-    let patch_path = get_patch_file_path(task_id);
+    let patch_path = get_patch_file_path(display_id);
     if let Some(parent) = patch_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -787,8 +788,8 @@ pub enum UnapplyResult {
 /// Unapply task changes from the main worktree using surgical patch reversal.
 /// No stash handling needed - stash was already popped immediately after apply.
 /// Returns Success if the patch was cleanly reversed, NeedsConfirmation if destructive reset is needed.
-pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<UnapplyResult> {
-    let patch_path = get_patch_file_path(task_id);
+pub fn unapply_task_changes(project_dir: &PathBuf, display_id: &str) -> Result<UnapplyResult> {
+    let patch_path = get_patch_file_path(display_id);
 
     // If we have a saved patch, try surgical reversal
     if patch_path.exists() {
@@ -893,11 +894,11 @@ pub fn unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<Unap
 /// Only resets the specific files that the task patch modified, leaving other changes intact.
 /// After this, the stash can be popped cleanly because task changes are gone.
 /// Returns Ok(files_reset) on success, Err if patch file not found or reset failed.
-pub fn surgical_unapply_for_stash_conflict(project_dir: &PathBuf, task_id: Uuid) -> Result<Vec<String>> {
-    let patch_path = get_patch_file_path(task_id);
+pub fn surgical_unapply_for_stash_conflict(project_dir: &PathBuf, display_id: &str) -> Result<Vec<String>> {
+    let patch_path = get_patch_file_path(display_id);
 
     if !patch_path.exists() {
-        return Err(anyhow!("No patch file found for task {}. Cannot perform surgical unapply.", task_id));
+        return Err(anyhow!("No patch file found for task {}. Cannot perform surgical unapply.", display_id));
     }
 
     let patch_content = std::fs::read(&patch_path)?;
@@ -928,7 +929,7 @@ pub fn surgical_unapply_for_stash_conflict(project_dir: &PathBuf, task_id: Uuid)
 
 /// Force unapply using destructive reset (only call after user confirmation!).
 /// No stash handling needed - stash was already popped immediately after apply.
-pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
+pub fn force_unapply_task_changes(project_dir: &PathBuf, display_id: &str) -> Result<()> {
     // Discard all changes (staged and unstaged) by resetting to HEAD
     // Use reset --hard instead of checkout -- . because checkout fails on empty repos
     let reset_output = Command::new("git")
@@ -942,7 +943,7 @@ pub fn force_unapply_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Resul
     }
 
     // Clean up the patch file if it exists
-    let patch_path = get_patch_file_path(task_id);
+    let patch_path = get_patch_file_path(display_id);
     let _ = std::fs::remove_file(&patch_path);
 
     Ok(())
@@ -1159,8 +1160,8 @@ pub fn ensure_gitignore_has_kanblam_entries(project_dir: &PathBuf) -> Result<()>
 }
 
 /// Get the diff between main/master and a task branch
-pub fn get_task_diff(project_dir: &PathBuf, task_id: Uuid) -> Result<String> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn get_task_diff(project_dir: &PathBuf, display_id: &str) -> Result<String> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Try to find the base branch (main or master)
     let base_branch = find_base_branch(project_dir)?;
@@ -1217,8 +1218,8 @@ fn find_base_branch(project_dir: &PathBuf) -> Result<String> {
 /// was merged - it might just be a fresh branch.
 ///
 /// If ANY check fails or errors, returns false to be safe.
-pub fn is_branch_merged(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn is_branch_merged(project_dir: &PathBuf, display_id: &str) -> Result<bool> {
+    let branch_name = format!("claude/{}", display_id);
 
     // SAFETY CHECK 1: Branch MUST exist - if not, we can't verify anything
     let branch_exists = Command::new("git")
@@ -1274,8 +1275,8 @@ pub fn is_branch_merged(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
 }
 
 /// Check if task branch is behind main (needs rebase before merge)
-pub fn needs_rebase(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn needs_rebase(project_dir: &PathBuf, display_id: &str) -> Result<bool> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Get merge base between main and task branch
     let merge_base = Command::new("git")
@@ -1446,8 +1447,8 @@ pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result
 
 /// Verify that the task branch has been rebased onto main
 /// Returns true if the branch is now on top of main (or equal)
-pub fn verify_rebase_success(project_dir: &PathBuf, task_id: Uuid) -> Result<bool> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn verify_rebase_success(project_dir: &PathBuf, display_id: &str) -> Result<bool> {
+    let branch_name = format!("claude/{}", display_id);
 
     // Get task branch HEAD
     let branch_head = Command::new("git")
@@ -1627,8 +1628,8 @@ When complete, say "Conflicts resolved - build verified"."#, stash_sha)
 
 /// Save all current uncommitted changes as a patch file for surgical reversal
 /// This captures the combined state: task changes + any conflict resolution edits
-pub fn save_current_changes_as_patch(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
-    let patch_path = get_patch_file_path(task_id);
+pub fn save_current_changes_as_patch(project_dir: &PathBuf, display_id: &str) -> Result<()> {
+    let patch_path = get_patch_file_path(display_id);
 
     // Get diff of all uncommitted changes relative to HEAD
     let diff_output = Command::new("git")
@@ -1703,8 +1704,8 @@ pub struct WorktreeGitStatus {
 }
 
 /// Get git status (additions, deletions, commits ahead/behind) for a worktree
-pub fn get_worktree_git_status(project_dir: &PathBuf, task_id: Uuid) -> Result<WorktreeGitStatus> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn get_worktree_git_status(project_dir: &PathBuf, display_id: &str) -> Result<WorktreeGitStatus> {
+    let branch_name = format!("claude/{}", display_id);
     let mut status = WorktreeGitStatus::default();
 
     // Get merge base between main and task branch
@@ -1796,8 +1797,8 @@ pub struct ChangedFile {
 }
 
 /// Get list of changed files with their stats for a worktree
-pub fn get_worktree_changed_files(project_dir: &PathBuf, task_id: Uuid) -> Result<Vec<ChangedFile>> {
-    let branch_name = format!("claude/{}", task_id);
+pub fn get_worktree_changed_files(project_dir: &PathBuf, display_id: &str) -> Result<Vec<ChangedFile>> {
+    let branch_name = format!("claude/{}", display_id);
     let mut files = Vec::new();
 
     // Get merge base between main and task branch
@@ -2353,9 +2354,9 @@ pub fn drop_tracked_stash(project_dir: &PathBuf, stash_sha: &str) -> Result<()> 
 
 /// Abort a conflicted stash pop while surgically preserving task changes
 /// This is called when user chooses "Stash my changes" during an apply conflict
-pub fn abort_stash_pop_keep_task_changes(project_dir: &PathBuf, task_id: Uuid) -> Result<()> {
+pub fn abort_stash_pop_keep_task_changes(project_dir: &PathBuf, display_id: &str) -> Result<()> {
     // The task patch file should already exist from the apply operation
-    let patch_path = get_patch_file_path(task_id);
+    let patch_path = get_patch_file_path(display_id);
 
     if !patch_path.exists() {
         return Err(anyhow!("Task patch file not found - cannot restore task changes"));
@@ -2479,12 +2480,15 @@ mod tests {
 
     #[test]
     fn test_worktree_path() {
-        let task_id = Uuid::new_v4();
+        let display_id = "TSKB-a7x";
         let project_dir = PathBuf::from("/Users/test/my-project");
-        let path = get_worktree_path(&project_dir, task_id);
+        let path = get_worktree_path(&project_dir, display_id);
         assert!(path.to_string_lossy().contains("worktrees"));
-        assert!(path.to_string_lossy().contains(&format!("task-{}", task_id)));
+        // Worktree directory is now just the display_id (e.g., "TSKB-a7x")
+        assert!(path.to_string_lossy().contains(display_id));
         assert!(path.starts_with(&project_dir));
+        // Verify exact expected path
+        assert_eq!(path, project_dir.join("worktrees").join(display_id));
     }
 
     #[test]

@@ -58,6 +58,18 @@ impl App {
         }
     }
 
+    /// Look up a task's display_id by its UUID, searching all projects.
+    /// Returns the display_id string (e.g., "ABBR-xyz") or falls back to UUID prefix.
+    fn get_task_display_id(&self, task_id: uuid::Uuid) -> String {
+        for project in &self.model.projects {
+            if let Some(task) = project.tasks.iter().find(|t| t.id == task_id) {
+                return task.display_id();
+            }
+        }
+        // Fallback if task not found (shouldn't happen, but be safe)
+        format!("{}-???", &task_id.to_string()[..4])
+    }
+
     pub fn with_model(model: AppModel) -> Self {
         Self {
             model,
@@ -305,11 +317,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.tmux_window.clone(),
                             t.worktree_path.clone(),
+                            t.display_id(),
                         ))
                 });
 
                 // Clean up worktree and associated resources if they exist
-                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -328,7 +341,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Delete branch
-                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                         // Don't warn if branch doesn't exist (task may never have been started)
                         let err_str = e.to_string();
                         if !err_str.contains("not found") && !err_str.contains("does not exist") {
@@ -578,7 +591,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                     // Update task state immediately for UI feedback
                     // Task goes straight to InProgress with Creating state (shows building animation)
-                    if let Some(project) = self.model.active_project_mut() {
+                    let display_id = if let Some(project) = self.model.active_project_mut() {
                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.session_state = crate::model::ClaudeSessionState::Creating;
                             task.status = TaskStatus::InProgress;
@@ -588,27 +601,35 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             task.qa_exceeded_warning = false;
                             task.in_qa_session = false;
                             task.log_activity("User started task");
+                            Some(task.display_id())
+                        } else {
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
 
                     // Defer the actual worktree creation to allow UI to render first
-                    commands.push(Message::CreateWorktree { task_id, project_dir });
+                    if let Some(display_id) = display_id {
+                        commands.push(Message::CreateWorktree { task_id, display_id, project_dir });
+                    }
                 }
             }
 
-            Message::CreateWorktree { task_id, project_dir } => {
+            Message::CreateWorktree { task_id, display_id, project_dir } => {
                 // Spawn worktree creation in background to keep UI responsive
                 if let Some(sender) = self.async_sender.clone() {
                     let project_dir_clone = project_dir.clone();
+                    let display_id_clone = display_id.clone();
                     tokio::spawn(async move {
                         // Run blocking git operations in a separate thread
                         let result = tokio::task::spawn_blocking(move || {
-                            crate::worktree::create_worktree(&project_dir_clone, task_id)
+                            crate::worktree::create_worktree(&project_dir_clone, &display_id_clone)
                         }).await;
 
                         let msg = match result {
                             Ok(Ok(worktree_path)) => {
-                                Message::WorktreeCreated { task_id, worktree_path, project_dir }
+                                Message::WorktreeCreated { task_id, display_id, worktree_path, project_dir }
                             }
                             Ok(Err(e)) => {
                                 Message::WorktreeCreationFailed { task_id, error: e.to_string() }
@@ -622,9 +643,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     });
                 } else {
                     // Fallback to sync if no async sender (shouldn't happen in normal operation)
-                    match crate::worktree::create_worktree(&project_dir, task_id) {
+                    match crate::worktree::create_worktree(&project_dir, &display_id) {
                         Ok(worktree_path) => {
-                            commands.push(Message::WorktreeCreated { task_id, worktree_path, project_dir });
+                            commands.push(Message::WorktreeCreated { task_id, display_id, worktree_path, project_dir });
                         }
                         Err(e) => {
                             commands.push(Message::WorktreeCreationFailed { task_id, error: e.to_string() });
@@ -691,14 +712,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.tmux_window.clone(),
                             t.worktree_path.clone(),
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                     // CRITICAL: Commit any uncommitted changes in the worktree FIRST
                     // This ensures we don't lose work that Claude did but didn't commit
                     if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                        match crate::worktree::commit_worktree_changes(wt_path, &display_id) {
                             Ok(true) => {
                                 // Changes were committed
                             }
@@ -716,7 +738,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Verify there are changes to merge before proceeding
-                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                    match crate::worktree::has_changes_to_merge(&project_dir, &display_id) {
                         Ok(true) => {
                             // Good, there are changes to merge
                         }
@@ -767,7 +789,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     crate::tmux::kill_task_sessions(&task_id.to_string());
 
                     // Merge branch to main
-                    if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::merge_branch(&project_dir, &display_id) {
                         commands.push(Message::Error(format!(
                             "Merge failed: {}. Resolve manually in the worktree, then discard.",
                             e
@@ -787,7 +809,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Delete branch
-                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                         commands.push(Message::SetStatusMessage(Some(
                             format!("Warning: Could not delete branch: {}", e)
                         )));
@@ -867,10 +889,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             t.worktree_path.clone(),
                             t.git_branch.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, git_branch, current_status)) = task_info {
+                if let Some((project_dir, worktree_path, git_branch, current_status, display_id)) = task_info {
                     // Don't process if already accepting
                     if current_status == TaskStatus::Accepting {
                         return commands;
@@ -898,6 +921,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     // Defer to async handler
                     commands.push(Message::StartSmartAcceptGitOps {
                         task_id,
+                        display_id,
                         worktree_path: wt_path,
                         project_dir,
                         has_branch: git_branch.is_some(),
@@ -905,7 +929,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 }
             }
 
-            Message::StartSmartAcceptGitOps { task_id, worktree_path, project_dir, has_branch } => {
+            Message::StartSmartAcceptGitOps { task_id, display_id, worktree_path, project_dir, has_branch } => {
                 // Run git operations in background to keep UI responsive
                 let sender = match self.async_sender.clone() {
                     Some(s) => s,
@@ -924,7 +948,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
                         // Commit any uncommitted changes in the worktree
-                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, &display_id) {
                             return Err(format!("Failed to commit worktree changes: {}", e));
                         }
 
@@ -935,7 +959,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                         // Check if rebase is needed
                         let needs_rebase = has_branch &&
-                            crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+                            crate::worktree::needs_rebase(&project_dir, &display_id).unwrap_or(false);
 
                         if needs_rebase {
                             // Try fast rebase
@@ -993,10 +1017,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             t.tmux_window.clone(),
                             t.worktree_path.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_slug, project_dir, window_name, worktree_path, status)) = task_info {
+                if let Some((project_slug, project_dir, window_name, worktree_path, status, display_id)) = task_info {
                     // If was accepting, verify rebase succeeded
                     if status == TaskStatus::Accepting {
                         // Check if rebase is still in progress
@@ -1010,7 +1035,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         }
 
                         // Verify branch is now on top of main
-                        match crate::worktree::verify_rebase_success(&project_dir, task_id) {
+                        match crate::worktree::verify_rebase_success(&project_dir, &display_id) {
                             Ok(true) => {
                                 // Rebase successful, continue with merge
                             }
@@ -1044,7 +1069,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                     // CRITICAL: Commit any uncommitted changes in the worktree FIRST
                     if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                        match crate::worktree::commit_worktree_changes(wt_path, &display_id) {
                             Ok(_) => {
                                 // Changes committed (or nothing to commit)
                             }
@@ -1065,7 +1090,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Verify there are changes to merge
-                    match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                    match crate::worktree::has_changes_to_merge(&project_dir, &display_id) {
                         Ok(true) => {
                             // Good, there are changes
                         }
@@ -1104,7 +1129,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     crate::tmux::kill_task_sessions(&task_id.to_string());
 
                     // Merge branch to main (should be fast-forward now)
-                    if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::merge_branch(&project_dir, &display_id) {
                         // Return to Review status on error
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -1130,7 +1155,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Delete branch
-                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                         commands.push(Message::SetStatusMessage(Some(
                             format!("Warning: Could not delete branch: {}", e)
                         )));
@@ -1203,10 +1228,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.worktree_path.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, current_status)) = task_info {
+                if let Some((project_dir, worktree_path, current_status, display_id)) = task_info {
                     // Don't process if already accepting
                     if current_status == TaskStatus::Accepting {
                         return commands;
@@ -1230,13 +1256,14 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     // Defer to async handler
                     commands.push(Message::StartMergeOnlyGitOps {
                         task_id,
+                        display_id,
                         worktree_path: wt_path,
                         project_dir,
                     });
                 }
             }
 
-            Message::StartMergeOnlyGitOps { task_id, worktree_path, project_dir } => {
+            Message::StartMergeOnlyGitOps { task_id, display_id, worktree_path, project_dir } => {
                 // Run git operations in background to keep UI responsive
                 let sender = match self.async_sender.clone() {
                     Some(s) => s,
@@ -1252,7 +1279,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
                         // Commit any uncommitted changes in the worktree
-                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, &display_id) {
                             return Err(format!("Failed to commit worktree changes: {}", e));
                         }
 
@@ -1262,7 +1289,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         }
 
                         // Check if rebase is needed
-                        let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+                        let needs_rebase = crate::worktree::needs_rebase(&project_dir, &display_id).unwrap_or(false);
 
                         if needs_rebase {
                             // Try fast rebase
@@ -1274,19 +1301,19 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         }
 
                         // Verify there are changes to merge
-                        match crate::worktree::has_changes_to_merge(&project_dir, task_id) {
+                        match crate::worktree::has_changes_to_merge(&project_dir, &display_id) {
                             Ok(true) => {} // Good, there are changes
                             Ok(false) => return Err("NOTHING_TO_MERGE".to_string()),
                             Err(e) => return Err(format!("Failed to check for changes: {}", e)),
                         }
 
                         // Merge branch to main (should be fast-forward now)
-                        if let Err(e) = crate::worktree::merge_branch(&project_dir, task_id) {
+                        if let Err(e) = crate::worktree::merge_branch(&project_dir, &display_id) {
                             return Err(format!("Merge failed: {}", e));
                         }
 
                         // Clean up applied state
-                        crate::worktree::cleanup_applied_state(task_id);
+                        crate::worktree::cleanup_applied_state(&display_id);
 
                         Ok(())
                     }).await;
@@ -1421,10 +1448,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.tmux_window.clone(),
                             t.worktree_path.clone(),
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -1445,7 +1473,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Delete branch
-                    if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                    if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                         commands.push(Message::SetStatusMessage(Some(
                             format!("Warning: Could not delete branch: {}", e)
                         )));
@@ -1491,10 +1519,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             t.tmux_window.clone(),
                             t.worktree_path.clone(),
                             t.git_branch.clone(),
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_slug, project_dir, _is_git, window_name, worktree_path, git_branch)) = task_info {
+                if let Some((project_slug, project_dir, _is_git, window_name, worktree_path, git_branch, display_id)) = task_info {
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -1512,7 +1541,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                     // Delete branch if exists
                     if git_branch.is_some() {
-                        let _ = crate::worktree::delete_branch(&project_dir, task_id);
+                        let _ = crate::worktree::delete_branch(&project_dir, &display_id);
                     }
 
                     // Clean up signal files for this task to prevent stale signals
@@ -1832,10 +1861,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             t.git_branch.clone(),
                             t.status,
                             t.git_commits_behind,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, git_branch, current_status, commits_behind)) = task_info {
+                if let Some((project_dir, worktree_path, git_branch, current_status, commits_behind, display_id)) = task_info {
                     // Auto-rebase if task is behind main
                     if commits_behind > 0 {
                         if let Some(ref wt_path) = worktree_path {
@@ -1854,6 +1884,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             )));
                             commands.push(Message::StartRebaseForApply {
                                 task_id,
+                                display_id: display_id.clone(),
                                 worktree_path: wt_path.clone(),
                                 project_dir: project_dir.clone(),
                             });
@@ -1909,7 +1940,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     // CRITICAL: Commit any uncommitted changes in the worktree FIRST
                     // This ensures we apply all work that Claude did, not just what was committed
                     if let Some(ref wt_path) = worktree_path {
-                        match crate::worktree::commit_worktree_changes(wt_path, task_id) {
+                        match crate::worktree::commit_worktree_changes(wt_path, &display_id) {
                             Ok(_) => {
                                 // Changes committed (or nothing to commit)
                             }
@@ -1927,7 +1958,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // STEP 1: Try fast apply first
-                    match crate::worktree::apply_task_changes(&project_dir, task_id) {
+                    match crate::worktree::apply_task_changes(&project_dir, &display_id) {
                         Ok(stash_warning) => {
                             // Fast apply succeeded - stash was immediately popped
                             // stash_warning contains message if there were stash conflicts
@@ -2030,7 +2061,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             }
 
                             // Fast apply failed - check if we need to rebase first
-                            let needs_rebase = crate::worktree::needs_rebase(&project_dir, task_id).unwrap_or(false);
+                            let needs_rebase = crate::worktree::needs_rebase(&project_dir, &display_id).unwrap_or(false);
 
                             if needs_rebase {
                                 // Worktree diverged from main - need to rebase first
@@ -2086,17 +2117,24 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::UnapplyTaskChanges => {
                 let project_info = self.model.active_project()
-                    .map(|p| (p.working_dir.clone(), p.applied_task_id, p.applied_stash_ref.clone()));
+                    .and_then(|p| {
+                        let task_id = p.applied_task_id?;
+                        let display_id = p.tasks.iter()
+                            .find(|t| t.id == task_id)
+                            .map(|t| t.display_id())
+                            .unwrap_or_else(|| self.get_task_display_id(task_id));
+                        Some((p.working_dir.clone(), task_id, p.applied_stash_ref.clone(), display_id))
+                    });
 
                 match project_info {
-                    Some((_, None, _)) | None => {
+                    None => {
                         commands.push(Message::SetStatusMessage(Some(
                             "No changes applied to unapply.".to_string()
                         )));
                         return commands;
                     }
-                    Some((project_dir, Some(task_id), _stash_ref)) => {
-                        match crate::worktree::unapply_task_changes(&project_dir, task_id) {
+                    Some((project_dir, task_id, _stash_ref, display_id)) => {
+                        match crate::worktree::unapply_task_changes(&project_dir, &display_id) {
                             Ok(crate::worktree::UnapplyResult::Success) => {
                                 // Check for tracked stashes before clearing state
                                 let offer_stash = self.model.active_project()
@@ -2138,11 +2176,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             Message::ForceUnapplyTaskChanges(task_id) => {
+                let display_id = self.get_task_display_id(task_id);
                 let project_dir = self.model.active_project()
                     .map(|p| p.working_dir.clone());
 
                 if let Some(project_dir) = project_dir {
-                    match crate::worktree::force_unapply_task_changes(&project_dir, task_id) {
+                    match crate::worktree::force_unapply_task_changes(&project_dir, &display_id) {
                         Ok(()) => {
                             // Check for tracked stashes before clearing state
                             let offer_stash = self.model.active_project()
@@ -2175,12 +2214,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::ForceUnapplyWithStashRestore { task_id, stash_sha } => {
                 // Surgical unapply: only reset the files from the task patch, then restore stash
+                let display_id = self.get_task_display_id(task_id);
                 let project_dir = self.model.active_project()
                     .map(|p| p.working_dir.clone());
 
                 if let Some(project_dir) = project_dir {
                     // Step 1: Surgically reset only the files that the task modified
-                    match crate::worktree::surgical_unapply_for_stash_conflict(&project_dir, task_id) {
+                    match crate::worktree::surgical_unapply_for_stash_conflict(&project_dir, &display_id) {
                         Ok(files_reset) => {
                             // Clear applied state
                             if let Some(project) = self.model.active_project_mut() {
@@ -2238,10 +2278,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.worktree_path.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, status)) = task_info {
+                if let Some((project_dir, worktree_path, status, display_id)) = task_info {
                     // Don't update tasks that are already being accepted or updated
                     if status == TaskStatus::Accepting || status == TaskStatus::Updating {
                         commands.push(Message::SetStatusMessage(Some(
@@ -2271,6 +2312,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         // Defer ALL git operations (commit + rebase) to run async
                         commands.push(Message::StartFastRebase {
                             task_id,
+                            display_id,
                             worktree_path: wt_path,
                             project_dir
                         });
@@ -2282,7 +2324,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 }
             }
 
-            Message::StartFastRebase { task_id, worktree_path, project_dir } => {
+            Message::StartFastRebase { task_id, display_id, worktree_path, project_dir } => {
                 // Require async sender - fail explicitly if missing
                 let sender = match self.async_sender.clone() {
                     Some(s) => s,
@@ -2303,7 +2345,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
                         // First commit any uncommitted changes
-                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, &display_id) {
                             return Err(e);
                         }
                         // Then do the rebase
@@ -2348,7 +2390,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             // Rebase-for-apply handlers (when 'a' triggers auto-rebase)
-            Message::StartRebaseForApply { task_id, worktree_path, project_dir } => {
+            Message::StartRebaseForApply { task_id, display_id, worktree_path, project_dir } => {
                 // Require async sender - fail explicitly if missing
                 let sender = match self.async_sender.clone() {
                     Some(s) => s,
@@ -2369,7 +2411,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
                         // First commit any uncommitted changes
-                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, task_id) {
+                        if let Err(e) = crate::worktree::commit_worktree_changes(&worktree_path, &display_id) {
                             return Err(e);
                         }
                         // Then do the rebase
@@ -2448,10 +2490,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     let project_dir = project.working_dir.clone();
 
                     for task in project.tasks.iter_mut() {
-                        // Only need worktree_path - branch name is derived from task ID
+                        // Only need worktree_path - branch name is derived from display_id
                         if task.worktree_path.is_some() {
                             // Update git status cache
-                            if let Ok(status) = crate::worktree::get_worktree_git_status(&project_dir, task.id) {
+                            let display_id = task.display_id();
+                            if let Ok(status) = crate::worktree::get_worktree_git_status(&project_dir, &display_id) {
                                 task.git_additions = status.additions;
                                 task.git_deletions = status.deletions;
                                 task.git_files_changed = status.files_changed;
@@ -3233,10 +3276,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         p.working_dir.clone(),
                                         t.tmux_window.clone(),
                                         t.worktree_path.clone(),
+                                        t.display_id(),
                                     ))
                             });
 
-                            if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                            if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                                 // Kill tmux window if exists
                                 if let Some(ref window) = window_name {
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -3257,7 +3301,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 }
 
                                 // Delete branch
-                                if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                                if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                                     commands.push(Message::SetStatusMessage(Some(
                                         format!("Warning: Could not delete branch: {}", e)
                                     )));
@@ -3324,10 +3368,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         p.working_dir.clone(),
                                         t.tmux_window.clone(),
                                         t.worktree_path.clone(),
+                                        t.display_id(),
                                     ))
                             });
 
-                            if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                            if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                                 // Kill tmux window if exists
                                 if let Some(ref window) = window_name {
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -3345,7 +3390,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 }
 
                                 // Delete branch (discards all commits)
-                                if let Err(e) = crate::worktree::delete_branch(&project_dir, task_id) {
+                                if let Err(e) = crate::worktree::delete_branch(&project_dir, &display_id) {
                                     commands.push(Message::SetStatusMessage(Some(
                                         format!("Warning: Could not delete branch: {}", e)
                                     )));
@@ -3379,10 +3424,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         p.working_dir.clone(),
                                         t.tmux_window.clone(),
                                         t.worktree_path.clone(),
+                                        t.display_id(),
                                     ))
                             });
 
-                            if let Some((project_slug, project_dir, window_name, worktree_path)) = task_info {
+                            if let Some((project_slug, project_dir, window_name, worktree_path, display_id)) = task_info {
                                 // Kill tmux window if exists
                                 if let Some(ref window) = window_name {
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
@@ -3404,7 +3450,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 }
 
                                 // Delete branch
-                                let _ = crate::worktree::delete_branch(&project_dir, task_id);
+                                let _ = crate::worktree::delete_branch(&project_dir, &display_id);
 
                                 // Complete task (records stats) and move to Done
                                 if let Some(project) = self.model.active_project_mut() {
@@ -3431,6 +3477,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         t.tmux_window.clone(),
                                         t.worktree_path.clone(),
                                         t.title.clone(),
+                                        t.display_id(),
                                     ))
                             });
 
@@ -3440,19 +3487,19 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 tasks_in_review.iter().enumerate()
                                     .find(|(_, t)| t.id == task_id)
                                     .map(|(idx, t)| {
-                                        let task_id_short = &t.id.to_string()[..4];
+                                        let display_id = t.display_id();
                                         let title = t.short_title.as_ref().unwrap_or(&t.title);
-                                        let display_text = format!("[{}] {}", task_id_short, title);
+                                        let display_text = format!("[{}] {}", display_id, title);
                                         (display_text, idx)
                                     })
                             });
 
-                            if let Some((project_slug, project_dir, window_name, worktree_path, task_title)) = task_info {
+                            if let Some((project_slug, project_dir, window_name, worktree_path, task_title, display_id)) = task_info {
                                 // Commit the applied changes to main
-                                match crate::worktree::commit_applied_changes(&project_dir, &task_title, task_id) {
+                                match crate::worktree::commit_applied_changes(&project_dir, &task_title, &display_id) {
                                     Ok(_) => {
                                         // Clean up patch file (stash was already popped during apply)
-                                        crate::worktree::cleanup_applied_state(task_id);
+                                        crate::worktree::cleanup_applied_state(&display_id);
 
                                         // Clear applied state
                                         if let Some(project) = self.model.active_project_mut() {
@@ -3481,7 +3528,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         }
 
                                         // Delete branch
-                                        let _ = crate::worktree::delete_branch(&project_dir, task_id);
+                                        let _ = crate::worktree::delete_branch(&project_dir, &display_id);
 
                                         // Trigger celebratory animations - task completion deferred until animation ends
                                         commands.push(Message::TriggerLogoShimmer);
@@ -4220,12 +4267,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             // === Async Background Task Results ===
 
-            Message::WorktreeCreated { task_id, worktree_path, project_dir } => {
+            Message::WorktreeCreated { task_id, display_id, worktree_path, project_dir } => {
                 // Update task with worktree info immediately for UI feedback
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.worktree_path = Some(worktree_path.clone());
-                        task.git_branch = Some(format!("claude/{}", task_id));
+                        task.git_branch = Some(format!("claude/{}", display_id));
                         task.session_state = crate::model::ClaudeSessionState::Starting;
                     }
                 }
@@ -4658,14 +4705,14 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             }).await;
 
                             let msg = match result {
-                                Ok(Ok((short_title, spec))) => {
-                                    Message::TitleSummaryReceived { task_id, short_title, spec }
+                                Ok(Ok((short_title, abbreviation, spec))) => {
+                                    Message::TitleSummaryReceived { task_id, short_title, abbreviation, spec }
                                 }
                                 Ok(Err(e)) => {
                                     // Log error but don't show to user - summarization is optional
                                     eprintln!("[Summarization] Failed for task {}: {}", task_id, e);
                                     // Still send a message to clear the generating flag
-                                    Message::TitleSummaryReceived { task_id, short_title: String::new(), spec: None }
+                                    Message::TitleSummaryReceived { task_id, short_title: String::new(), abbreviation: None, spec: None }
                                 }
                                 Err(e) => {
                                     eprintln!("[Summarization] Task panicked for {}: {}", task_id, e);
@@ -4679,14 +4726,18 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 }
             }
 
-            Message::TitleSummaryReceived { task_id, short_title, spec } => {
-                // Update the task with the short title and spec
+            Message::TitleSummaryReceived { task_id, short_title, abbreviation, spec } => {
+                // Update the task with the short title, abbreviation, and spec
                 let mut should_start = false;
                 for project in &mut self.model.projects {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         // Only update if we got a meaningful short title
                         if !short_title.is_empty() {
                             task.short_title = Some(short_title);
+                        }
+                        // Only update abbreviation if we got one
+                        if abbreviation.is_some() {
+                            task.abbreviation = abbreviation;
                         }
                         task.spec = spec;
                         task.generating_spec = false;
@@ -5023,10 +5074,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.worktree_path.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, status)) = task_info {
+                if let Some((project_dir, worktree_path, status, display_id)) = task_info {
                     // Check if rebase is still in progress
                     if let Some(ref wt_path) = worktree_path {
                         if crate::worktree::is_rebase_in_progress(wt_path) {
@@ -5038,10 +5090,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Verify rebase succeeded
-                    match crate::worktree::verify_rebase_success(&project_dir, task_id) {
+                    match crate::worktree::verify_rebase_success(&project_dir, &display_id) {
                         Ok(true) => {
                             // Rebase successful, now do the apply
-                            match crate::worktree::apply_task_changes(&project_dir, task_id) {
+                            match crate::worktree::apply_task_changes(&project_dir, &display_id) {
                                 Ok(stash_warning) => {
                                     // Apply succeeded - stash was immediately popped
                                     if let Some(ref warning) = stash_warning {
@@ -5177,6 +5229,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::CompleteStashConflictResolution(task_id) => {
                 // Complete stash conflict resolution - check if conflicts are resolved and save combined patch
+                let display_id = self.get_task_display_id(task_id);
                 let project_dir = self.model.active_project()
                     .map(|p| p.working_dir.clone());
 
@@ -5207,7 +5260,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     } else {
                         // Conflicts resolved!
                         // CRITICAL: Save combined patch for surgical unapply
-                        if let Err(e) = crate::worktree::save_current_changes_as_patch(&project_dir, task_id) {
+                        if let Err(e) = crate::worktree::save_current_changes_as_patch(&project_dir, &display_id) {
                             // Log warning but don't fail - surgical unapply just won't work
                             commands.push(Message::SetStatusMessage(Some(
                                 format!("Warning: Could not save patch for surgical unapply: {}", e)
@@ -5247,12 +5300,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::StashUserChangesAndApply(task_id) => {
                 // User chose to stash their changes and apply task cleanly
+                let display_id = self.get_task_display_id(task_id);
                 let project_info = self.model.active_project()
                     .map(|p| (p.working_dir.clone(), p.applied_stash_ref.clone()));
 
                 if let Some((project_dir, stash_ref)) = project_info {
                     // Abort the stash pop while keeping task changes
-                    match crate::worktree::abort_stash_pop_keep_task_changes(&project_dir, task_id) {
+                    match crate::worktree::abort_stash_pop_keep_task_changes(&project_dir, &display_id) {
                         Ok(()) => {
                             // The stash already exists from the failed pop - track it
                             if let Some(ref sha) = stash_ref {
@@ -5921,10 +5975,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             p.working_dir.clone(),
                             t.worktree_path.clone(),
                             t.status,
+                            t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, status)) = task_info {
+                if let Some((project_dir, worktree_path, status, display_id)) = task_info {
                     // Only process if task was updating
                     if status != TaskStatus::Updating {
                         return commands;
@@ -5941,7 +5996,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // Verify branch is now on top of main
-                    match crate::worktree::verify_rebase_success(&project_dir, task_id) {
+                    match crate::worktree::verify_rebase_success(&project_dir, &display_id) {
                         Ok(true) => {
                             // Rebase successful - return to Review status
                             if let Some(project) = self.model.active_project_mut() {
@@ -6654,8 +6709,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 self.model.ui_state.git_diff_scroll_offset = 0;
 
                 // Load the diff for this task
+                let display_id = self.get_task_display_id(task_id);
                 if let Some(project) = self.model.active_project() {
-                    match crate::worktree::get_task_diff(&project.working_dir, task_id) {
+                    match crate::worktree::get_task_diff(&project.working_dir, &display_id) {
                         Ok(diff) => {
                             self.model.ui_state.git_diff_cache = Some((task_id, diff));
                         }

@@ -165,7 +165,8 @@ pub fn create_task_window(
     worktree_path: &std::path::Path,
 ) -> Result<String> {
     let session_name = get_or_create_project_session(project_slug)?;
-    let window_name = format!("task-{}", &task_id[..8.min(task_id.len())]);
+    // task_id is already a display_id like "TSKB-a7x", use it directly
+    let window_name = task_id.to_string();
 
     // Check if window already exists
     let check = Command::new("tmux")
@@ -349,16 +350,9 @@ pub fn open_popup(
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
-    // Strip "task-" prefix if present and use first 4 chars of UUID
-    let (short_name, full_task_id) = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        (&stripped[..4.min(stripped.len())], stripped)
-    } else if dir_name.len() > 4 {
-        (&dir_name[..4], dir_name)
-    } else {
-        (dir_name, dir_name)
-    };
-    let session_name = format!("kb-{}", short_name);
+    // dir_name is now the display_id (e.g., "TSKB-a7x"), use it directly as session name
+    let session_name = dir_name.to_string();
+    let full_task_id = dir_name;
 
     // Check if session already exists
     let check = Command::new("tmux")
@@ -650,15 +644,9 @@ pub fn open_popup_detached(
         .and_then(|n| n.to_str())
         .unwrap_or("claude");
 
-    // Use short task-id suffix (e.g., "task-6cfe1853" -> "kb-6cfe")
-    let (short_name, full_task_id) = if let Some(stripped) = dir_name.strip_prefix("task-") {
-        (&stripped[..4.min(stripped.len())], stripped)
-    } else if dir_name.len() > 4 {
-        (&dir_name[..4], dir_name)
-    } else {
-        (dir_name, dir_name)
-    };
-    let session_name = format!("kb-{}", short_name);
+    // dir_name is now the display_id (e.g., "TSKB-a7x"), use it directly as session name
+    let session_name = dir_name.to_string();
+    let full_task_id = dir_name;
 
     // Check if session already exists
     let check = Command::new("tmux")
@@ -798,10 +786,10 @@ pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
 }
 
 /// Kill any detached tmux sessions associated with a task.
-/// This includes the combined session: `kb-{first-4-chars-of-task-id}`
+/// Session name is the display_id (e.g., "TSKB-a7x")
 pub fn kill_task_sessions(task_id: &str) {
-    // Kill combined session (kb-{first-4-chars})
-    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+    // task_id is now the display_id, use it directly as session name
+    let session_name = task_id.to_string();
     let _ = Command::new("tmux")
         .args(["kill-session", "-t", &session_name])
         .output();
@@ -826,8 +814,8 @@ pub enum ClaudeCliState {
 /// - Actively working (processing)
 /// - Not running (just a shell)
 pub fn get_claude_cli_state(task_id: &str) -> ClaudeCliState {
-    // Session name is kb-{first 4 chars of task_id}
-    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+    // task_id is now the display_id, use it directly as session name
+    let session_name = task_id.to_string();
     // Use {top-left} to get first pane regardless of base-index setting
     let target = format!("{}:.{{top-left}}", session_name); // Left pane where Claude runs
 
@@ -902,7 +890,8 @@ pub fn get_claude_cli_state(task_id: &str) -> ClaudeCliState {
 /// Kill the Claude CLI session for a task (if it exists).
 /// This allows restarting with fresh state after SDK has done work.
 pub fn kill_claude_cli_session(task_id: &str) -> Result<()> {
-    let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+    // task_id is now the display_id, use it directly as session name
+    let session_name = task_id.to_string();
 
     let output = Command::new("tmux")
         .args(["kill-session", "-t", &session_name])

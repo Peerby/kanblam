@@ -161,15 +161,15 @@ pub enum Message {
 
     // Async background task results
     /// Create worktree for a task (deferred to allow UI render first)
-    CreateWorktree { task_id: Uuid, project_dir: PathBuf },
+    CreateWorktree { task_id: Uuid, display_id: String, project_dir: PathBuf },
     /// Worktree creation completed successfully (from background task)
-    WorktreeCreated { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    WorktreeCreated { task_id: Uuid, display_id: String, worktree_path: PathBuf, project_dir: PathBuf },
     /// Worktree creation failed (from background task)
     WorktreeCreationFailed { task_id: Uuid, error: String },
 
     // Async fast rebase
     /// Start fast rebase in background (deferred to allow UI render first)
-    StartFastRebase { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    StartFastRebase { task_id: Uuid, display_id: String, worktree_path: PathBuf, project_dir: PathBuf },
     /// Fast rebase completed successfully (from background task)
     FastRebaseCompleted { task_id: Uuid },
     /// Fast rebase failed - conflicts detected, needs smart rebase (from background task)
@@ -179,7 +179,7 @@ pub enum Message {
 
     // Async rebase-for-apply (when pressing 'a' on task that's behind main)
     /// Start rebase-for-apply in background
-    StartRebaseForApply { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    StartRebaseForApply { task_id: Uuid, display_id: String, worktree_path: PathBuf, project_dir: PathBuf },
     /// Rebase-for-apply completed successfully
     RebaseForApplyCompleted { task_id: Uuid },
     /// Rebase-for-apply needs Claude for conflicts
@@ -189,7 +189,7 @@ pub enum Message {
 
     // Async smart accept (merge task)
     /// Start smart accept git operations in background
-    StartSmartAcceptGitOps { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf, has_branch: bool },
+    StartSmartAcceptGitOps { task_id: Uuid, display_id: String, worktree_path: PathBuf, project_dir: PathBuf, has_branch: bool },
     /// Smart accept git ops done - ready to merge (no rebase needed or fast rebase succeeded)
     SmartAcceptReadyToMerge { task_id: Uuid },
     /// Smart accept needs Claude for conflict resolution
@@ -199,7 +199,7 @@ pub enum Message {
 
     // Async merge-only (M command)
     /// Start merge-only git operations in background
-    StartMergeOnlyGitOps { task_id: Uuid, worktree_path: PathBuf, project_dir: PathBuf },
+    StartMergeOnlyGitOps { task_id: Uuid, display_id: String, worktree_path: PathBuf, project_dir: PathBuf },
     /// Merge-only git ops done - ready to merge
     MergeOnlyReadyToMerge { task_id: Uuid },
     /// Merge-only failed (conflicts - needs full 'm' for Claude resolution)
@@ -218,8 +218,8 @@ pub enum Message {
     // Title summarization
     /// Request a short title summary for a task (sent to sidecar)
     RequestTitleSummary { task_id: Uuid },
-    /// Short title summary and spec received from sidecar
-    TitleSummaryReceived { task_id: Uuid, short_title: String, spec: Option<String> },
+    /// Short title summary, abbreviation, and spec received from sidecar
+    TitleSummaryReceived { task_id: Uuid, short_title: String, abbreviation: Option<String>, spec: Option<String> },
 
     // Sidecar/SDK events
     /// Event received from the SDK sidecar

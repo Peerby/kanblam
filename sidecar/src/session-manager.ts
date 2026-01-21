@@ -197,21 +197,23 @@ export class SessionManager {
   }
 
   /**
-   * Summarize a long task title into a short, clear summary and generate a spec document.
-   * Uses a one-shot SDK query to generate both the summary and spec.
+   * Summarize a long task title into a short, clear summary, 4-char abbreviation, and spec document.
+   * Uses a one-shot SDK query to generate the summary, abbreviation, and spec.
    */
   async summarizeTitle(params: SummarizeTitleParams): Promise<SummarizeTitleResult> {
     const { task_id, title } = params;
 
-    const prompt = `OUTPUT ONLY THE TITLE AND SPEC BELOW. NO introduction, NO explanation, NO "I'll analyze" - just the raw output.
+    const prompt = `OUTPUT ONLY THE TITLE, ABBREVIATION, AND SPEC BELOW. NO introduction, NO explanation, NO "I'll analyze" - just the raw output.
 
 Given this task description, generate:
 1. A brief, clear title (max 30 chars) for a kanban board card
-2. An agent execution spec
+2. A 4-character uppercase abbreviation (memorable, derived from key words, e.g., "TSKB" for "Task abbreviations", "UIRF" for "UI refactor")
+3. An agent execution spec
 
-Your ENTIRE response must be EXACTLY in this format (first line is the short title, then a blank line, then the spec):
+Your ENTIRE response must be EXACTLY in this format (first line is the short title, second line is the 4-char abbreviation, then a blank line, then the spec):
 
 <short title here>
+<ABBR>
 
 > Preserve existing behavior unless explicitly instructed otherwise.
 
@@ -261,14 +263,14 @@ Task: ${title}`;
       }
     } catch (err) {
       console.error(`[SessionManager] Error summarizing title for task ${task_id}:`, err);
-      // Fall back to truncating the original title, no spec
+      // Fall back to truncating the original title, no abbreviation, no spec
       const shortTitle = title.slice(0, 27) + (title.length > 27 ? '...' : '');
-      return { short_title: shortTitle, spec: undefined };
+      return { short_title: shortTitle, abbreviation: undefined, spec: undefined };
     } finally {
       abortController.abort();
     }
 
-    // Parse response: first line is short title, spec starts at first '>' or '##'
+    // Parse response: first line is short title, second is abbreviation, spec starts at first '>' or '##'
     const lines = fullResponse.trim().split('\n');
 
     // Skip any preamble lines (conversational text like "I'll analyze...")
@@ -288,18 +290,31 @@ Task: ${title}`;
 
     let shortTitle = lines[titleLineIndex]?.trim().replace(/^["']|["']$/g, '').trim() || '';
 
+    // Extract abbreviation - should be the next non-empty line after title, 4 uppercase chars
+    let abbreviation: string | undefined = undefined;
+    const abbrevLineIndex = titleLineIndex + 1;
+    if (abbrevLineIndex < lines.length) {
+      const abbrevLine = lines[abbrevLineIndex]?.trim() || '';
+      // Check if it looks like a 4-char abbreviation (uppercase letters, possibly with some variance)
+      if (/^[A-Z0-9]{4}$/i.test(abbrevLine)) {
+        abbreviation = abbrevLine.toUpperCase();
+      }
+    }
+
     // Extract spec - find where it starts (first '>' blockquote or '##' header)
+    // Start searching after the title (and possibly abbreviation)
+    const searchStartIndex = abbreviation ? abbrevLineIndex + 1 : titleLineIndex + 1;
     let spec: string | undefined = undefined;
     const specStartIndex = lines.findIndex((line, i) =>
-      i > titleLineIndex && (line.trim().startsWith('>') || line.trim().startsWith('##'))
+      i >= searchStartIndex && (line.trim().startsWith('>') || line.trim().startsWith('##'))
     );
 
-    if (specStartIndex > titleLineIndex) {
+    if (specStartIndex >= searchStartIndex) {
       spec = lines.slice(specStartIndex).join('\n').trim();
     } else {
-      // Fallback: try blank line approach after title
-      const firstBlankIndex = lines.findIndex((line, i) => i > titleLineIndex && line.trim() === '');
-      if (firstBlankIndex > titleLineIndex && firstBlankIndex < lines.length - 1) {
+      // Fallback: try blank line approach after title/abbreviation
+      const firstBlankIndex = lines.findIndex((line, i) => i >= searchStartIndex && line.trim() === '');
+      if (firstBlankIndex >= searchStartIndex && firstBlankIndex < lines.length - 1) {
         spec = lines.slice(firstBlankIndex + 1).join('\n').trim();
       }
     }
@@ -316,6 +331,7 @@ Task: ${title}`;
     }
 
     console.log(`[SessionManager] Summarized title for task ${task_id}: "${shortTitle}"`);
+    console.log(`[SessionManager] Abbreviation for task ${task_id}: "${abbreviation || 'none'}"`);
     console.log(`[SessionManager] Full response (${fullResponse.length} chars):\n${fullResponse.slice(0, 500)}...`);
     if (spec) {
       console.log(`[SessionManager] Generated spec for task ${task_id}: ${spec.length} chars`);
@@ -323,7 +339,7 @@ Task: ${title}`;
       console.log(`[SessionManager] No spec extracted for task ${task_id}`);
     }
 
-    return { short_title: shortTitle, spec };
+    return { short_title: shortTitle, abbreviation, spec };
   }
 
   stopSession(taskId: string): void {

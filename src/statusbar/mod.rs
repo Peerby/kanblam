@@ -69,8 +69,8 @@ impl StatusbarState {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| worktree_path.clone());
 
-        // Session name is kb-{first 4 chars of task_id}
-        let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
+        // task_id is now the display_id, use it directly as session name
+        let session_name = task_id.clone();
 
         // Use explicit parent session if provided, otherwise try to detect it
         let parent_session = explicit_parent_session.or_else(|| detect_parent_session(&project_dir));

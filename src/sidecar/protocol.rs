@@ -122,6 +122,8 @@ pub struct GetSessionResult {
 pub struct SummarizeTitleResult {
     pub short_title: String,
     #[serde(default)]
+    pub abbreviation: Option<String>,
+    #[serde(default)]
     pub spec: Option<String>,
 }
 
