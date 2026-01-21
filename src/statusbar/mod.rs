@@ -52,11 +52,16 @@ pub struct StatusbarState {
     pub dev_command: Option<String>,
     /// Whether dev process is running
     pub dev_running: bool,
+    /// Last time we checked pane height
+    pub last_height_check: Instant,
 }
 
 impl StatusbarState {
     /// Create a new statusbar state for a task
-    pub fn new(task_id: String, worktree_path: PathBuf) -> Self {
+    ///
+    /// `explicit_parent_session` is the parent session name passed via command line.
+    /// If not provided, falls back to searching for a kanblam process.
+    pub fn new(task_id: String, worktree_path: PathBuf, explicit_parent_session: Option<String>) -> Self {
         // Derive project directory (parent of worktrees/)
         let project_dir = worktree_path
             .parent() // worktrees/
@@ -67,8 +72,8 @@ impl StatusbarState {
         // Session name is kb-{first 4 chars of task_id}
         let session_name = format!("kb-{}", &task_id[..4.min(task_id.len())]);
 
-        // Detect parent session
-        let parent_session = detect_parent_session(&project_dir);
+        // Use explicit parent session if provided, otherwise try to detect it
+        let parent_session = explicit_parent_session.or_else(|| detect_parent_session(&project_dir));
 
         // Detect dev command
         let dev_command = detect_dev_command(&worktree_path);
@@ -88,6 +93,7 @@ impl StatusbarState {
             parent_session,
             dev_command,
             dev_running: false,
+            last_height_check: Instant::now() - Duration::from_secs(10), // Force immediate check
         }
     }
 
@@ -157,6 +163,46 @@ impl StatusbarState {
             }
         }
     }
+
+    /// Check pane height and resize to 2 lines if needed.
+    /// This handles cases where the tmux layout changes (e.g., different terminal
+    /// attaches to the session with different dimensions).
+    pub fn enforce_pane_height(&mut self) {
+        // Only check every 2 seconds to avoid excessive tmux commands
+        if self.last_height_check.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.last_height_check = Instant::now();
+
+        // Target the bottom pane (statusbar) in this session
+        let target = format!("{}:.{{bottom}}", self.session_name);
+
+        // Get current pane height
+        let output = match Command::new("tmux")
+            .args(["display-message", "-t", &target, "-p", "#{pane_height}"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return, // Silently ignore errors
+        };
+
+        if !output.status.success() {
+            return;
+        }
+
+        let height_str = String::from_utf8_lossy(&output.stdout);
+        let height: u16 = match height_str.trim().parse() {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+
+        // If height is not 2, resize to 2 lines
+        if height != 2 {
+            let _ = Command::new("tmux")
+                .args(["resize-pane", "-t", &target, "-y", "2"])
+                .output();
+        }
+    }
 }
 
 /// Get the main branch reference (origin/main, origin/master, main, or master)
@@ -176,27 +222,35 @@ fn get_main_ref(project_dir: &PathBuf) -> Option<String> {
     None
 }
 
-/// Detect the parent kanblam session (kc-{project-slug})
-fn detect_parent_session(project_dir: &PathBuf) -> Option<String> {
-    // Get project name from directory
-    let project_name = project_dir.file_name()?.to_str()?;
-    let slug = project_name
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-
-    let session_name = format!("kc-{}", slug);
-
-    // Verify it exists
+/// Detect the parent kanblam session by searching for any tmux session
+/// running the kanblam TUI (not statusbar).
+///
+/// This is a fallback for when the parent session name wasn't passed explicitly.
+fn detect_parent_session(_project_dir: &PathBuf) -> Option<String> {
+    // Search for any session running kanblam (not statusbar)
     if let Ok(output) = Command::new("tmux")
-        .args(["has-session", "-t", &session_name])
+        .args([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name} #{pane_current_command}",
+        ])
         .output()
     {
         if output.status.success() {
-            return Some(session_name);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    let session = parts[0];
+                    let cmd = parts[1];
+                    // Look for kanblam TUI (not statusbar)
+                    // The command might be "kanblam" or the full path
+                    if cmd.contains("kanblam") && !cmd.contains("statusbar") {
+                        return Some(session.to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -535,7 +589,9 @@ fn toggle_shell_pane(state: &mut StatusbarState) -> Result<()> {
 }
 
 /// Run the statusbar TUI
-pub fn run(task_id: &str, worktree_path: PathBuf) -> Result<()> {
+///
+/// `parent_session` is the explicit parent session name passed via `--parent` argument.
+pub fn run(task_id: &str, worktree_path: PathBuf, parent_session: Option<String>) -> Result<()> {
     // Setup terminal - DON'T use alternate screen for a minimal statusbar
     // Alternate screen mode doesn't work well with very small panes
     enable_raw_mode()?;
@@ -546,7 +602,7 @@ pub fn run(task_id: &str, worktree_path: PathBuf) -> Result<()> {
     // Clear the terminal area and hide cursor
     execute!(io::stdout(), Hide)?;
 
-    let mut state = StatusbarState::new(task_id.to_string(), worktree_path);
+    let mut state = StatusbarState::new(task_id.to_string(), worktree_path, parent_session);
 
     // Initial git status refresh
     state.refresh_git_status();
@@ -574,6 +630,9 @@ fn run_loop(
         // Clear old status messages
         state.clear_old_status();
 
+        // Ensure pane stays at 2 lines (handles screen dimension changes)
+        state.enforce_pane_height();
+
         // Render
         terminal.draw(|f| render(f, state))?;
 
@@ -595,13 +654,20 @@ fn run_loop(
 /// Entry point for the statusbar subcommand
 pub fn main(args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(anyhow!("Usage: kanblam statusbar <task-id>"));
+        return Err(anyhow!("Usage: kanblam statusbar <task-id> [--parent <session-name>]"));
     }
 
     let task_id = &args[0];
 
+    // Parse optional --parent argument
+    let parent_session = if args.len() >= 3 && args[1] == "--parent" {
+        Some(args[2].clone())
+    } else {
+        None
+    };
+
     // Get worktree path from current directory or construct it
     let worktree_path = std::env::current_dir()?;
 
-    run(task_id, worktree_path)
+    run(task_id, worktree_path, parent_session)
 }

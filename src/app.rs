@@ -1775,8 +1775,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     let resume_session_id = session_id.as_deref();
+                    let parent_session = crate::tmux::get_current_session_name();
 
-                    match crate::tmux::open_popup_detached(&worktree_path, resume_session_id) {
+                    match crate::tmux::open_popup_detached(&worktree_path, resume_session_id, parent_session.as_deref()) {
                         Ok(result) => {
                             let status = if result.was_created {
                                 format!("Created session '{}'", result.session_name)
@@ -4790,9 +4791,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     // Always try to resume if we have a session_id
                     // This shows conversation history even for completed sessions
                     let resume_session_id = session_id.as_deref();
+                    let parent_session = crate::tmux::get_current_session_name();
 
                     // Open tmux popup with Claude (will create new if killed above, or switch to existing)
-                    if let Err(e) = crate::tmux::open_popup(&worktree_path, resume_session_id) {
+                    if let Err(e) = crate::tmux::open_popup(&worktree_path, resume_session_id, parent_session.as_deref()) {
                         commands.push(Message::Error(format!(
                             "Failed to open interactive popup: {}", e
                         )));

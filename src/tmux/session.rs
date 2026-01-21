@@ -43,6 +43,22 @@ pub fn switch_to_session(pane_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Get the name of the current tmux session (if running inside tmux)
+pub fn get_current_session_name() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
+}
+
 /// Send a prompt to a tmux pane using paste-buffer for reliable submission.
 /// This is more reliable than send-keys because:
 /// 1. set-buffer stores the text atomically on the tmux server
@@ -319,7 +335,14 @@ pub fn get_pane_size(target: &str) -> Result<(u16, u16)> {
 /// - Shell on right (pane 1)
 /// - Statusbar at bottom (pane 2) - minimal height for dev tools
 /// Creates a session named "kb-{short-task-id}"
-pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> Result<()> {
+///
+/// `parent_session` is the tmux session name of the parent Kanblam TUI, used by the
+/// statusbar's "back" command to return to the correct session.
+pub fn open_popup(
+    worktree_path: &std::path::Path,
+    session_id: Option<&str>,
+    parent_session: Option<&str>,
+) -> Result<()> {
     // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
     let dir_name = worktree_path
         .file_name()
@@ -403,13 +426,22 @@ pub fn open_popup(worktree_path: &std::path::Path, session_id: Option<&str>) -> 
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "kanblam".to_string());
 
-        // Build statusbar command
-        let statusbar_cmd = format!(
-            "cd '{}' && '{}' statusbar {}",
-            worktree_path.to_string_lossy(),
-            kanblam_path,
-            full_task_id
-        );
+        // Build statusbar command - include parent session if provided
+        let statusbar_cmd = match parent_session {
+            Some(parent) => format!(
+                "cd '{}' && '{}' statusbar {} --parent '{}'",
+                worktree_path.to_string_lossy(),
+                kanblam_path,
+                full_task_id,
+                parent
+            ),
+            None => format!(
+                "cd '{}' && '{}' statusbar {}",
+                worktree_path.to_string_lossy(),
+                kanblam_path,
+                full_task_id
+            ),
+        };
 
         // Split vertically with -f flag for full-width pane at bottom
         // -f creates a new pane spanning the full window width/height
@@ -604,9 +636,13 @@ pub struct DetachedSessionResult {
 /// - Shell on right (pane 1)
 /// - Statusbar at bottom (pane 2) - minimal height for dev tools
 /// Returns the session name and whether it was newly created
+///
+/// `parent_session` is the tmux session name of the parent Kanblam TUI, used by the
+/// statusbar's "back" command to return to the correct session.
 pub fn open_popup_detached(
     worktree_path: &std::path::Path,
     session_id: Option<&str>,
+    parent_session: Option<&str>,
 ) -> Result<DetachedSessionResult> {
     // Extract task ID from worktree path (format: .../worktrees/task-{uuid})
     let dir_name = worktree_path
@@ -685,13 +721,22 @@ pub fn open_popup_detached(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "kanblam".to_string());
 
-        // Build statusbar command
-        let statusbar_cmd = format!(
-            "cd '{}' && '{}' statusbar {}",
-            worktree_path.to_string_lossy(),
-            kanblam_path,
-            full_task_id
-        );
+        // Build statusbar command - include parent session if provided
+        let statusbar_cmd = match parent_session {
+            Some(parent) => format!(
+                "cd '{}' && '{}' statusbar {} --parent '{}'",
+                worktree_path.to_string_lossy(),
+                kanblam_path,
+                full_task_id,
+                parent
+            ),
+            None => format!(
+                "cd '{}' && '{}' statusbar {}",
+                worktree_path.to_string_lossy(),
+                kanblam_path,
+                full_task_id
+            ),
+        };
 
         // Split vertically with -f flag for full-width pane at bottom
         // -f creates a new pane spanning the full window width/height

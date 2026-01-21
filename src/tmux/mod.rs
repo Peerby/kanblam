@@ -17,4 +17,6 @@ pub use session::{
     claude_output_contains_question,
     // Quick pane split for Ctrl-T
     split_pane_with_claude,
+    // Session info
+    get_current_session_name,
 };
