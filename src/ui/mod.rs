@@ -2060,23 +2060,6 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     // Width between the vertical bars of the chart box
     let chart_inner_width = num_days * 3;
 
-    // Build the title with proper centering
-    let title = format!(" {}-DAY ACTIVITY ", num_days);
-    let title_len = title.len();
-    let dashes_total = chart_inner_width.saturating_sub(title_len);
-    let dashes_left = dashes_total / 2;
-    let dashes_right = dashes_total - dashes_left;
-
-    let top_border = format!(
-        "  ┌{}{}{}┐",
-        "─".repeat(dashes_left),
-        title,
-        "─".repeat(dashes_right)
-    );
-    lines.push(Line::from(vec![
-        Span::styled(top_border, Style::default().fg(accent_color)),
-    ]));
-
     let daily_counts = stats.completions_by_day();
     // Take only the most recent num_days days
     let days_to_show: Vec<_> = daily_counts.iter().take(num_days).collect();
@@ -2085,11 +2068,58 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     let bar_height = 5;
     let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
+    // Calculate y-axis label width (2 chars for values <=99, 3 chars for 100-999)
+    let y_axis_width = if max_count > 99 { 3 } else { 2 };
+
+    // Build the title with proper centering
+    // Add 1 char padding on the right side of the chart
+    let right_padding = 1;
+    let chart_box_width = chart_inner_width + right_padding;
+    let title = format!(" {}-DAY ACTIVITY ", num_days);
+    let title_len = title.len();
+    let dashes_total = chart_box_width.saturating_sub(title_len);
+    let dashes_left = dashes_total / 2;
+    let dashes_right = dashes_total - dashes_left;
+
+    let top_border = format!(
+        " {}┌{}{}{}┐",
+        " ".repeat(y_axis_width),
+        "─".repeat(dashes_left),
+        title,
+        "─".repeat(dashes_right)
+    );
+    lines.push(Line::from(vec![
+        Span::styled(top_border, Style::default().fg(accent_color)),
+    ]));
+
     for row in (0..bar_height).rev() {
-        let mut spans = vec![Span::styled("  │", Style::default().fg(accent_color))];
+        // Y-axis scale indicator: show max at top row, 0 at bottom row
+        let y_label = if row == bar_height - 1 {
+            format!("{:>width$}", max_count, width = y_axis_width)
+        } else if row == 0 {
+            format!("{:>width$}", 0, width = y_axis_width)
+        } else {
+            " ".repeat(y_axis_width)
+        };
+        let mut spans = vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(y_label, Style::default().fg(Color::DarkGray)),
+            Span::styled("│", Style::default().fg(accent_color)),
+        ];
 
         // Iterate in reverse order: oldest first, today (0) last
         for (day_offset, count) in days_to_show.iter().rev() {
+            // Handle zero/no-data days with underscore at bottom row only
+            if *count == 0 {
+                if row == 0 {
+                    // Use green color for underscore to match the bar theme
+                    spans.push(Span::styled("  _", Style::default().fg(bar_full)));
+                } else {
+                    spans.push(Span::styled("   ", Style::default()));
+                }
+                continue;
+            }
+
             let fill_level = (*count as f64 / max_count as f64) * bar_height as f64;
             let char_idx = if fill_level > row as f64 + 0.875 {
                 7
@@ -2119,34 +2149,36 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
                 _ => Color::Rgb(0, 55, 20),
             };
 
-            spans.push(Span::styled(format!(" {} ", bar_char), Style::default().fg(color)));
+            spans.push(Span::styled(format!("  {}", bar_char), Style::default().fg(color)));
         }
 
+        // Add right padding before closing vertical bar
+        spans.push(Span::styled(" ".repeat(right_padding), Style::default()));
         spans.push(Span::styled("│", Style::default().fg(accent_color)));
         lines.push(Line::from(spans));
     }
 
     // X-axis labels (oldest to newest, dynamically generated)
-    let mut label_spans = vec![Span::styled("  │", Style::default().fg(accent_color))];
+    let mut label_spans = vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(" ".repeat(y_axis_width), Style::default()),
+        Span::styled("│", Style::default().fg(accent_color)),
+    ];
     for i in (0..num_days).rev() {
         let (label, is_today) = match i {
-            0 => ("T".to_string(), true),    // Today
-            1 => (" Y".to_string(), false),  // Yesterday
-            _ => (format!("{:>2}", -(i as i32)), false),  // -2, -3, etc.
+            0 => (" T ".to_string(), true),    // Today - centered in 3-char cell
+            1 => (" Y ".to_string(), false),   // Yesterday - centered in 3-char cell
+            _ => (format!("{:>2} ", -(i as i32)), false),  // -2, -3, etc. - right-aligned
         };
         let color = if is_today { bar_full } else { Color::DarkGray };
-        // Today gets one less trailing space so it aligns better with the border
-        let formatted = if is_today {
-            format!("{}", label)
-        } else {
-            format!("{} ", label)
-        };
-        label_spans.push(Span::styled(formatted, Style::default().fg(color)));
+        label_spans.push(Span::styled(label, Style::default().fg(color)));
     }
-    label_spans.push(Span::styled(" │", Style::default().fg(accent_color)));
+    // Add right padding before closing vertical bar
+    label_spans.push(Span::styled(" ".repeat(right_padding), Style::default()));
+    label_spans.push(Span::styled("│", Style::default().fg(accent_color)));
     lines.push(Line::from(label_spans));
 
-    let bottom_border = format!("  └{}┘", "─".repeat(chart_inner_width));
+    let bottom_border = format!(" {}└{}┘", " ".repeat(y_axis_width), "─".repeat(chart_box_width));
     lines.push(Line::from(vec![
         Span::styled(bottom_border, Style::default().fg(accent_color)),
     ]));
