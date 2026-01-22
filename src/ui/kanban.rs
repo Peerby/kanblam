@@ -32,15 +32,57 @@ pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     // Split into 3 rows x 2 columns for the six statuses
-    // Middle row (InProgress/NeedsWork) is smaller since those columns typically have fewer tasks
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(42),
-            Constraint::Percentage(17),
-            Constraint::Percentage(41),
-        ])
-        .split(inner);
+    // Middle row (Testing/NeedsWork) is smaller since those columns typically have fewer tasks
+    // Ensure each row has at least 3 lines (2 borders + 1 content line) for usability
+    let total_height = inner.height as i32;
+    let min_row_height: u16 = 3; // 2 for borders + 1 for at least one task line
+
+    // Calculate row heights manually to enforce minimums while preserving proportions
+    // Target ratios: 42:17:41 (total 100)
+    let rows = if total_height < (min_row_height * 3) as i32 {
+        // Extremely small: give each row equal share
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+            ])
+            .split(inner)
+    } else {
+        // Calculate proportional heights, then enforce minimums
+        let mut row1_h = (total_height * 42 / 100) as u16;
+        let mut row2_h = (total_height * 17 / 100) as u16;
+        let mut row3_h = (total_height - row1_h as i32 - row2_h as i32) as u16;
+
+        // Enforce minimums, stealing from larger rows if needed
+        if row2_h < min_row_height {
+            let deficit = min_row_height - row2_h;
+            row2_h = min_row_height;
+            // Steal proportionally from row1 and row3
+            if row1_h > min_row_height && row3_h > min_row_height {
+                let steal_from_1 = deficit / 2;
+                let steal_from_3 = deficit - steal_from_1;
+                row1_h = row1_h.saturating_sub(steal_from_1).max(min_row_height);
+                row3_h = row3_h.saturating_sub(steal_from_3).max(min_row_height);
+            }
+        }
+        if row1_h < min_row_height {
+            row1_h = min_row_height;
+        }
+        if row3_h < min_row_height {
+            row3_h = min_row_height;
+        }
+
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(row1_h),
+                Constraint::Length(row2_h),
+                Constraint::Length(row3_h),
+            ])
+            .split(inner)
+    };
 
     let row1_cols = Layout::default()
         .direction(Direction::Horizontal)
