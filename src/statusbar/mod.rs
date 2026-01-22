@@ -566,9 +566,13 @@ fn handle_key(state: &mut StatusbarState, key: KeyCode) -> bool {
 
     match key {
         KeyCode::Char('g') => {
-            // Launch lazygit
+            // Launch lazygit focused on commits since branch point
             if is_lazygit_installed() {
-                state.set_status("Launching lazygit...");
+                // Show base commit info in status message
+                let base_info = get_merge_base(state)
+                    .map(|sha| format!(" (base: {}, press * to filter)", sha))
+                    .unwrap_or_default();
+                state.set_status(&format!("Launching lazygit...{}", base_info));
                 if let Err(e) = launch_lazygit(state) {
                     state.set_status(&format!("Error: {}", e));
                 }
@@ -760,17 +764,55 @@ fn toggle_shell_pane(state: &mut StatusbarState) -> Result<()> {
     Ok(())
 }
 
-/// Launch lazygit in the shell pane
+/// Get the merge-base commit between the worktree branch and main.
+/// Returns the short SHA if found.
+fn get_merge_base(state: &StatusbarState) -> Option<String> {
+    // Try to find the main branch reference
+    let main_ref = get_main_ref(&state.project_dir)?;
+
+    // Get merge-base between current HEAD and main
+    let output = Command::new("git")
+        .current_dir(&state.worktree_path)
+        .args(["merge-base", "HEAD", &main_ref])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let full_sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if full_sha.is_empty() {
+        return None;
+    }
+
+    // Get short SHA for display
+    let short_output = Command::new("git")
+        .current_dir(&state.worktree_path)
+        .args(["rev-parse", "--short", &full_sha])
+        .output()
+        .ok()?;
+
+    if short_output.status.success() {
+        Some(String::from_utf8_lossy(&short_output.stdout).trim().to_string())
+    } else {
+        // Fallback to first 7 chars
+        Some(full_sha.chars().take(7).collect())
+    }
+}
+
+/// Launch lazygit in the shell pane, focused on commits since the branch point.
 fn launch_lazygit(state: &StatusbarState) -> Result<()> {
     let target = format!("{}:.{{top-right}}", state.session_name);
 
-    // Clear line first (Ctrl-U), then launch lazygit
+    // Clear line first (Ctrl-U), then launch lazygit with 'log' to focus on commits
     Command::new("tmux")
         .args(["send-keys", "-t", &target, "C-u"])
         .output()?;
 
+    // Launch lazygit with 'log' positional arg to focus on commits panel
     Command::new("tmux")
-        .args(["send-keys", "-t", &target, "lazygit", "Enter"])
+        .args(["send-keys", "-t", &target, "lazygit log", "Enter"])
         .output()?;
 
     // Focus the shell pane so user can interact with lazygit
