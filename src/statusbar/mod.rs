@@ -55,6 +55,8 @@ pub struct StatusbarState {
     pub dev_running: bool,
     /// Last time we checked pane height
     pub last_height_check: Instant,
+    /// Whether we're prompting to install lazygit
+    pub lazygit_install_prompt: bool,
 }
 
 impl StatusbarState {
@@ -95,6 +97,7 @@ impl StatusbarState {
             dev_command,
             dev_running: false,
             last_height_check: Instant::now() - Duration::from_secs(10), // Force immediate check
+            lazygit_install_prompt: false,
         }
     }
 
@@ -258,6 +261,15 @@ fn detect_parent_session(_project_dir: &PathBuf) -> Option<String> {
     None
 }
 
+/// Check if lazygit is installed
+fn is_lazygit_installed() -> bool {
+    Command::new("which")
+        .arg("lazygit")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Detect the dev command for the project
 fn detect_dev_command(worktree_path: &PathBuf) -> Option<String> {
     // Check for package.json with dev script
@@ -389,6 +401,7 @@ fn render(frame: &mut Frame, state: &StatusbarState) {
     } else {
         // Keybinding hints
         let hints = [
+            ("g", "git"),
             ("r", "rebase"),
             ("s", "start"),
             ("S", "stop"),
@@ -520,7 +533,51 @@ fn get_kanblam_click_region(area_width: u16) -> (u16, u16) {
 
 /// Handle a key press, returns true if should quit
 fn handle_key(state: &mut StatusbarState, key: KeyCode) -> bool {
+    // Handle lazygit install prompt
+    if state.lazygit_install_prompt {
+        match key {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                state.lazygit_install_prompt = false;
+                state.set_status("Installing lazygit...");
+                match install_lazygit() {
+                    Ok(true) => {
+                        state.set_status("lazygit installed! Launching...");
+                        if let Err(e) = launch_lazygit(state) {
+                            state.set_status(&format!("Launch error: {}", e));
+                        }
+                    }
+                    Ok(false) => {
+                        state.set_status("Installation failed");
+                    }
+                    Err(e) => {
+                        state.set_status(&format!("{}", e));
+                    }
+                }
+                return false;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                state.lazygit_install_prompt = false;
+                state.status_message = None;
+                return false;
+            }
+            _ => return false,
+        }
+    }
+
     match key {
+        KeyCode::Char('g') => {
+            // Launch lazygit
+            if is_lazygit_installed() {
+                state.set_status("Launching lazygit...");
+                if let Err(e) = launch_lazygit(state) {
+                    state.set_status(&format!("Error: {}", e));
+                }
+            } else {
+                // Prompt to install
+                state.lazygit_install_prompt = true;
+                state.set_status("lazygit not found. Install via brew? (y/n)");
+            }
+        }
         KeyCode::Char('r') => {
             // Rebase onto main
             state.set_status("Rebasing...");
@@ -701,6 +758,48 @@ fn toggle_shell_pane(state: &mut StatusbarState) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Launch lazygit in the shell pane
+fn launch_lazygit(state: &StatusbarState) -> Result<()> {
+    let target = format!("{}:.{{top-right}}", state.session_name);
+
+    // Clear line first (Ctrl-U), then launch lazygit
+    Command::new("tmux")
+        .args(["send-keys", "-t", &target, "C-u"])
+        .output()?;
+
+    Command::new("tmux")
+        .args(["send-keys", "-t", &target, "lazygit", "Enter"])
+        .output()?;
+
+    // Focus the shell pane so user can interact with lazygit
+    Command::new("tmux")
+        .args(["select-pane", "-t", &target])
+        .output()?;
+
+    Ok(())
+}
+
+/// Install lazygit using Homebrew
+fn install_lazygit() -> Result<bool> {
+    // Check if Homebrew is available
+    let brew_available = Command::new("which")
+        .arg("brew")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !brew_available {
+        return Err(anyhow!("Homebrew not found - install lazygit manually"));
+    }
+
+    // Install lazygit via Homebrew
+    let result = Command::new("brew")
+        .args(["install", "lazygit"])
+        .output()?;
+
+    Ok(result.status.success())
 }
 
 /// Run the statusbar TUI
