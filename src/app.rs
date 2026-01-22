@@ -7309,34 +7309,30 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             Message::TriggerRestart => {
-                // Only build and restart for bootstrap mode (developing KanBlam itself)
-                // For other projects, just show success - no need to restart the TUI
-                let (is_bootstrap, debug_info) = self.model.active_project()
-                    .map(|p| {
-                        let exe_path = std::env::current_exe().ok();
-                        let exe_canonical = exe_path.as_ref().and_then(|p| p.canonicalize().ok());
-                        let project_canonical = p.working_dir.canonicalize().ok();
-                        let is_boot = is_bootstrap_project(p);
-                        let info = format!(
-                            "exe={:?}, project={:?}, is_bootstrap={}",
-                            exe_canonical, project_canonical, is_boot
-                        );
-                        (is_boot, info)
-                    })
-                    .unwrap_or((false, "no active project".to_string()));
+                // Run build/check for all projects; only restart for bootstrap mode
+                let project_info = self.model.active_project().map(|p| {
+                    let is_boot = is_bootstrap_project(p);
+                    let check_cmd = p.commands.effective_check(&p.working_dir);
+                    let working_dir = p.working_dir.clone();
+                    (is_boot, check_cmd, working_dir)
+                });
 
-                // Temporary debug: log to file
-                let _ = std::fs::write("/tmp/kanblam-bootstrap-debug.txt", &debug_info);
-
-                if !is_bootstrap {
-                    // Not bootstrap mode - just show success, no build/restart needed
+                let Some((is_bootstrap, check_cmd, working_dir)) = project_info else {
                     commands.push(Message::SetStatusMessage(Some(
                         "✓ Changes applied successfully.".to_string()
                     )));
                     return commands;
-                }
+                };
 
-                // Bootstrap mode: check for pending operations before restart
+                // If no check command detected, just show success
+                let Some(check_cmd) = check_cmd else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Changes applied successfully.".to_string()
+                    )));
+                    return commands;
+                };
+
+                // Check for pending operations before build (especially important for bootstrap restart)
                 let has_pending = self.model.active_project().map(|p| {
                     p.tasks.iter().any(|t| matches!(
                         t.status,
@@ -7344,20 +7340,24 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     )) || p.main_worktree_lock.is_some()
                 }).unwrap_or(false);
 
-                if has_pending {
+                if has_pending && is_bootstrap {
                     commands.push(Message::SetStatusMessage(Some(
                         "Cannot restart: operations in progress. Wait for them to complete.".to_string()
                     )));
                 } else {
-                    // Start async build before restarting
+                    // Start async build/check
                     commands.push(Message::SetStatusMessage(Some(
-                        "Building...".to_string()
+                        "Checking build...".to_string()
                     )));
-                    commands.push(Message::StartBuildForRestart);
+                    commands.push(Message::StartBuildForRestart {
+                        check_cmd,
+                        is_bootstrap,
+                        working_dir,
+                    });
                 }
             }
 
-            Message::StartBuildForRestart => {
+            Message::StartBuildForRestart { check_cmd, is_bootstrap, working_dir } => {
                 // Require async sender - fail explicitly if missing
                 let sender = match self.async_sender.clone() {
                     Some(s) => s,
@@ -7369,36 +7369,57 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
                 };
 
-                let current_dir = std::env::current_dir().unwrap_or_default();
+                // Start the build check animation
+                self.model.ui_state.build_check_in_progress = true;
 
-// Detect if we're running debug or release build
-                // Check the current executable path for "debug" or "release"
-                let is_release = std::env::current_exe()
-                    .map(|p| p.to_string_lossy().contains("/release/"))
-                    .unwrap_or(true); // Default to release if we can't determine
+                // For bootstrap mode (developing KanBlam), use cargo build to get a binary for restart
+                // For other projects, use the detected check command
+                let (program, args) = if is_bootstrap {
+                    let is_release = std::env::current_exe()
+                        .map(|p| p.to_string_lossy().contains("/release/"))
+                        .unwrap_or(true);
+                    let args = if is_release {
+                        vec!["build".to_string(), "--release".to_string()]
+                    } else {
+                        vec!["build".to_string()]
+                    };
+                    ("cargo".to_string(), args)
+                } else {
+                    // Parse the check command - split on whitespace, first part is program
+                    let parts: Vec<&str> = check_cmd.split_whitespace().collect();
+                    if parts.is_empty() {
+                        commands.push(Message::SetStatusMessage(Some(
+                            "✓ Changes applied successfully.".to_string()
+                        )));
+                        return commands;
+                    }
+                    let program = parts[0].to_string();
+                    let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                    (program, args)
+                };
 
                 // Spawn build in background to keep UI responsive
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        let mut cmd = std::process::Command::new("cargo");
-                        cmd.arg("build");
-                        if is_release {
-                            cmd.arg("--release");
-                        }
-                        cmd.current_dir(&current_dir).output()
+                        let mut cmd = std::process::Command::new(&program);
+                        cmd.args(&args);
+                        cmd.current_dir(&working_dir).output()
                     }).await;
 
                     let msg = match result {
                         Ok(Ok(output)) if output.status.success() => {
-                            Message::BuildCompleted
+                            Message::BuildCompleted { is_bootstrap }
                         }
                         Ok(Ok(output)) => {
                             let stderr = String::from_utf8_lossy(&output.stderr);
-                            let error_preview: String = stderr.lines().take(5).collect::<Vec<_>>().join("\n");
+                            // Also check stdout for build tools that output errors there
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let combined = if stderr.is_empty() { stdout } else { stderr };
+                            let error_preview: String = combined.lines().take(10).collect::<Vec<_>>().join("\n");
                             Message::BuildFailed { error: error_preview }
                         }
                         Ok(Err(e)) => {
-                            Message::BuildFailed { error: format!("Failed to run cargo: {}", e) }
+                            Message::BuildFailed { error: format!("Failed to run command: {}", e) }
                         }
                         Err(e) => {
                             Message::BuildFailed { error: format!("Task panicked: {}", e) }
@@ -7409,16 +7430,29 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 });
             }
 
-            Message::BuildCompleted => {
-                // Build succeeded, proceed with restart
-                commands.push(Message::SetStatusMessage(Some(
-                    "✓ Build succeeded. Restarting...".to_string()
-                )));
-                self.should_restart = true;
+            Message::BuildCompleted { is_bootstrap } => {
+                // Build/check succeeded - stop the animation
+                self.model.ui_state.build_check_in_progress = false;
+
+                if is_bootstrap {
+                    // Bootstrap mode: restart the TUI with the new binary
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Build succeeded. Restarting...".to_string()
+                    )));
+                    self.should_restart = true;
+                } else {
+                    // Non-bootstrap: just show success
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Build check passed.".to_string()
+                    )));
+                }
             }
 
             Message::BuildFailed { error } => {
-                // Build failed - show error and ask to unapply if we have applied changes
+                // Build failed - stop the animation
+                self.model.ui_state.build_check_in_progress = false;
+
+                // Show error and ask to unapply if we have applied changes
                 if let Some(task_id) = self.model.active_project().and_then(|p| p.applied_task_id) {
                     self.model.ui_state.confirmation_scroll_offset = 0;
                     self.model.ui_state.pending_confirmation = Some(PendingConfirmation {

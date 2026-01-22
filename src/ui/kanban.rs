@@ -288,9 +288,32 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let spec_phase_d = '█'; // Full block, completion
                     // QA validation animation - magnifying glass search pattern
                     let qa_frames = ['∘', '󰍉', '󰍊', '󰍋', '󰍊', '󰍉', '∘'];
+                    // Build check animation - rising blocks, two phases (normal then inverted)
+                    // Creates a "scrolling block" effect
+                    let build_check_frames = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+                    // Check if this task is currently being build-checked
+                    let is_build_checking = app.model.ui_state.build_check_in_progress
+                        && app.model.active_project()
+                            .and_then(|p| p.applied_task_id)
+                            .map(|id| id == task.id)
+                            .unwrap_or(false);
 
                     // Check for spec generation first (can happen in any status)
-                    let (prefix, prefix_inverted) = if task.generating_spec {
+                    let (prefix, prefix_inverted) = if is_build_checking {
+                        // Build check animation: Phase 1 (inverted, descending), Phase 2 (normal, descending)
+                        // Creates a "scrolling block" effect: █ ▇ ▆ ▅ ▄ ▃ ▂ ▁ (inverted) then █ ▇ ▆ ▅ ▄ ▃ ▂ ▁ (normal)
+                        // Fast animation: 100ms per frame, ~1.6s full cycle
+                        let anim_frame = app.model.ui_state.animation_frame % 16;
+                        let (ch, inverted) = if anim_frame < 8 {
+                            // Phase 1: inverted, descending (7 -> 0)
+                            (build_check_frames[7 - anim_frame], true)
+                        } else {
+                            // Phase 2: normal, descending (7 -> 0)
+                            (build_check_frames[15 - anim_frame], false)
+                        };
+                        (format!("{} ", ch), inverted)
+                    } else if task.generating_spec {
                         // Slow down: change every 2 ticks (200ms per frame)
                         let anim_frame = (app.model.ui_state.animation_frame / 2) % 15;
                         let (ch, inverted) = match anim_frame {

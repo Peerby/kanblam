@@ -797,6 +797,30 @@ impl ProjectCommands {
     pub fn detect(project_dir: &PathBuf) -> Self {
         let mut commands = ProjectCommands::default();
 
+        // Check for Turborepo (turbo.json) - monorepo takes precedence
+        if project_dir.join("turbo.json").exists() {
+            commands.check = Some("npx turbo build".to_string());
+            commands.run = Some("npx turbo dev".to_string());
+            commands.test = Some("npx turbo test".to_string());
+            commands.lint = Some("npx turbo lint".to_string());
+            return commands;
+        }
+
+        // Check for Next.js (next.config.js/mjs/ts)
+        if project_dir.join("package.json").exists() {
+            let has_next_config = project_dir.join("next.config.js").exists()
+                || project_dir.join("next.config.mjs").exists()
+                || project_dir.join("next.config.ts").exists();
+
+            if has_next_config {
+                commands.check = Some("npm run build".to_string());
+                commands.run = Some("npm run dev".to_string());
+                commands.test = Some("npm test".to_string());
+                commands.lint = Some("npm run lint".to_string());
+                return commands;
+            }
+        }
+
         // Check for Rust (Cargo.toml)
         if project_dir.join("Cargo.toml").exists() {
             commands.check = Some("cargo check".to_string());
@@ -1803,6 +1827,10 @@ pub struct UiState {
     // Sidecar control modal
     /// If set, the sidecar control modal is open with its state
     pub sidecar_modal: Option<SidecarModalState>,
+
+    // Build check animation
+    /// If true, a build/type check is in progress (show animation in status bar)
+    pub build_check_in_progress: bool,
 }
 
 /// State for the sidecar control modal
@@ -2314,6 +2342,8 @@ impl Default for UiState {
             pending_replace_char: false,
             // Sidecar control modal
             sidecar_modal: None,
+            // Build check animation
+            build_check_in_progress: false,
         }
     }
 }

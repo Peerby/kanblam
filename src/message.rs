@@ -208,10 +208,14 @@ pub enum Message {
     MergeOnlyFailed { task_id: Uuid, error: String },
 
     // Async build before restart
-    /// Start build in background before restarting
-    StartBuildForRestart,
-    /// Build completed successfully - proceed with restart
-    BuildCompleted,
+    /// Start build/check in background before optionally restarting
+    StartBuildForRestart {
+        check_cmd: String,
+        is_bootstrap: bool,
+        working_dir: std::path::PathBuf,
+    },
+    /// Build completed successfully - proceed with restart if bootstrap
+    BuildCompleted { is_bootstrap: bool },
     /// Build failed with error
     BuildFailed { error: String },
 
