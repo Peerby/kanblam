@@ -4172,7 +4172,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // Move to end of InProgress column so newly active tasks appear at bottom
                                     project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                 }
-                                if !is_terminal {
+                                // Only set Working state if not in a protected/completed state
+                                // Late SDK signals shouldn't override Paused state for Review tasks
+                                if !is_terminal && !is_protected_review {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                         task.session_state = crate::model::ClaudeSessionState::Working;
                                     }
@@ -4199,11 +4201,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
                                     }
                                     // Re-find task since move_task_to_end_of_status may have repositioned it
-                                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                    // Only set Working state if not in a protected Review state from SDK
+                                    // Late SDK signals shouldn't override Paused state for Review tasks
+                                    if !is_protected_review {
+                                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                                            task.session_state = crate::model::ClaudeSessionState::Working;
+                                        }
+                                        project.needs_attention = false;
+                                        notify::clear_attention_indicator();
                                     }
-                                    project.needs_attention = false;
-                                    notify::clear_attention_indicator();
                                 }
                             }
                             _ => {}
@@ -4654,8 +4660,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                         task.claude_session_id = Some(session_id);
-                        task.session_state = crate::model::ClaudeSessionState::Working;
-                        task.session_mode = crate::model::SessionMode::SdkManaged;
+                        // Don't override session state for completed tasks (Review, Done)
+                        // A late SdkSessionStarted from QA shouldn't undo the Paused state set by QaValidationPassed
+                        if task.status != TaskStatus::Review && task.status != TaskStatus::Done {
+                            task.session_state = crate::model::ClaudeSessionState::Working;
+                            task.session_mode = crate::model::SessionMode::SdkManaged;
+                        }
                         // Increment SDK command count for CLI staleness detection
                         task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                         if let Some(ref wt) = task.worktree_path {
@@ -4913,7 +4923,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                         task.claude_session_id = Some(new_session_id);
                                         task.session_mode = crate::model::SessionMode::SdkManaged;
-                                        task.session_state = crate::model::ClaudeSessionState::Working;
+                                        // Only set Working state if task is actively being worked on
+                                        // For Review tasks, the session might just be idle - let actual
+                                        // Working/ToolUse events update the state if SDK starts working
+                                        if task.status != TaskStatus::Review && task.status != TaskStatus::Done {
+                                            task.session_state = crate::model::ClaudeSessionState::Working;
+                                        }
                                         // Increment SDK command count for CLI staleness detection
                                         task.sdk_command_count = task.sdk_command_count.saturating_add(1);
                                     }

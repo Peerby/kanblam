@@ -1566,25 +1566,24 @@ fn render_activity_tab<'a>(
         .map(|s| if s.len() > 20 { format!("{}...", &s[..17]) } else { s.to_string() })
         .unwrap_or_else(|| "(none)".to_string());
 
-    let mode_icon = match task.session_mode {
-        crate::model::SessionMode::SdkManaged => "⚡",
-        crate::model::SessionMode::CliInteractive => "⌨",
-        crate::model::SessionMode::CliActivelyWorking => "🔄",
-        crate::model::SessionMode::WaitingForCliExit => "⏳",
-    };
-
-    let mode_str = match task.session_mode {
-        crate::model::SessionMode::SdkManaged => "SDK",
-        crate::model::SessionMode::CliInteractive => "CLI",
-        crate::model::SessionMode::CliActivelyWorking => "CLI Active",
-        crate::model::SessionMode::WaitingForCliExit => "Waiting",
-    };
-
-    let mode_color = match task.session_mode {
-        crate::model::SessionMode::SdkManaged => Color::Cyan,
-        crate::model::SessionMode::CliInteractive => Color::Yellow,
-        crate::model::SessionMode::CliActivelyWorking => Color::Green,
-        crate::model::SessionMode::WaitingForCliExit => Color::DarkGray,
+    // For SDK mode, include session state to clarify if actively working or paused
+    let (mode_icon, mode_str, mode_color) = match task.session_mode {
+        crate::model::SessionMode::SdkManaged => {
+            // Show session state for SDK mode to clarify working vs paused
+            match task.session_state {
+                crate::model::ClaudeSessionState::Working => ("⚡", "SDK Working", Color::Green),
+                crate::model::ClaudeSessionState::Creating |
+                crate::model::ClaudeSessionState::Starting |
+                crate::model::ClaudeSessionState::Ready |
+                crate::model::ClaudeSessionState::Continuing => ("⚡", "SDK", Color::Cyan),
+                crate::model::ClaudeSessionState::Paused |
+                crate::model::ClaudeSessionState::Ended |
+                crate::model::ClaudeSessionState::NotStarted => ("⏸", "SDK Paused", Color::DarkGray),
+            }
+        }
+        crate::model::SessionMode::CliInteractive => ("⌨", "CLI", Color::Yellow),
+        crate::model::SessionMode::CliActivelyWorking => ("🔄", "CLI Active", Color::Green),
+        crate::model::SessionMode::WaitingForCliExit => ("⏳", "Waiting", Color::DarkGray),
     };
 
     lines.push(Line::from(vec![
