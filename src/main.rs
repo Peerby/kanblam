@@ -1438,8 +1438,8 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
-        // Enter input mode
-        KeyCode::Char('i') => vec![Message::FocusChanged(FocusArea::TaskInput)],
+        // Enter input mode - clears any edit/feedback/note mode and starts fresh
+        KeyCode::Char('i') => vec![Message::EnterInsertMode],
 
         // View task details (Enter opens task preview modal) or select project tab
         KeyCode::Enter => {

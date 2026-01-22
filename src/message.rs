@@ -294,6 +294,8 @@ pub enum Message {
     /// External editor finished - set the input text and submit
     ExternalEditorFinished(String),
     FocusChanged(FocusArea),
+    /// Enter insert mode - clears any edit/feedback/note mode and focuses TaskInput
+    EnterInsertMode,
     NavigateUp,
     NavigateDown,
     NavigateLeft,

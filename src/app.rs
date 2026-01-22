@@ -6428,6 +6428,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 self.model.ui_state.focus = area;
             }
 
+            Message::EnterInsertMode => {
+                // Clear any edit/feedback/note mode and reset to new task input
+                self.model.ui_state.editing_task_id = None;
+                self.model.ui_state.feedback_task_id = None;
+                self.model.ui_state.note_task_id = None;
+                self.model.ui_state.clear_input();
+                self.model.ui_state.focus = FocusArea::TaskInput;
+            }
+
             Message::NavigateUp => {
                 // Handle ProjectTabs navigation separately
                 if self.model.ui_state.focus == FocusArea::ProjectTabs {
