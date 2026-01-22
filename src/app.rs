@@ -328,8 +328,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
-                    // Kill any detached tmux sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached tmux sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
 
                     // Remove worktree
                     if let Some(ref wt_path) = worktree_path {
@@ -366,7 +366,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     self.model.active_project().and_then(|p| {
                         p.tasks.iter()
                             .find(|t| t.id == task_id)
-                            .map(|t| (p.slug(), t.tmux_window.clone()))
+                            .map(|t| (p.slug(), t.tmux_window.clone(), t.display_id()))
                     })
                 } else {
                     None
@@ -409,13 +409,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 }
 
                 // Kill any running sessions when moving to Done
-                if let Some((project_slug, window_name)) = cleanup_info {
+                if let Some((project_slug, window_name, display_id)) = cleanup_info {
                     // Kill tmux window if exists
                     if let Some(ref window) = window_name {
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
-                    // Kill any detached Claude/test sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
                 }
 
                 // Move cursor to follow the task to Planned
@@ -785,8 +785,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         }
                     }
 
-                    // Kill any detached Claude/test sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
 
                     // Merge branch to main
                     if let Err(e) = crate::worktree::merge_branch(&project_dir, &display_id) {
@@ -1125,8 +1125,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
-                    // Kill any detached Claude/test sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
 
                     // Merge branch to main (should be fast-forward now)
                     if let Err(e) = crate::worktree::merge_branch(&project_dir, &display_id) {
@@ -1458,8 +1458,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
-                    // Kill any detached Claude/test sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
 
                     // Remove worktree (don't merge)
                     if let Some(ref wt_path) = worktree_path {
@@ -1529,8 +1529,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let _ = crate::tmux::kill_task_window(&project_slug, window);
                     }
 
-                    // Kill any detached tmux sessions for this task
-                    crate::tmux::kill_task_sessions(&task_id.to_string());
+                    // Kill any detached tmux sessions for this task (uses display_id as session name)
+                    crate::tmux::kill_task_sessions(&display_id);
 
                     // Remove worktree if exists
                     if let Some(ref wt_path) = worktree_path {
@@ -3286,8 +3286,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
                                 }
 
-                                // Kill any detached Claude/test sessions for this task
-                                crate::tmux::kill_task_sessions(&task_id.to_string());
+                                // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                                crate::tmux::kill_task_sessions(&display_id);
 
                                 // Remove worktree
                                 if let Some(ref wt_path) = worktree_path {
@@ -3434,8 +3434,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     let _ = crate::tmux::kill_task_window(&project_slug, window);
                                 }
 
-                                // Kill any detached Claude/test sessions for this task
-                                crate::tmux::kill_task_sessions(&task_id.to_string());
+                                // Kill any detached Claude/test sessions for this task (uses display_id as session name)
+                                crate::tmux::kill_task_sessions(&display_id);
 
                                 // Remove worktree if still around
                                 if let Some(ref wt_path) = worktree_path {
@@ -3518,8 +3518,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                             let _ = client.stop_session(task_id);
                                         }
 
-                                        // Kill any detached sessions
-                                        crate::tmux::kill_task_sessions(&task_id.to_string());
+                                        // Kill any detached sessions (uses display_id as session name)
+                                        crate::tmux::kill_task_sessions(&display_id);
 
                                         // Remove worktree
                                         if let Some(ref wt_path) = worktree_path {

@@ -786,12 +786,15 @@ pub fn kill_task_window(project_slug: &str, window_name: &str) -> Result<()> {
 }
 
 /// Kill any detached tmux sessions associated with a task.
-/// Session name is the display_id (e.g., "TSKB-a7x")
-pub fn kill_task_sessions(task_id: &str) {
-    // task_id is now the display_id, use it directly as session name
-    let session_name = task_id.to_string();
+///
+/// The `display_id` parameter should be the task's display ID (e.g., "TSKB-a7x"),
+/// which is used as the session name when creating detached sessions via `open_popup_detached`.
+/// This is NOT the task's UUID.
+///
+/// Silently ignores errors (e.g., if session doesn't exist).
+pub fn kill_task_sessions(display_id: &str) {
     let _ = Command::new("tmux")
-        .args(["kill-session", "-t", &session_name])
+        .args(["kill-session", "-t", display_id])
         .output();
 }
 
