@@ -525,8 +525,12 @@ pub fn cleanup_applied_state(display_id: &str) {
 /// Apply a task's changes to the main worktree (for testing)
 /// This stashes any existing changes, applies the diff, and tracks the stash for unapply
 /// Returns the stash ref if there were local changes that were stashed
-pub fn apply_task_changes(project_dir: &PathBuf, display_id: &str) -> Result<Option<String>> {
-    let branch_name = format!("claude/{}", display_id);
+///
+/// # Arguments
+/// * `project_dir` - The main project directory
+/// * `display_id` - The task's display ID (for patch file path and logging)
+/// * `branch_name` - The actual git branch name (e.g., "claude/ABBR-xyz")
+pub fn apply_task_changes(project_dir: &PathBuf, display_id: &str, branch_name: &str) -> Result<Option<String>> {
 
     // Debug logging to file (TUI covers stderr)
     let log_path = std::path::PathBuf::from("/tmp/kanblam-apply.log");

@@ -1958,7 +1958,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     }
 
                     // STEP 1: Try fast apply first
-                    match crate::worktree::apply_task_changes(&project_dir, &display_id) {
+                    match crate::worktree::apply_task_changes(&project_dir, &display_id, &branch_name) {
                         Ok(stash_warning) => {
                             // Fast apply succeeded - stash was immediately popped
                             // stash_warning contains message if there were stash conflicts
@@ -4735,8 +4735,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         if !short_title.is_empty() {
                             task.short_title = Some(short_title);
                         }
-                        // Only update abbreviation if we got one
-                        if abbreviation.is_some() {
+                        // Only set abbreviation if not already set (preserves match with branch/worktree names)
+                        if abbreviation.is_some() && task.abbreviation.is_none() {
                             task.abbreviation = abbreviation;
                         }
                         task.spec = spec;
@@ -5073,12 +5073,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         .map(|t| (
                             p.working_dir.clone(),
                             t.worktree_path.clone(),
+                            t.git_branch.clone(),
                             t.status,
                             t.display_id(),
                         ))
                 });
 
-                if let Some((project_dir, worktree_path, status, display_id)) = task_info {
+                if let Some((project_dir, worktree_path, git_branch, status, display_id)) = task_info {
                     // Check if rebase is still in progress
                     if let Some(ref wt_path) = worktree_path {
                         if crate::worktree::is_rebase_in_progress(wt_path) {
@@ -5089,11 +5090,22 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         }
                     }
 
+                    // Get the branch name (should exist if we got here via rebase)
+                    let branch_name = match git_branch {
+                        Some(ref b) => b.clone(),
+                        None => {
+                            commands.push(Message::Error(
+                                "Task has no git branch reference.".to_string()
+                            ));
+                            return commands;
+                        }
+                    };
+
                     // Verify rebase succeeded
                     match crate::worktree::verify_rebase_success(&project_dir, &display_id) {
                         Ok(true) => {
                             // Rebase successful, now do the apply
-                            match crate::worktree::apply_task_changes(&project_dir, &display_id) {
+                            match crate::worktree::apply_task_changes(&project_dir, &display_id, &branch_name) {
                                 Ok(stash_warning) => {
                                     // Apply succeeded - stash was immediately popped
                                     if let Some(ref warning) = stash_warning {
