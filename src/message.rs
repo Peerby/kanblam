@@ -259,6 +259,14 @@ pub enum Message {
     /// Queue feedback to be sent when Claude finishes current work
     QueueFeedback { task_id: Uuid, feedback: String },
 
+    // Notes
+    /// Enter note-adding mode for a task (focus input for note text)
+    EnterNoteMode(Uuid),
+    /// Cancel note-adding mode
+    CancelNoteMode,
+    /// Add a note to a task
+    AddNote { task_id: Uuid, note: String },
+
     // QA validation
     /// Start QA validation for a task (run tests, AI review)
     StartQaValidation(Uuid),
@@ -304,6 +312,8 @@ pub enum Message {
     LoadGitDiff(Uuid),        // Load/refresh git diff for a task
     ScrollSpecUp(usize),      // Scroll spec tab up by N lines
     ScrollSpecDown(usize),    // Scroll spec tab down by N lines
+    ScrollNotesUp(usize),     // Scroll notes tab up by N lines
+    ScrollNotesDown(usize),   // Scroll notes tab down by N lines
     /// Open spec in external editor (Ctrl+G in spec tab)
     OpenSpecEditor(Uuid),
     /// External spec editor finished - update spec content

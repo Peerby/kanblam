@@ -1480,6 +1480,12 @@ pub struct Task {
     #[serde(skip)]
     pub start_after_spec: bool,
 
+    // === User notes ===
+
+    /// User-added notes for this task
+    #[serde(default)]
+    pub notes: Vec<String>,
+
     // === QA validation tracking ===
 
     /// Skip automatic QA validation for this task
@@ -1539,6 +1545,8 @@ impl Task {
             // Spec generation tracking
             generating_spec: false,
             start_after_spec: false,
+            // User notes
+            notes: Vec::new(),
             // QA validation tracking
             skip_qa: false,
             qa_attempts: 0,
@@ -1749,6 +1757,11 @@ pub struct UiState {
     /// The input area will be used to capture feedback text
     pub feedback_task_id: Option<Uuid>,
 
+    // Note-adding mode
+    /// If set, we're adding a note to this task
+    /// The input area will be used to capture note text
+    pub note_task_id: Option<Uuid>,
+
     // Logo shimmer animation (triggered on successful merge)
     /// Current shimmer position (0-7, where 0 = no shimmer, 1-4 = beam going up rows 4-1, 5-7 = fade out)
     /// The beam travels from bottom to top, lighting up each row with saturated colors
@@ -1796,6 +1809,10 @@ pub struct UiState {
     // Spec tab scrolling
     /// Scroll offset for the spec tab (lines scrolled from top)
     pub spec_scroll_offset: usize,
+
+    // Notes tab scrolling
+    /// Scroll offset for the notes tab (lines scrolled from top)
+    pub notes_scroll_offset: usize,
 
     // Welcome panel state
     /// Current welcome message index (for rotation)
@@ -2050,6 +2067,7 @@ pub enum TaskDetailTab {
     #[default]
     General,
     Spec,
+    Notes,
     Git,
     Activity,
     Help,
@@ -2061,6 +2079,7 @@ impl TaskDetailTab {
         &[
             TaskDetailTab::General,
             TaskDetailTab::Spec,
+            TaskDetailTab::Notes,
             TaskDetailTab::Git,
             TaskDetailTab::Activity,
             TaskDetailTab::Help,
@@ -2072,6 +2091,7 @@ impl TaskDetailTab {
         match self {
             TaskDetailTab::General => "general",
             TaskDetailTab::Spec => "spec",
+            TaskDetailTab::Notes => "notes",
             TaskDetailTab::Git => "git",
             TaskDetailTab::Activity => "activity",
             TaskDetailTab::Help => "help",
@@ -2082,7 +2102,8 @@ impl TaskDetailTab {
     pub fn next(&self) -> TaskDetailTab {
         match self {
             TaskDetailTab::General => TaskDetailTab::Spec,
-            TaskDetailTab::Spec => TaskDetailTab::Git,
+            TaskDetailTab::Spec => TaskDetailTab::Notes,
+            TaskDetailTab::Notes => TaskDetailTab::Git,
             TaskDetailTab::Git => TaskDetailTab::Activity,
             TaskDetailTab::Activity => TaskDetailTab::Help,
             TaskDetailTab::Help => TaskDetailTab::General,
@@ -2094,7 +2115,8 @@ impl TaskDetailTab {
         match self {
             TaskDetailTab::General => TaskDetailTab::Help,
             TaskDetailTab::Spec => TaskDetailTab::General,
-            TaskDetailTab::Git => TaskDetailTab::Spec,
+            TaskDetailTab::Notes => TaskDetailTab::Spec,
+            TaskDetailTab::Git => TaskDetailTab::Notes,
             TaskDetailTab::Activity => TaskDetailTab::Git,
             TaskDetailTab::Help => TaskDetailTab::Activity,
         }
@@ -2309,6 +2331,7 @@ impl Default for UiState {
             directory_browser: None,
             create_folder_input: None,
             feedback_task_id: None,
+            note_task_id: None,
             logo_shimmer_frame: 0,
             // Mascot eye animation: start with normal eyes, trigger first animation in ~30-90 seconds
             eye_animation: EyeAnimation::Normal,
@@ -2327,6 +2350,7 @@ impl Default for UiState {
             git_diff_scroll_offset: 0,
             git_diff_cache: None,
             spec_scroll_offset: 0,
+            notes_scroll_offset: 0,
             // Welcome panel: start at first message, rotate every ~8 seconds
             welcome_message_idx: 0,
             welcome_message_cooldown: 80,

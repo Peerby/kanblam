@@ -958,12 +958,14 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![]
         }
 
-        // Ctrl+C unfocuses editor, cancels edit/feedback if active (keeps content for new tasks)
+        // Ctrl+C unfocuses editor, cancels edit/feedback/note if active (keeps content for new tasks)
         KeyCode::Char('c') if ctrl => {
             // Clear pending replace mode if active
             app.model.ui_state.pending_replace_char = false;
             if app.model.ui_state.feedback_task_id.is_some() {
                 vec![Message::CancelFeedbackMode]
+            } else if app.model.ui_state.note_task_id.is_some() {
+                vec![Message::CancelNoteMode]
             } else if app.model.ui_state.editing_task_id.is_some() {
                 vec![Message::CancelEdit]
             } else {
@@ -1590,6 +1592,19 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
             vec![]
         }
 
+        // 'N' key: Add a note to the selected task
+        KeyCode::Char('N') => {
+            if let Some(project) = app.model.active_project() {
+                let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
+                if let Some(idx) = app.model.ui_state.selected_task_idx {
+                    if let Some(task) = tasks.get(idx) {
+                        return vec![Message::EnterNoteMode(task.id)];
+                    }
+                }
+            }
+            vec![]
+        }
+
         // Delete task
         KeyCode::Char('d') => {
             // Ask for confirmation before deleting the task
@@ -1996,6 +2011,7 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
     // Check which tab we're on for scroll handling
     let on_git_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Git;
     let on_spec_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Spec;
+    let on_notes_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Notes;
     let on_activity_tab = app.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Activity;
 
     match key.code {
@@ -2025,6 +2041,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffDown(1)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecDown(1)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesDown(1)]
             } else if on_activity_tab {
                 vec![Message::ScrollActivityDown(1)]
             } else {
@@ -2036,6 +2054,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffUp(1)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecUp(1)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesUp(1)]
             } else if on_activity_tab {
                 vec![Message::ScrollActivityUp(1)]
             } else {
@@ -2047,6 +2067,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffDown(20)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecDown(20)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesDown(20)]
             } else {
                 vec![]
             }
@@ -2056,6 +2078,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffUp(20)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecUp(20)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesUp(20)]
             } else {
                 vec![]
             }
@@ -2070,6 +2094,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffUp(100000)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecUp(100000)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesUp(100000)]
             } else {
                 vec![]
             }
@@ -2080,6 +2106,8 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
                 vec![Message::ScrollGitDiffDown(100000)]
             } else if on_spec_tab {
                 vec![Message::ScrollSpecDown(100000)]
+            } else if on_notes_tab {
+                vec![Message::ScrollNotesDown(100000)]
             } else {
                 vec![]
             }
@@ -2173,6 +2201,11 @@ fn handle_task_preview_modal_key(key: event::KeyEvent, app: &App) -> Vec<Message
         // Edit task
         KeyCode::Char('e') => {
             vec![Message::ToggleTaskPreview, Message::EditTask(task.id)]
+        }
+
+        // Add note to task
+        KeyCode::Char('N') => {
+            vec![Message::ToggleTaskPreview, Message::EnterNoteMode(task.id)]
         }
 
         // Decline (Review) or Delete (other statuses) - with confirmation

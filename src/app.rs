@@ -5747,6 +5747,57 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 }
             }
 
+            Message::EnterNoteMode(task_id) => {
+                // Verify task exists
+                let task_exists = self.model.active_project().map(|project| {
+                    project.tasks.iter().any(|t| t.id == task_id)
+                }).unwrap_or(false);
+
+                if task_exists {
+                    // Enter note mode: set the note task and focus the input
+                    self.model.ui_state.note_task_id = Some(task_id);
+                    self.model.ui_state.focus = crate::model::FocusArea::TaskInput;
+                    self.model.ui_state.clear_input();
+                    // Ensure we're in insert mode for typing
+                    self.model.ui_state.editor_state.mode = edtui::EditorMode::Insert;
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Enter note (Esc to cancel, Enter to save)".to_string()
+                    )));
+                } else {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "Task not found".to_string()
+                    )));
+                }
+            }
+
+            Message::CancelNoteMode => {
+                if self.model.ui_state.note_task_id.is_some() {
+                    self.model.ui_state.note_task_id = None;
+                    self.model.ui_state.clear_input();
+                    self.model.ui_state.focus = crate::model::FocusArea::KanbanBoard;
+                    commands.push(Message::SetStatusMessage(None));
+                }
+            }
+
+            Message::AddNote { task_id, note } => {
+                // Clear note mode
+                self.model.ui_state.note_task_id = None;
+                self.model.ui_state.clear_input();
+                self.model.ui_state.focus = crate::model::FocusArea::KanbanBoard;
+
+                // Add the note to the task
+                if let Some(project) = self.model.active_project_mut() {
+                    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
+                        task.notes.push(note);
+                        commands.push(Message::SetStatusMessage(Some(
+                            "Note added".to_string()
+                        )));
+                    } else {
+                        commands.push(Message::Error("Task not found".to_string()));
+                    }
+                }
+            }
+
             Message::StartQaValidation(task_id) => {
                 // Start QA validation for a task
                 // Guard: If already in QA session, skip (prevents duplicate triggers)
@@ -6237,6 +6288,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     } else {
                         // Empty feedback cancels the mode
                         commands.push(Message::CancelFeedbackMode);
+                    }
+                }
+                // Check if we're in note mode
+                else if let Some(task_id) = self.model.ui_state.note_task_id {
+                    if !input.is_empty() {
+                        commands.push(Message::AddNote { task_id, note: input });
+                    } else {
+                        // Empty note cancels the mode
+                        commands.push(Message::CancelNoteMode);
                     }
                 }
                 else if !input.is_empty() {
@@ -6773,6 +6833,30 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     .model
                     .ui_state
                     .spec_scroll_offset
+                    .saturating_add(lines)
+                    .min(max_scroll);
+            }
+
+            Message::ScrollNotesUp(lines) => {
+                self.model.ui_state.notes_scroll_offset =
+                    self.model.ui_state.notes_scroll_offset.saturating_sub(lines);
+            }
+
+            Message::ScrollNotesDown(lines) => {
+                // Get the number of notes to cap scrolling
+                let max_notes = self.model.active_project()
+                    .and_then(|project| {
+                        let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
+                        self.model.ui_state.selected_task_idx
+                            .and_then(|idx| tasks.get(idx).copied())
+                    })
+                    .map(|task| task.notes.len())
+                    .unwrap_or(0);
+                let max_scroll = max_notes.saturating_sub(5); // Leave some visible notes
+                self.model.ui_state.notes_scroll_offset = self
+                    .model
+                    .ui_state
+                    .notes_scroll_offset
                     .saturating_add(lines)
                     .min(max_scroll);
             }

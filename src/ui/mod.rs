@@ -664,6 +664,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let is_focused = app.model.ui_state.focus == FocusArea::TaskInput;
     let is_editing_task = app.model.ui_state.editing_task_id.is_some();
     let is_feedback_mode = app.model.ui_state.feedback_task_id.is_some();
+    let is_note_mode = app.model.ui_state.note_task_id.is_some();
 
     // Check if feedback is for a live (InProgress) task
     let is_live_feedback = app.model.ui_state.feedback_task_id.and_then(|task_id| {
@@ -678,6 +679,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
             Color::Green  // Green for live feedback to running task
         } else if is_feedback_mode {
             Color::Cyan   // Cyan for feedback to paused task
+        } else if is_note_mode {
+            Color::LightBlue  // Light blue for note mode
         } else if is_editing_task {
             Color::Magenta
         } else {
@@ -727,6 +730,8 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             Line::from(Span::styled(" Feedback ", title_style))
         }
+    } else if is_note_mode {
+        Line::from(Span::styled(" Add Note ", title_style))
     } else if is_editing_task {
         let img_count = app.model.ui_state.editing_task_id.map(get_task_image_count).unwrap_or(0);
         if img_count > 0 {
@@ -943,6 +948,9 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
         }
         crate::model::TaskDetailTab::Spec => {
             render_spec_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
+        }
+        crate::model::TaskDetailTab::Notes => {
+            render_notes_tab(&mut lines, task, app, &label_style, &dim_style, &key_style);
         }
         crate::model::TaskDetailTab::Git => {
             render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
@@ -1322,6 +1330,121 @@ fn render_spec_tab<'a>(
             "A spec will be generated when the task is created or edited.",
             *dim_style,
         )));
+    }
+}
+
+/// Render the Notes tab content
+fn render_notes_tab(
+    lines: &mut Vec<Line<'_>>,
+    task: &crate::model::Task,
+    app: &App,
+    _label_style: &Style,
+    dim_style: &Style,
+    key_style: &Style,
+) {
+    if task.notes.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No notes yet.",
+            *dim_style,
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Press ", *dim_style),
+            Span::styled("N", *key_style),
+            Span::styled(" to add a note.", *dim_style),
+        ]));
+    } else {
+        let total_notes = task.notes.len();
+        let scroll_offset = app.model.ui_state.notes_scroll_offset;
+        let visible_notes = 10; // How many notes to show at once
+
+        // Show scroll hints if content is scrollable
+        if total_notes > visible_notes {
+            lines.push(Line::from(vec![
+                Span::styled("j", *key_style),
+                Span::styled("/", *dim_style),
+                Span::styled("k", *key_style),
+                Span::styled(" scroll  ", *dim_style),
+                Span::styled("PgUp", *key_style),
+                Span::styled("/", *dim_style),
+                Span::styled("PgDn", *key_style),
+                Span::styled(" page  ", *dim_style),
+                Span::styled("N", *key_style),
+                Span::styled(" add note", *dim_style),
+            ]));
+
+            // Show scroll position indicator
+            let percentage = if total_notes > 0 {
+                ((scroll_offset as f64 / total_notes.saturating_sub(visible_notes).max(1) as f64) * 100.0).min(100.0) as usize
+            } else {
+                0
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("Notes {}-{} of {} ({}%)",
+                        scroll_offset + 1,
+                        (scroll_offset + visible_notes).min(total_notes),
+                        total_notes,
+                        percentage
+                    ),
+                    *dim_style,
+                ),
+            ]));
+            lines.push(Line::from(""));
+        } else {
+            // Show add hint at top when not scrollable
+            lines.push(Line::from(vec![
+                Span::styled("N", *key_style),
+                Span::styled(" add note  ", *dim_style),
+                Span::styled(format!("{} note{}", total_notes, if total_notes == 1 { "" } else { "s" }), *dim_style),
+            ]));
+            lines.push(Line::from(""));
+        }
+
+        // Render visible notes
+        for (i, note) in task.notes.iter().skip(scroll_offset).take(visible_notes).enumerate() {
+            let note_num = scroll_offset + i + 1;
+            // Wrap long notes to multiple lines
+            let wrapped_lines: Vec<&str> = note.lines().collect();
+
+            // First line with note number
+            if let Some(first_line) = wrapped_lines.first() {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{}. ", note_num),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        (*first_line).to_string(),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+            }
+
+            // Continuation lines (indented)
+            for line in wrapped_lines.iter().skip(1) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        "   ",
+                        Style::default(),
+                    ),
+                    Span::styled(
+                        (*line).to_string(),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+            }
+        }
+
+        // Show "more below" indicator
+        let remaining = total_notes.saturating_sub(scroll_offset + visible_notes);
+        if remaining > 0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("... {} more note{} below (j to scroll) ...", remaining, if remaining == 1 { "" } else { "s" }),
+                *dim_style,
+            )));
+        }
     }
 }
 
