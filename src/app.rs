@@ -386,15 +386,15 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     } else if to_status == TaskStatus::Done {
                         // Use complete_task to record statistics and move to Done
                         project.complete_task(task_id);
-                    } else if to_status == TaskStatus::Review {
-                        // Special handling for moving to Review: move to end of Review tasks
-                        // This ensures the first task to finish appears at the top
-                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
-                    } else if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.status = to_status;
-                        if to_status == TaskStatus::InProgress {
+                    } else if to_status == TaskStatus::InProgress {
+                        // Set started_at before moving, then insert at top
+                        if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                             task.started_at = Some(Utc::now());
                         }
+                        project.move_task_to_start_of_status(task_id, TaskStatus::InProgress);
+                    } else {
+                        // All other statuses: insert at top of that column
+                        project.move_task_to_start_of_status(task_id, to_status);
                     }
                     // Clear attention flag if no more review tasks
                     if project.review_count() == 0 {
@@ -2862,7 +2862,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 next_task.queued_for_session = None; // Clear queue reference
                             }
                             // Move to end of InProgress column so newly active tasks appear at bottom
-                            project.move_task_to_end_of_status(next_task_id, TaskStatus::InProgress);
+                            project.move_task_to_start_of_status(next_task_id, TaskStatus::InProgress);
 
                             // Clear session info from finished task (it's now in Review)
                             if let Some(finished_task) = project.tasks.iter_mut().find(|t| t.id == finished_task_id) {
@@ -4045,7 +4045,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // (only if not already in Review from a duplicate hook)
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     if task.status != TaskStatus::Review {
-                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                                     }
                                     // Don't play attention sound - we're continuing automatically
                                     commands.push(Message::SendQueuedTask { finished_task_id: task_id });
@@ -4056,7 +4056,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // CLI-sourced signal - move to review and notify (no QA for CLI)
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                     if task.status != TaskStatus::Review {
-                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                                         project.needs_attention = true;
                                         if !replaying_signals {
                                             notify::play_attention_sound();
@@ -4101,7 +4101,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     } else if task.status != TaskStatus::Review {
                                         // CLI-sourced signal - move to review and notify (no QA for CLI)
                                         task.session_state = crate::model::ClaudeSessionState::Ended;
-                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                                         project.needs_attention = true;
                                         if !replaying_signals {
                                             notify::play_attention_sound();
@@ -4170,7 +4170,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     && !is_protected_review
                                 {
                                     // Move to end of InProgress column so newly active tasks appear at bottom
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
+                                    project.move_task_to_start_of_status(task_id, TaskStatus::InProgress);
                                 }
                                 // Only set Working state if not in a protected/completed state
                                 // Late SDK signals shouldn't override Paused state for Review tasks
@@ -4198,9 +4198,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         && !is_protected_review
                                     {
                                         // Move to end of InProgress column so newly active tasks appear at bottom
-                                        project.move_task_to_end_of_status(task_id, TaskStatus::InProgress);
+                                        project.move_task_to_start_of_status(task_id, TaskStatus::InProgress);
                                     }
-                                    // Re-find task since move_task_to_end_of_status may have repositioned it
+                                    // Re-find task since move_task_to_start_of_status may have repositioned it
                                     // Only set Working state if not in a protected Review state from SDK
                                     // Late SDK signals shouldn't override Paused state for Review tasks
                                     if !is_protected_review {
@@ -4536,7 +4536,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                         commands.push(Message::StartQaValidation(task_id));
                                     } else {
                                         task.session_state = crate::model::ClaudeSessionState::Paused;
-                                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                        project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                                         project.needs_attention = true;
                                         notify::play_attention_sound();
                                         notify::set_attention_indicator(&project.name);
@@ -4559,7 +4559,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // (QA start is only triggered by Stopped which has the output)
                                     task.session_state = crate::model::ClaudeSessionState::Ended;
                                     let task_id = task.id;
-                                    project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                                    project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                                     project.needs_attention = true;
                                     notify::play_attention_sound();
                                     notify::set_attention_indicator(&project.name);
@@ -5822,7 +5822,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         task.in_qa_session = false;
                         task.session_state = crate::model::ClaudeSessionState::Paused;
                         task.log_activity("QA validation passed");
-                        project.move_task_to_end_of_status(task_id, TaskStatus::Review);
+                        project.move_task_to_start_of_status(task_id, TaskStatus::Review);
                         project.needs_attention = true;
                         notify::play_attention_sound();
                         notify::set_attention_indicator(&project.name);
@@ -5918,7 +5918,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         task.qa_exceeded_warning = true;
                         task.session_state = crate::model::ClaudeSessionState::Paused;
                         task.log_activity("QA max attempts exceeded - needs manual review");
-                        project.move_task_to_end_of_status(task_id, TaskStatus::NeedsWork);
+                        project.move_task_to_start_of_status(task_id, TaskStatus::NeedsWork);
                         project.needs_attention = true;
                         notify::play_attention_sound();
                         notify::set_attention_indicator(&project.name);

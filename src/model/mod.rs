@@ -1153,6 +1153,31 @@ impl Project {
         }
     }
 
+    /// Move a task to the start of a given status column (most recently arrived at top)
+    pub fn move_task_to_start_of_status(&mut self, task_id: Uuid, new_status: TaskStatus) -> bool {
+        if let Some(idx) = self.tasks.iter().position(|t| t.id == task_id) {
+            let mut task = self.tasks.remove(idx);
+            task.status = new_status;
+
+            // Find the position of the first task with this status
+            let insert_pos = self.tasks.iter()
+                .position(|t| t.status == new_status)
+                .unwrap_or_else(|| {
+                    // No tasks with this status yet - find appropriate position
+                    // Status order: Planned, InProgress, Testing, NeedsWork, Review, Done
+                    // Insert before any tasks with a "later" status
+                    self.tasks.iter()
+                        .position(|t| t.status > new_status)
+                        .unwrap_or(self.tasks.len())
+                });
+
+            self.tasks.insert(insert_pos, task);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Complete a task, recording statistics and moving it to Done.
     /// This is the canonical way to mark a task as done - use instead of direct status assignment.
     /// Returns the task ID if successful.
@@ -1179,8 +1204,11 @@ impl Project {
             task.git_branch = None;
             task.session_state = ClaudeSessionState::Ended;
 
-            // Push to end (will be last in Done column)
-            self.tasks.push(task);
+            // Insert at start of Done column (most recently completed at top)
+            let insert_pos = self.tasks.iter()
+                .position(|t| t.status == TaskStatus::Done)
+                .unwrap_or(self.tasks.len());
+            self.tasks.insert(insert_pos, task);
             Some(task_id)
         } else {
             None
