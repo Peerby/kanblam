@@ -8,10 +8,11 @@ use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
         cursor::{Hide, Show},
-        event::{self, Event, KeyCode, KeyEventKind},
+        event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode},
     },
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -293,68 +294,95 @@ fn detect_dev_command(worktree_path: &PathBuf) -> Option<String> {
     None
 }
 
-/// Render the statusbar
+/// Width of the plain "KANBLAM" text
+const KANBLAM_TEXT_WIDTH: u16 = 7; // "KANBLAM" = 7 chars
+
+/// Width of the 2-line KANBLAM wordmark (same as main app wordmark, 30 chars + trailing space)
+const KANBLAM_ART_WIDTH: u16 = 31;
+
+/// 2-line KANBLAM wordmark derived from the main app's 3-line version
+/// - K, A, N, A, M: Use lines 1 and 2 (drop line 3)
+/// - L: Use line 2 shifted up, with █▄▄ base from line 3
+/// - B: Both lines have holes using ▖ with black fg on green bg
+// Top line split around B hole: "  █ █ ▄▀█ █▄ █ █" + ▖ (styled) + "▄ █   ▄▀█ █▀▄▀█"
+const KANBLAM_ART_TOP_PRE: &str    = "  █ █ ▄▀█ █▄ █ █";  // Before B hole
+const KANBLAM_ART_TOP_POST: &str   = "▄ █   ▄▀█ █▀▄▀█";   // After B hole
+// Bottom line split around B hole: "█▀▄ █▀█ █ ▀█ █" + ▖ (styled) + "█ █▄▄ █▀█ █ ▀ █"
+const KANBLAM_ART_BOTTOM_PRE: &str  = "█▀▄ █▀█ █ ▀█ █";   // Before B hole
+const KANBLAM_ART_BOTTOM_POST: &str = "█ █▄▄ █▀█ █ ▀ █";  // After B hole
+
+/// Render the statusbar (2 lines)
+/// When there's enough width: 2-line KANBLAM art on the right of both lines
+/// Otherwise: status on line 1, plain "KANBLAM" on line 2
 fn render(frame: &mut Frame, state: &StatusbarState) {
     let area = frame.area();
+    let bg_style = Style::default().bg(Color::Rgb(30, 30, 40));
+    let green = Color::Rgb(80, 200, 120);
+    let kanblam_style = Style::default().fg(green).add_modifier(Modifier::BOLD);
 
-    // Build status line
-    let mut spans = Vec::new();
+    // Determine if we have space for the 2-line art logo
+    // Need enough width for: status content (~80 chars) + gap (2) + logo (32) = ~115 chars minimum
+    // Using MIN_WIDTH_FOR_ART_LOGO (120) to be safe and prevent overlap on narrow screens
+    let use_art_logo = area.width >= MIN_WIDTH_FOR_ART_LOGO && area.height >= 2;
+
+    // === Build status spans (used on line 1) ===
+    let mut status_spans = Vec::new();
 
     // Git branch indicator
-    spans.push(Span::styled(
+    status_spans.push(Span::styled(
         " \u{e0a0} ", // Nerd Font git branch icon
         Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
     ));
 
     if let Some(ref branch) = state.branch_name {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             branch.clone(),
             Style::default().fg(Color::Magenta),
         ));
     } else {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             "unknown",
             Style::default().fg(Color::DarkGray),
         ));
     }
 
     // Ahead/behind indicator
-    spans.push(Span::styled(
+    status_spans.push(Span::styled(
         " │ ",
         Style::default().fg(Color::DarkGray),
     ));
 
     if state.behind > 0 {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             format!("↓{}", state.behind),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::raw(" "));
+        status_spans.push(Span::raw(" "));
     }
 
     if state.ahead > 0 {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             format!("↑{}", state.ahead),
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ));
     }
 
     if state.ahead == 0 && state.behind == 0 {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             "✓ synced",
             Style::default().fg(Color::Green),
         ));
     }
 
     // Separator before keybindings
-    spans.push(Span::styled(
+    status_spans.push(Span::styled(
         " │ ",
         Style::default().fg(Color::DarkGray),
     ));
 
     // Show status message if any, otherwise show keybinding hints
     if let Some((ref msg, _)) = state.status_message {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             msg.clone(),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ));
@@ -366,19 +394,19 @@ fn render(frame: &mut Frame, state: &StatusbarState) {
             ("S", "stop"),
             ("c", "claude"),
             ("z", "shell"),
-            ("b", "back"),
+            ("b", "back to Kanblam"),
             ("k", "kill"),
         ];
 
         for (i, (key, action)) in hints.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
+                status_spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
             }
-            spans.push(Span::styled(
+            status_spans.push(Span::styled(
                 key.to_string(),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(
+            status_spans.push(Span::styled(
                 format!(":{}", action),
                 Style::default().fg(Color::DarkGray),
             ));
@@ -387,20 +415,107 @@ fn render(frame: &mut Frame, state: &StatusbarState) {
 
     // Dev running indicator
     if state.dev_running {
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             " │ ",
             Style::default().fg(Color::DarkGray),
         ));
-        spans.push(Span::styled(
+        status_spans.push(Span::styled(
             "● running",
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     }
 
-    let line = Line::from(spans);
-    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Rgb(30, 30, 40)));
+    if use_art_logo {
+        // === 2-LINE ART MODE: Logo on right side of both lines ===
+        let logo_padding = area.width.saturating_sub(KANBLAM_ART_WIDTH + 1);
 
-    frame.render_widget(paragraph, area);
+        // LINE 1: Status on left, top of logo on right
+        if area.height >= 1 {
+            let line1_area = Rect { x: area.x, y: area.y, width: area.width, height: 1 };
+
+            // Calculate status content width
+            let status_width: usize = status_spans.iter().map(|s| s.content.chars().count()).sum();
+            let available_for_status = logo_padding.saturating_sub(2) as usize; // Leave gap before logo
+
+            let mut line1_spans = status_spans.clone();
+
+            // Add padding between status and logo
+            if status_width < available_for_status {
+                let gap = available_for_status - status_width;
+                line1_spans.push(Span::styled(" ".repeat(gap), bg_style));
+            }
+
+            // Add top line of logo with B hole
+            // B hole style: black foreground on green background (same as main wordmark)
+            let hole_style = Style::default().fg(Color::Black).bg(green);
+            line1_spans.push(Span::styled(KANBLAM_ART_TOP_PRE, kanblam_style));
+            line1_spans.push(Span::styled("▖", hole_style));  // B top hole
+            line1_spans.push(Span::styled(KANBLAM_ART_TOP_POST, kanblam_style));
+            line1_spans.push(Span::styled(" ", bg_style));
+
+            let line1 = Line::from(line1_spans);
+            let para1 = Paragraph::new(line1).style(bg_style);
+            frame.render_widget(para1, line1_area);
+        }
+
+        // LINE 2: Empty left side, bottom of logo on right
+        if area.height >= 2 {
+            let line2_area = Rect { x: area.x, y: area.y + 1, width: area.width, height: 1 };
+
+            // B bottom middle: horizontal line (black line on green background)
+            let bottom_b_style = Style::default().fg(Color::Black).bg(green);
+
+            let mut line2_spans = Vec::new();
+            line2_spans.push(Span::styled(" ".repeat(logo_padding as usize), bg_style));
+            line2_spans.push(Span::styled(KANBLAM_ART_BOTTOM_PRE, kanblam_style));
+            line2_spans.push(Span::styled("━", bottom_b_style));  // B bottom middle line
+            line2_spans.push(Span::styled(KANBLAM_ART_BOTTOM_POST, kanblam_style));
+            line2_spans.push(Span::styled(" ", bg_style));
+
+            let line2 = Line::from(line2_spans);
+            let para2 = Paragraph::new(line2).style(bg_style);
+            frame.render_widget(para2, line2_area);
+        }
+    } else {
+        // === PLAIN TEXT MODE: Status on line 1, "KANBLAM" on line 2 ===
+
+        // LINE 1: Status content
+        if area.height >= 1 {
+            let line1_area = Rect { x: area.x, y: area.y, width: area.width, height: 1 };
+            let line1 = Line::from(status_spans);
+            let para1 = Paragraph::new(line1).style(bg_style);
+            frame.render_widget(para1, line1_area);
+        }
+
+        // LINE 2: Plain "KANBLAM" right-aligned
+        if area.height >= 2 {
+            let line2_area = Rect { x: area.x, y: area.y + 1, width: area.width, height: 1 };
+
+            let padding = area.width.saturating_sub(KANBLAM_TEXT_WIDTH + 1);
+            let mut line2_spans = Vec::new();
+            if padding > 0 {
+                line2_spans.push(Span::styled(" ".repeat(padding as usize), bg_style));
+            }
+            line2_spans.push(Span::styled("KANBLAM", kanblam_style));
+            line2_spans.push(Span::styled(" ", bg_style));
+
+            let line2 = Line::from(line2_spans);
+            let para2 = Paragraph::new(line2).style(bg_style);
+            frame.render_widget(para2, line2_area);
+        }
+    }
+}
+
+/// Minimum width to show the 2-line art logo (must match render function threshold)
+const MIN_WIDTH_FOR_ART_LOGO: u16 = 120;
+
+/// Get the column position where KANBLAM text/logo starts (for click detection)
+/// Returns (start_col, end_col) - clicks anywhere on line 2 in this range trigger "back"
+fn get_kanblam_click_region(area_width: u16) -> (u16, u16) {
+    let use_art = area_width >= MIN_WIDTH_FOR_ART_LOGO;
+    let text_width = if use_art { KANBLAM_ART_WIDTH } else { KANBLAM_TEXT_WIDTH };
+    let start_col = area_width.saturating_sub(text_width + 1);
+    (start_col, area_width)
 }
 
 /// Handle a key press, returns true if should quit
@@ -599,8 +714,8 @@ pub fn run(task_id: &str, worktree_path: PathBuf, parent_session: Option<String>
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear the terminal area and hide cursor
-    execute!(io::stdout(), Hide)?;
+    // Clear the terminal area, hide cursor, and enable mouse capture for click handling
+    execute!(io::stdout(), Hide, EnableMouseCapture)?;
 
     let mut state = StatusbarState::new(task_id.to_string(), worktree_path, parent_session);
 
@@ -610,7 +725,7 @@ pub fn run(task_id: &str, worktree_path: PathBuf, parent_session: Option<String>
     let result = run_loop(&mut terminal, &mut state);
 
     // Restore terminal
-    execute!(io::stdout(), Show)?;
+    execute!(io::stdout(), Show, DisableMouseCapture)?;
     disable_raw_mode()?;
 
     result
@@ -634,16 +749,48 @@ fn run_loop(
         state.enforce_pane_height();
 
         // Render
-        terminal.draw(|f| render(f, state))?;
+        let area = terminal.draw(|f| render(f, state))?.area;
 
         // Handle events with timeout (for periodic refresh)
         if event::poll(Duration::from_millis(500))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    if handle_key(state, key.code) {
-                        break;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        if handle_key(state, key.code) {
+                            break;
+                        }
                     }
                 }
+                Event::Mouse(mouse) => {
+                    // Handle click on KANBLAM logo/text (right side of statusbar)
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        let row = mouse.row;
+                        let col = mouse.column;
+                        let (start_col, end_col) = get_kanblam_click_region(area.width);
+                        let use_art = area.width >= MIN_WIDTH_FOR_ART_LOGO;
+
+                        // When using 2-line art, clicks on either line in the logo region count
+                        // When using plain text, only clicks on line 2 count
+                        let is_logo_click = if use_art {
+                            (row == 0 || row == 1) && col >= start_col && col < end_col
+                        } else {
+                            row == 1 && area.height >= 2 && col >= start_col && col < end_col
+                        };
+
+                        if is_logo_click {
+                            // Click on KANBLAM - go back to Kanblam
+                            if let Some(parent) = state.parent_session.clone() {
+                                state.set_status("Switching to Kanblam...");
+                                let _ = Command::new("tmux")
+                                    .args(["switch-client", "-t", &parent])
+                                    .output();
+                            } else {
+                                state.set_status("No parent Kanblam session found");
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
