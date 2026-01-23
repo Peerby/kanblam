@@ -212,6 +212,10 @@ pub struct StatusbarState {
     pub tmux_keys: TmuxKeys,
     /// Whether this statusbar pane is the active pane (receiving keyboard input)
     pub pane_is_active: bool,
+    /// Whether the help modal is currently shown
+    pub help_modal_visible: bool,
+    /// Height of the help modal (for pane resizing)
+    pub help_modal_height: u16,
 }
 
 impl StatusbarState {
@@ -258,6 +262,8 @@ impl StatusbarState {
             lazygit_install_prompt: false,
             tmux_keys,
             pane_is_active: false,
+            help_modal_visible: false,
+            help_modal_height: HELP_MODAL_HEIGHT,
         }
     }
 
@@ -343,10 +349,16 @@ impl StatusbarState {
         }
     }
 
-    /// Check pane height and resize to 2 lines if needed.
+    /// Check pane height and resize if needed.
+    /// Normal mode: 2 lines. Help modal mode: help_modal_height lines.
     /// This handles cases where the tmux layout changes (e.g., different terminal
     /// attaches to the session with different dimensions).
     pub fn enforce_pane_height(&mut self) {
+        // Don't enforce height while help modal is visible - we want it to stay expanded
+        if self.help_modal_visible {
+            return;
+        }
+
         // Only check every 2 seconds to avoid excessive tmux commands
         if self.last_height_check.elapsed() < Duration::from_secs(2) {
             return;
@@ -484,6 +496,91 @@ fn detect_dev_command(worktree_path: &PathBuf) -> Option<String> {
 /// Width of the plain "KANBLAM" text
 const KANBLAM_TEXT_WIDTH: u16 = 7; // "KANBLAM" = 7 chars
 
+/// Height of the help modal (lines needed to display all help text)
+const HELP_MODAL_HEIGHT: u16 = 16;
+
+/// Key hint definition with full and abbreviated forms
+struct KeyHint {
+    key: &'static str,
+    full: &'static str,
+    abbrev: &'static str,
+}
+
+/// Get the ordered list of key hints
+/// Order: start / stop / test / claude / shell / git / kill / rebase / commit / ?
+fn get_key_hints() -> Vec<KeyHint> {
+    vec![
+        KeyHint { key: "s", full: "start", abbrev: "sta" },
+        KeyHint { key: "S", full: "stop", abbrev: "stp" },
+        KeyHint { key: "t", full: "test", abbrev: "tst" },
+        KeyHint { key: "c", full: "claude", abbrev: "cla" },
+        KeyHint { key: "z", full: "shell", abbrev: "shl" },
+        KeyHint { key: "g", full: "git", abbrev: "git" },
+        KeyHint { key: "k", full: "kill", abbrev: "kil" },
+        KeyHint { key: "r", full: "rebase", abbrev: "reb" },
+        KeyHint { key: "C", full: "commit", abbrev: "cmt" },
+        KeyHint { key: "?", full: "help", abbrev: "?" },
+    ]
+}
+
+/// Calculate the width needed for key hints with full labels
+fn hints_full_width(hints: &[KeyHint]) -> usize {
+    // Format: "k:action k:action ..." (space between, no trailing space)
+    hints.iter().map(|h| h.key.len() + 1 + h.full.len()).sum::<usize>() + hints.len().saturating_sub(1)
+}
+
+/// Calculate the width needed for key hints with abbreviated labels
+fn hints_abbrev_width(hints: &[KeyHint]) -> usize {
+    hints.iter().map(|h| h.key.len() + 1 + h.abbrev.len()).sum::<usize>() + hints.len().saturating_sub(1)
+}
+
+/// Build key hint spans based on available width
+fn build_key_hint_spans(available_width: usize) -> Vec<Span<'static>> {
+    let hints = get_key_hints();
+    let full_width = hints_full_width(&hints);
+    let abbrev_width = hints_abbrev_width(&hints);
+
+    // Decide whether to use full or abbreviated labels
+    let use_abbrev = available_width < full_width;
+
+    // If we can't even fit abbreviated, show as many as we can
+    let max_hints = if available_width < abbrev_width {
+        // Calculate how many hints we can fit
+        let mut count = 0;
+        let mut width = 0;
+        for (i, hint) in hints.iter().enumerate() {
+            let hint_width = hint.key.len() + 1 + hint.abbrev.len();
+            let needed = if i > 0 { hint_width + 1 } else { hint_width };
+            if width + needed > available_width {
+                break;
+            }
+            width += needed;
+            count += 1;
+        }
+        count
+    } else {
+        hints.len()
+    };
+
+    let mut spans = Vec::new();
+    for (i, hint) in hints.iter().take(max_hints).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
+        }
+        spans.push(Span::styled(
+            hint.key.to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+        let label = if use_abbrev { hint.abbrev } else { hint.full };
+        spans.push(Span::styled(
+            format!(":{}", label),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    spans
+}
+
 /// Width of the 2-line KANBLAM wordmark (same as main app wordmark, 30 chars + trailing space)
 const KANBLAM_ART_WIDTH: u16 = 31;
 
@@ -498,11 +595,17 @@ const KANBLAM_ART_TOP_POST: &str   = "▄ █   ▄▀█ █▀▄▀█";   //
 const KANBLAM_ART_BOTTOM_PRE: &str  = "█▀▄ █▀█ █ ▀█ █";   // Before B hole
 const KANBLAM_ART_BOTTOM_POST: &str = "█ █▄▄ █▀█ █ ▀ █";  // After B hole
 
-/// Render the statusbar (2 lines)
+/// Render the statusbar (2 lines normally, more when help modal is visible)
 /// When there's enough width: 2-line KANBLAM art on the right of both lines
 /// Otherwise: status on line 1, plain "KANBLAM" on line 2
 fn render(frame: &mut Frame, state: &StatusbarState) {
     let area = frame.area();
+
+    // If help modal is visible, render it instead of the normal statusbar
+    if state.help_modal_visible {
+        render_help_modal(frame, area);
+        return;
+    }
     // Use a highlighted background when this pane is active to indicate it receives keyboard input
     // Active color uses a warm tint from the mascot palette (dark magenta/orange)
     let bg_color = if state.pane_is_active {
@@ -581,31 +684,20 @@ fn render(frame: &mut Frame, state: &StatusbarState) {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ));
     } else {
-        // Keybinding hints
-        let hints = [
-            ("g", "git"),
-            ("r", "rebase"),
-            ("s", "start"),
-            ("S", "stop"),
-            ("c", "claude"),
-            ("z", "shell"),
-            ("b", "back to Kanblam"),
-            ("k", "kill"),
-        ];
+        // Calculate available width for key hints
+        // Account for: leading content (branch, ahead/behind, separator ~40 chars) + tmux hints (~20 chars) + logo (~35 chars)
+        let status_prefix_width: usize = status_spans.iter().map(|s| s.content.chars().count()).sum();
+        let tmux_hint_width = " │ panes:".len() + state.tmux_keys.format_hint().len();
+        let logo_reservation = if area.width >= MIN_WIDTH_FOR_ART_LOGO { KANBLAM_ART_WIDTH as usize + 2 } else { 0 };
+        let available_for_hints = (area.width as usize)
+            .saturating_sub(status_prefix_width)
+            .saturating_sub(tmux_hint_width)
+            .saturating_sub(logo_reservation)
+            .saturating_sub(5); // Safety margin
 
-        for (i, (key, action)) in hints.iter().enumerate() {
-            if i > 0 {
-                status_spans.push(Span::styled(" ", Style::default().fg(Color::DarkGray)));
-            }
-            status_spans.push(Span::styled(
-                key.to_string(),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ));
-            status_spans.push(Span::styled(
-                format!(":{}", action),
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
+        // Build key hints with dynamic abbreviation
+        let hint_spans = build_key_hint_spans(available_for_hints);
+        status_spans.extend(hint_spans);
 
         // Tmux pane navigation hints
         status_spans.push(Span::styled(
@@ -844,9 +936,45 @@ fn handle_key(state: &mut StatusbarState, key: KeyCode) -> bool {
                 .output();
             return true; // Quit
         }
+        KeyCode::Char('t') => {
+            // Run tests (auto-detected)
+            if let Some(cmd) = detect_test_command(&state.worktree_path) {
+                state.set_status(&format!("Running: {}", cmd));
+                if let Err(e) = send_to_shell_pane(state, &cmd) {
+                    state.set_status(&format!("Error: {}", e));
+                }
+            } else {
+                state.set_status("No test command detected");
+            }
+        }
+        KeyCode::Char('C') => {
+            // Git commit - launch interactive commit in shell pane
+            state.set_status("Opening git commit...");
+            if let Err(e) = launch_git_commit(state) {
+                state.set_status(&format!("Error: {}", e));
+            }
+        }
+        KeyCode::Char('?') => {
+            // Toggle help modal
+            if state.help_modal_visible {
+                // Hide help modal and resize pane back to 2 lines
+                state.help_modal_visible = false;
+                resize_statusbar_pane(state, 2);
+            } else {
+                // Show help modal and expand pane
+                state.help_modal_visible = true;
+                resize_statusbar_pane(state, state.help_modal_height);
+            }
+        }
         KeyCode::Char('q') | KeyCode::Esc => {
-            // Just quit the statusbar (unusual, but allowed)
-            return true;
+            // If help modal is open, close it instead of quitting
+            if state.help_modal_visible {
+                state.help_modal_visible = false;
+                resize_statusbar_pane(state, 2);
+            } else {
+                // Just quit the statusbar (unusual, but allowed)
+                return true;
+            }
         }
         _ => {}
     }
@@ -1034,6 +1162,141 @@ fn install_lazygit() -> Result<bool> {
         .output()?;
 
     Ok(result.status.success())
+}
+
+/// Detect the test command for the project
+fn detect_test_command(worktree_path: &std::path::Path) -> Option<String> {
+    // Check for package.json with test script
+    if worktree_path.join("package.json").exists() {
+        if let Ok(content) = std::fs::read_to_string(worktree_path.join("package.json")) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(scripts) = json.get("scripts") {
+                    if scripts.get("test").is_some() {
+                        return Some("npm test".to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Check for Cargo.toml
+    if worktree_path.join("Cargo.toml").exists() {
+        return Some("cargo test".to_string());
+    }
+
+    // Check for Python (pytest or unittest)
+    if worktree_path.join("pyproject.toml").exists() || worktree_path.join("pytest.ini").exists() {
+        return Some("pytest".to_string());
+    }
+
+    // Check for Go
+    if worktree_path.join("go.mod").exists() {
+        return Some("go test ./...".to_string());
+    }
+
+    None
+}
+
+/// Launch git commit in the shell pane
+fn launch_git_commit(state: &StatusbarState) -> Result<()> {
+    let target = format!("{}:.{{top-right}}", state.session_name);
+
+    // Clear line first (Ctrl-U), then launch git commit
+    Command::new("tmux")
+        .args(["send-keys", "-t", &target, "C-u"])
+        .output()?;
+
+    // Launch git commit (will open editor for commit message)
+    Command::new("tmux")
+        .args(["send-keys", "-t", &target, "git commit", "Enter"])
+        .output()?;
+
+    // Focus the shell pane so user can interact
+    Command::new("tmux")
+        .args(["select-pane", "-t", &target])
+        .output()?;
+
+    Ok(())
+}
+
+/// Resize the statusbar pane to the specified height
+fn resize_statusbar_pane(state: &StatusbarState, height: u16) {
+    let target = format!("{}:.{{bottom}}", state.session_name);
+    let _ = Command::new("tmux")
+        .args(["resize-pane", "-t", &target, "-y", &height.to_string()])
+        .output();
+}
+
+/// Get detailed help text for the help modal
+fn get_help_content() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("s", "start", "Run the auto-detected dev command (npm run dev, cargo run, etc.) in the shell pane"),
+        ("S", "stop", "Send Ctrl-C to the shell pane to stop the running process"),
+        ("t", "test", "Run the auto-detected test command (npm test, cargo test, etc.) in the shell pane"),
+        ("c", "claude", "Toggle Claude pane visibility by zooming/unzooming the shell pane"),
+        ("z", "shell", "Toggle shell pane visibility by zooming/unzooming the Claude pane"),
+        ("g", "git", "Launch lazygit in the shell pane for interactive git operations"),
+        ("k", "kill", "Kill this tmux session and return to the main Kanblam TUI"),
+        ("r", "rebase", "Fetch origin/main and rebase the current branch onto it"),
+        ("C", "commit", "Open git commit in the shell pane to commit staged changes"),
+        ("b", "back", "Switch back to the main Kanblam TUI (keeps this session alive)"),
+        ("?", "help", "Toggle this help modal"),
+        ("q/Esc", "quit", "Close help modal (if open) or quit the statusbar"),
+    ]
+}
+
+/// Render the help modal
+fn render_help_modal(frame: &mut Frame, area: Rect) {
+    let bg_color = Color::Rgb(40, 40, 55);
+    let bg_style = Style::default().bg(bg_color);
+    let green = Color::Rgb(80, 200, 120);
+    let title_style = Style::default().fg(green).add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(Color::Yellow);
+    let desc_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::DarkGray);
+
+    let help_content = get_help_content();
+
+    let mut lines = Vec::new();
+
+    // Title line
+    lines.push(Line::from(vec![
+        Span::styled(" ", bg_style),
+        Span::styled("KANBLAM STATUSBAR HELP", title_style),
+        Span::styled(" (press ? or Esc to close)", dim_style),
+    ]));
+
+    // Blank line
+    lines.push(Line::from(Span::styled(" ", bg_style)));
+
+    // Help entries
+    for (key, label, desc) in help_content {
+        // Truncate description if needed to fit width
+        let key_label_width = key.len() + 3 + label.len() + 3; // "  k  label  "
+        let max_desc_width = (area.width as usize).saturating_sub(key_label_width + 2);
+        let truncated_desc: String = if desc.len() > max_desc_width {
+            format!("{}...", &desc[..max_desc_width.saturating_sub(3)])
+        } else {
+            desc.to_string()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("  ", bg_style),
+            Span::styled(format!("{:>5}", key), key_style),
+            Span::styled("  ", bg_style),
+            Span::styled(format!("{:<8}", label), label_style),
+            Span::styled(truncated_desc, desc_style),
+        ]));
+    }
+
+    // Pad remaining lines with empty lines to fill the area
+    while lines.len() < area.height as usize {
+        lines.push(Line::from(Span::styled(" ", bg_style)));
+    }
+
+    let paragraph = Paragraph::new(lines).style(bg_style);
+    frame.render_widget(paragraph, area);
 }
 
 /// Run the statusbar TUI
