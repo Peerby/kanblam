@@ -141,6 +141,19 @@ pub enum SessionEventType {
     Output,
 }
 
+/// Token usage data from Claude SDK
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SessionEventParams {
     pub task_id: String,
@@ -157,6 +170,12 @@ pub struct SessionEventParams {
     /// Full accumulated output up to this point - available on all events after output starts
     #[serde(default)]
     pub full_output: Option<String>,
+    /// Token usage (for 'stopped' events)
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
+    /// Total cost in USD (for 'stopped' events)
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 /// Parsed session event ready for use in app logic
@@ -171,6 +190,10 @@ pub struct SidecarEvent {
     pub output: Option<String>,
     /// Full accumulated output up to this point - available on all events after output starts
     pub full_output: Option<String>,
+    /// Token usage (for 'stopped' events)
+    pub usage: Option<TokenUsage>,
+    /// Total cost in USD (for 'stopped' events)
+    pub cost_usd: Option<f64>,
 }
 
 impl TryFrom<SessionEventParams> for SidecarEvent {
@@ -185,6 +208,8 @@ impl TryFrom<SessionEventParams> for SidecarEvent {
             tool_name: params.tool_name,
             output: params.output,
             full_output: params.full_output,
+            usage: params.usage,
+            cost_usd: params.cost_usd,
         })
     }
 }
@@ -447,6 +472,8 @@ mod tests {
             tool_name: None,
             output: None,
             full_output: None,
+            usage: None,
+            cost_usd: None,
         };
 
         let event: SidecarEvent = params.try_into().unwrap();
@@ -465,6 +492,8 @@ mod tests {
             tool_name: None,
             output: None,
             full_output: None,
+            usage: None,
+            cost_usd: None,
         };
 
         let result: Result<SidecarEvent, _> = params.try_into();

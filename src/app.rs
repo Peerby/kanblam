@@ -937,7 +937,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         if let Some(project) = self.model.active_project_mut() {
                             project.release_main_worktree_lock(task_id);
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                             }
                         }
                         commands.push(Message::Error("Internal error: async_sender not configured.".to_string()));
@@ -1000,7 +1000,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 if let Some(project) = self.model.active_project_mut() {
                     project.release_main_worktree_lock(task_id);
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.status = TaskStatus::Review;
+                        task.move_to_review();
                     }
                 }
                 commands.push(Message::Error(error));
@@ -1043,7 +1043,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 // Rebase failed - return to Review status
                                 if let Some(project) = self.model.active_project_mut() {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                         task.session_state = crate::model::ClaudeSessionState::Paused;
                                     }
                                     project.release_main_worktree_lock(task_id);
@@ -1057,7 +1057,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 // Error checking - return to Review
                                 if let Some(project) = self.model.active_project_mut() {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                     }
                                     project.release_main_worktree_lock(task_id);
                                 }
@@ -1076,7 +1076,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             Err(e) => {
                                 if let Some(project) = self.model.active_project_mut() {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                     }
                                     project.release_main_worktree_lock(task_id);
                                 }
@@ -1097,7 +1097,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         Ok(false) => {
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.status = TaskStatus::Review;
+                                    task.move_to_review();
                                 }
                                 project.release_main_worktree_lock(task_id);
                             }
@@ -1111,7 +1111,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         Err(e) => {
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.status = TaskStatus::Review;
+                                    task.move_to_review();
                                 }
                                 project.release_main_worktree_lock(task_id);
                             }
@@ -1133,7 +1133,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         // Return to Review status on error
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                             }
                             project.release_main_worktree_lock(task_id);
                         }
@@ -2333,7 +2333,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     None => {
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                             }
                         }
                         commands.push(Message::Error(
@@ -2368,7 +2368,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
             Message::FastRebaseCompleted { task_id } => {
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.status = TaskStatus::Review;
+                        task.move_to_review();
                     }
                 }
                 commands.push(Message::SetStatusMessage(Some(
@@ -2399,7 +2399,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     None => {
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                             }
                         }
                         commands.push(Message::Error(
@@ -2440,7 +2440,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 // Reset task to Review status
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.status = TaskStatus::Review;
+                        task.move_to_review();
                     }
                 }
 
@@ -2478,7 +2478,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 // Rebase failed - reset to Review and show error
                 if let Some(project) = self.model.active_project_mut() {
                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                        task.status = TaskStatus::Review;
+                        task.move_to_review();
                     }
                 }
                 commands.push(Message::SetStatusMessage(Some(
@@ -4074,21 +4074,21 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 } else {
                                     if was_accepting {
                                         task.log_activity("Accept cancelled");
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                         task.session_state = crate::model::ClaudeSessionState::Ended;
                                         commands.push(Message::SetStatusMessage(Some(
                                             "Accept cancelled: Claude session ended during rebase.".to_string()
                                         )));
                                     } else if was_updating {
                                         task.log_activity("Update cancelled");
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                         task.session_state = crate::model::ClaudeSessionState::Ended;
                                         commands.push(Message::SetStatusMessage(Some(
                                             "Update cancelled: Claude session ended during rebase.".to_string()
                                         )));
                                     } else if was_applying {
                                         task.log_activity("Apply cancelled");
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                         task.session_state = crate::model::ClaudeSessionState::Ended;
                                         commands.push(Message::SetStatusMessage(Some(
                                             "Apply cancelled: Claude session ended during rebase.".to_string()
@@ -4523,6 +4523,18 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             }
                             SessionEventType::Stopped => {
                                 task.log_activity_with_output("Session stopped", event.full_output.clone());
+
+                                // Record token usage from this session
+                                if let Some(ref usage) = event.usage {
+                                    task.add_token_usage(
+                                        usage.input_tokens,
+                                        usage.output_tokens,
+                                        usage.cache_read_tokens,
+                                        usage.cache_creation_tokens,
+                                        event.cost_usd.unwrap_or(0.0),
+                                    );
+                                }
+
                                 // Skip if terminal state or special operations in progress
                                 if was_accepting || was_updating || was_applying || task.status == TaskStatus::Done {
                                     // Let CompleteAcceptTask/etc handlers take care of it
@@ -5023,7 +5035,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 // Reset task to Review status
                                 if let Some(project) = self.model.active_project_mut() {
                                     if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                     }
                                 }
                             }
@@ -5148,7 +5160,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                                         // Return task to Review status
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.status = TaskStatus::Review;
+                                            task.move_to_review();
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                             task.accepting_started_at = None;
                                         }
@@ -5170,7 +5182,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     let err_msg = e.to_string();
                                     if let Some(project) = self.model.active_project_mut() {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                            task.status = TaskStatus::Review;
+                                            task.move_to_review();
                                             task.session_state = crate::model::ClaudeSessionState::Paused;
                                         }
                                         project.release_main_worktree_lock(task_id);
@@ -5195,7 +5207,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     // Only reset if currently Applying
                                     if status == TaskStatus::Applying {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                         task.session_state = crate::model::ClaudeSessionState::Paused;
                                     }
                                 }
@@ -5209,7 +5221,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     if status == TaskStatus::Applying {
-                                        task.status = TaskStatus::Review;
+                                        task.move_to_review();
                                     }
                                 }
                                 project.release_main_worktree_lock(task_id);
@@ -5290,7 +5302,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         // Conflicts not resolved - return to Review with error
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                                 task.session_state = crate::model::ClaudeSessionState::Paused;
                             }
                             project.release_main_worktree_lock(task_id);
@@ -5311,7 +5323,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         // Proceed with build check
                         if let Some(project) = self.model.active_project_mut() {
                             if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                task.status = TaskStatus::Review;
+                                task.move_to_review();
                                 task.session_state = crate::model::ClaudeSessionState::Paused;
                             }
                             project.release_main_worktree_lock(task_id);
@@ -6093,7 +6105,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             // Rebase successful - return to Review status
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.status = TaskStatus::Review;
+                                    task.move_to_review();
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                 }
                             }
@@ -6106,7 +6118,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             // Rebase failed - return to Review status
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.status = TaskStatus::Review;
+                                    task.move_to_review();
                                     task.session_state = crate::model::ClaudeSessionState::Paused;
                                 }
                             }
@@ -6119,7 +6131,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             // Error checking - return to Review
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
-                                    task.status = TaskStatus::Review;
+                                    task.move_to_review();
                                 }
                             }
                             commands.push(Message::Error(format!("Error verifying update: {}", e)));
@@ -6721,6 +6733,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
             Message::ToggleStats => {
                 self.model.ui_state.show_stats = !self.model.ui_state.show_stats;
+                // Reset scroll position when opening
+                if self.model.ui_state.show_stats {
+                    self.model.ui_state.stats_scroll_offset = 0;
+                }
             }
 
             Message::ScrollHelpUp(lines) => {
@@ -6739,6 +6755,23 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     .help_scroll_offset
                     .saturating_add(lines)
                     .min(max_scroll);
+            }
+
+            Message::ScrollStatsUp(lines) => {
+                self.model.ui_state.stats_scroll_offset =
+                    self.model.ui_state.stats_scroll_offset.saturating_sub(lines);
+            }
+
+            Message::ScrollStatsDown(lines) => {
+                // Stats content is dynamic; just allow reasonable scrolling
+                // The render function will cap it based on actual content
+                const MAX_STATS_SCROLL: usize = 50;
+                self.model.ui_state.stats_scroll_offset = self
+                    .model
+                    .ui_state
+                    .stats_scroll_offset
+                    .saturating_add(lines)
+                    .min(MAX_STATS_SCROLL);
             }
 
             Message::ToggleTaskPreview => {

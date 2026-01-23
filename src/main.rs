@@ -1175,9 +1175,9 @@ fn handle_key_event(key: event::KeyEvent, app: &App) -> Vec<Message> {
         return handle_help_modal_key(key);
     }
 
-    // Handle stats modal - any key closes it
+    // Handle stats modal - scroll with j/k/arrows, close with others
     if app.model.ui_state.show_stats {
-        return vec![Message::ToggleStats];
+        return handle_stats_modal_key(key);
     }
 
     // Handle stash modal if open
@@ -1881,6 +1881,23 @@ fn handle_help_modal_key(key: event::KeyEvent) -> Vec<Message> {
         KeyCode::PageUp => vec![Message::ScrollHelpUp(10)],
         // Any other key closes the modal
         _ => vec![Message::ToggleHelp],
+    }
+}
+
+/// Handle key events when the stats modal is open
+/// j/k/Up/Down scroll, any other key closes the modal
+fn handle_stats_modal_key(key: event::KeyEvent) -> Vec<Message> {
+    match key.code {
+        // Scroll down
+        KeyCode::Char('j') | KeyCode::Down => vec![Message::ScrollStatsDown(1)],
+        // Scroll up
+        KeyCode::Char('k') | KeyCode::Up => vec![Message::ScrollStatsUp(1)],
+        // Page down
+        KeyCode::PageDown => vec![Message::ScrollStatsDown(10)],
+        // Page up
+        KeyCode::PageUp => vec![Message::ScrollStatsUp(10)],
+        // Any other key closes the modal
+        _ => vec![Message::ToggleStats],
     }
 }
 

@@ -490,13 +490,32 @@ Task: ${title}`;
 
         if (message.type === 'result') {
           // Session completed - include full output for QA marker detection
-          console.log(`[SessionManager] Result received for task ${taskId}, fullOutput length: ${fullOutput.length}, has [QA:PASS]: ${fullOutput.includes('[QA:PASS]')}`);
+          // Extract usage and cost from result message
+          const resultMsg = message as {
+            type: 'result';
+            total_cost_usd?: number;
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
+          };
+
+          console.log(`[SessionManager] Result received for task ${taskId}, fullOutput length: ${fullOutput.length}, has [QA:PASS]: ${fullOutput.includes('[QA:PASS]')}, cost: ${resultMsg.total_cost_usd}`);
           this.onEvent({
             task_id: taskId,
             event: 'stopped',
             session_id: sessionId,
             output: fullOutput,
             full_output: fullOutput,
+            cost_usd: resultMsg.total_cost_usd,
+            usage: resultMsg.usage ? {
+              input_tokens: resultMsg.usage.input_tokens ?? 0,
+              output_tokens: resultMsg.usage.output_tokens ?? 0,
+              cache_read_tokens: resultMsg.usage.cache_read_input_tokens ?? 0,
+              cache_creation_tokens: resultMsg.usage.cache_creation_input_tokens ?? 0,
+            } : undefined,
           });
         }
       }

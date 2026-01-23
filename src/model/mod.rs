@@ -1211,7 +1211,13 @@ impl Project {
     pub fn move_task_to_end_of_status(&mut self, task_id: Uuid, new_status: TaskStatus) -> bool {
         if let Some(idx) = self.tasks.iter().position(|t| t.id == task_id) {
             let mut task = self.tasks.remove(idx);
-            task.status = new_status;
+
+            // Use move_to_review() for Review to track review_started_at
+            if new_status == TaskStatus::Review {
+                task.move_to_review();
+            } else {
+                task.status = new_status;
+            }
 
             // Find the position after the last task with this status
             let insert_pos = self.tasks.iter()
@@ -1264,21 +1270,43 @@ impl Project {
     pub fn complete_task(&mut self, task_id: Uuid) -> Option<Uuid> {
         if let Some(idx) = self.tasks.iter().position(|t| t.id == task_id) {
             let mut task = self.tasks.remove(idx);
+            let completed_at = Utc::now();
 
             // Record statistics before completing
             if let Some(started_at) = task.started_at {
-                let completed_at = Utc::now();
                 let duration_secs = completed_at.signed_duration_since(started_at).num_seconds();
+
+                // Calculate in_progress time: from started_at to review_started_at (or completed_at if never reviewed)
+                let in_progress_secs = if let Some(review_started) = task.review_started_at {
+                    review_started.signed_duration_since(started_at).num_seconds().max(0)
+                } else {
+                    duration_secs // Fallback: entire duration was in progress
+                };
+
+                // Calculate review time: from review_started_at to completed_at
+                let review_secs = if let Some(review_started) = task.review_started_at {
+                    completed_at.signed_duration_since(review_started).num_seconds().max(0)
+                } else {
+                    0 // No review time if task never entered Review
+                };
+
                 self.statistics.record_completion(
                     duration_secs,
                     task.git_additions,
                     task.git_deletions,
+                    task.total_input_tokens,
+                    task.total_output_tokens,
+                    task.total_cache_read_tokens,
+                    task.total_cache_creation_tokens,
+                    task.total_cost_usd,
+                    in_progress_secs,
+                    review_secs,
                 );
             }
 
             // Update task state
             task.status = TaskStatus::Done;
-            task.completed_at = Some(Utc::now());
+            task.completed_at = Some(completed_at);
             task.worktree_path = None;
             task.tmux_window = None;
             task.git_branch = None;
@@ -1560,6 +1588,30 @@ pub struct Task {
     /// Whether this task is currently in a QA validation session
     #[serde(skip)]
     pub in_qa_session: bool,
+
+    // === Token usage tracking (accumulated across sessions) ===
+
+    /// Total input tokens used for this task
+    #[serde(default)]
+    pub total_input_tokens: u64,
+    /// Total output tokens used for this task
+    #[serde(default)]
+    pub total_output_tokens: u64,
+    /// Total cache read tokens for this task
+    #[serde(default)]
+    pub total_cache_read_tokens: u64,
+    /// Total cache creation tokens for this task
+    #[serde(default)]
+    pub total_cache_creation_tokens: u64,
+    /// Total cost in USD for this task
+    #[serde(default)]
+    pub total_cost_usd: f64,
+
+    // === Time tracking ===
+
+    /// When the task first entered Review status (for QA time tracking)
+    #[serde(default)]
+    pub review_started_at: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -1613,12 +1665,38 @@ impl Task {
             qa_attempts: 0,
             qa_exceeded_warning: false,
             in_qa_session: false,
+            // Token usage tracking
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_read_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cost_usd: 0.0,
+            // Time tracking
+            review_started_at: None,
         }
     }
 
     /// Check if this task has an active worktree session
     pub fn has_active_session(&self) -> bool {
         self.worktree_path.is_some() && self.session_state.is_active()
+    }
+
+    /// Move task to Review status, recording when review started (for QA time tracking)
+    pub fn move_to_review(&mut self) {
+        self.status = TaskStatus::Review;
+        // Only set review_started_at if not already set (task might return to Review multiple times)
+        if self.review_started_at.is_none() {
+            self.review_started_at = Some(chrono::Utc::now());
+        }
+    }
+
+    /// Add token usage from a session to this task's totals
+    pub fn add_token_usage(&mut self, input: u64, output: u64, cache_read: u64, cache_creation: u64, cost: f64) {
+        self.total_input_tokens += input;
+        self.total_output_tokens += output;
+        self.total_cache_read_tokens += cache_read;
+        self.total_cache_creation_tokens += cache_creation;
+        self.total_cost_usd += cost;
     }
 
     /// Get a short display ID for the task.
@@ -1909,6 +1987,10 @@ pub struct UiState {
     // Build check animation
     /// If true, a build/type check is in progress (show animation in status bar)
     pub build_check_in_progress: bool,
+
+    // Stats modal scrolling
+    /// Scroll offset for the stats modal (lines scrolled from top)
+    pub stats_scroll_offset: usize,
 }
 
 /// State for the sidecar control modal
@@ -2436,6 +2518,8 @@ impl Default for UiState {
             sidecar_modal: None,
             // Build check animation
             build_check_in_progress: false,
+            // Stats modal scrolling
+            stats_scroll_offset: 0,
         }
     }
 }
@@ -2616,6 +2700,33 @@ pub struct TaskStatistics {
     /// Sum of all lines deleted across completed tasks
     #[serde(default)]
     pub total_lines_deleted: usize,
+
+    // === Token usage (aggregated) ===
+
+    /// Total input tokens across all completed tasks
+    #[serde(default)]
+    pub total_input_tokens: u64,
+    /// Total output tokens across all completed tasks
+    #[serde(default)]
+    pub total_output_tokens: u64,
+    /// Total cache read tokens across all completed tasks
+    #[serde(default)]
+    pub total_cache_read_tokens: u64,
+    /// Total cache creation tokens across all completed tasks
+    #[serde(default)]
+    pub total_cache_creation_tokens: u64,
+    /// Total cost in USD across all completed tasks
+    #[serde(default)]
+    pub total_cost_usd: f64,
+
+    // === Time tracking (aggregated) ===
+
+    /// Total time in InProgress state (seconds) across all completed tasks
+    #[serde(default)]
+    pub total_in_progress_seconds: i64,
+    /// Total time in Review state (seconds) across all completed tasks
+    #[serde(default)]
+    pub total_review_seconds: i64,
 }
 
 impl TaskStatistics {
@@ -2656,17 +2767,63 @@ impl TaskStatistics {
         counts.into_iter().enumerate().map(|(i, c)| (i as u32, c)).collect()
     }
 
-    /// Record a completed task
-    pub fn record_completion(&mut self, duration_seconds: i64, lines_added: usize, lines_deleted: usize) {
+    /// Record a completed task with full metrics
+    pub fn record_completion(
+        &mut self,
+        duration_seconds: i64,
+        lines_added: usize,
+        lines_deleted: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+        cost_usd: f64,
+        in_progress_seconds: i64,
+        review_seconds: i64,
+    ) {
         self.total_completed += 1;
         self.total_duration_seconds += duration_seconds;
         self.completion_timestamps.push(Utc::now());
         self.total_lines_added += lines_added;
         self.total_lines_deleted += lines_deleted;
 
+        // Token usage
+        self.total_input_tokens += input_tokens;
+        self.total_output_tokens += output_tokens;
+        self.total_cache_read_tokens += cache_read_tokens;
+        self.total_cache_creation_tokens += cache_creation_tokens;
+        self.total_cost_usd += cost_usd;
+
+        // Time tracking
+        self.total_in_progress_seconds += in_progress_seconds;
+        self.total_review_seconds += review_seconds;
+
         // Keep only timestamps from the last 30 days to prevent unbounded growth
         let cutoff = Utc::now() - chrono::Duration::days(30);
         self.completion_timestamps.retain(|ts| *ts >= cutoff);
+    }
+
+    /// Get the average time in InProgress state (seconds)
+    pub fn average_in_progress_seconds(&self) -> Option<i64> {
+        if self.total_completed > 0 {
+            Some(self.total_in_progress_seconds / self.total_completed as i64)
+        } else {
+            None
+        }
+    }
+
+    /// Get the average time in Review state (seconds)
+    pub fn average_review_seconds(&self) -> Option<i64> {
+        if self.total_completed > 0 {
+            Some(self.total_review_seconds / self.total_completed as i64)
+        } else {
+            None
+        }
+    }
+
+    /// Get total tokens (input + output)
+    pub fn total_tokens(&self) -> u64 {
+        self.total_input_tokens + self.total_output_tokens
     }
 }
 

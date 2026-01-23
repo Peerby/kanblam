@@ -84,6 +84,14 @@ export type SessionEventType =
   | 'tool_use'
   | 'output';
 
+/** Token usage data from SDK result */
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 export interface SessionEventParams {
   task_id: string;
   event: SessionEventType;
@@ -94,6 +102,10 @@ export interface SessionEventParams {
   output?: string;
   /** Full accumulated output up to this point - available on all events after output starts */
   full_output?: string;
+  /** Token usage (for 'stopped' and 'ended' events) */
+  usage?: TokenUsage;
+  /** Total cost in USD (for 'stopped' and 'ended' events) */
+  cost_usd?: number;
 }
 
 // Watcher types

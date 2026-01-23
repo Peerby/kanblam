@@ -2092,21 +2092,30 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     };
 
     let stats = &project.statistics;
+    let done_count = project.tasks_by_status(crate::model::TaskStatus::Done).len();
 
     // Empty state
     if stats.total_completed == 0 {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  🚀 ", Style::default()),
-            Span::styled("No completed tasks yet!", Style::default().fg(Color::Yellow)),
+            Span::styled("No tracked tasks yet!", Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  Complete your first task to see statistics.", dim_style)));
-        lines.push(Line::from(Span::styled("  Stats will track:", dim_style)));
-        lines.push(Line::from(Span::styled("    • Total tasks completed", dim_style)));
-        lines.push(Line::from(Span::styled("    • Average completion time", dim_style)));
-        lines.push(Line::from(Span::styled("    • Weekly activity graph", dim_style)));
-        lines.push(Line::from(Span::styled("    • Code impact (lines added/removed)", dim_style)));
+        if done_count > 0 {
+            // There are done tasks but no tracked stats (stats added after tasks were completed)
+            lines.push(Line::from(vec![
+                Span::styled("     ", Style::default()),
+                Span::styled(format!("{}", done_count), Style::default().fg(bar_full).add_modifier(Modifier::BOLD)),
+                Span::styled(" tasks in Done column (completed before tracking)", dim_style),
+            ]));
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled("  Future completions will track:", dim_style)));
+        lines.push(Line::from(Span::styled("    • Tasks completed", dim_style)));
+        lines.push(Line::from(Span::styled("    • Time from start to completion", dim_style)));
+        lines.push(Line::from(Span::styled("    • Daily activity graph", dim_style)));
+        lines.push(Line::from(Span::styled("    • Lines added/removed", dim_style)));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled("  Press any key to close", dim_style)));
 
@@ -2125,41 +2134,51 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     // ═══════════════════════════════════════════════════════════════════════
     // BIG NUMBER: Tasks Completed
     // ═══════════════════════════════════════════════════════════════════════
-    let total = stats.total_completed;
-    let big_num = format!("{:>4}", total);
+    let tracked = stats.total_completed;
+    let big_num = format!("{:>4}", tracked);
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled("  ✨ ", Style::default().fg(sparkle)),
-        Span::styled("TASKS COMPLETED", Style::default().fg(Color::DarkGray)),
+        Span::styled("TASKS FINISHED", Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(vec![
         Span::styled("     ", Style::default()),
         Span::styled(big_num, Style::default().fg(bar_full).add_modifier(Modifier::BOLD)),
-        Span::styled(" total", Style::default().fg(Color::DarkGray)),
+        Span::styled(" tracked", Style::default().fg(Color::DarkGray)),
     ]));
+    // Show Done column count if it differs from tracked (tasks from before tracking)
+    let untracked = done_count.saturating_sub(tracked as usize);
+    if untracked > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("     ", Style::default()),
+            Span::styled(format!("{:>4}", done_count), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" in Done ({} before tracking)", untracked), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
     lines.push(Line::from(""));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // AVERAGE TIME
+    // AVERAGE TIME (per task, from start to completion)
     // ═══════════════════════════════════════════════════════════════════════
     if let Some(avg_secs) = stats.average_duration_seconds() {
         let duration = chrono::Duration::seconds(avg_secs);
         lines.push(Line::from(vec![
             Span::styled("  ⏱  ", Style::default().fg(Color::Yellow)),
-            Span::styled("AVG TIME  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("AVG/TASK  ", Style::default().fg(Color::DarkGray)),
             Span::styled(format_duration(duration), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(" (start→done)", Style::default().fg(Color::DarkGray)),
         ]));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // THIS WEEK
+    // THIS WEEK (last 7 days)
     // ═══════════════════════════════════════════════════════════════════════
     let this_week = stats.tasks_completed_this_week();
     lines.push(Line::from(vec![
         Span::styled("  📅 ", Style::default().fg(Color::Magenta)),
-        Span::styled("THIS WEEK ", Style::default().fg(Color::DarkGray)),
+        Span::styled("LAST 7 DAYS ", Style::default().fg(Color::DarkGray)),
         Span::styled(format!("{}", this_week), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-        Span::styled(" tasks", Style::default().fg(Color::DarkGray)),
+        Span::styled(" finished", Style::default().fg(Color::DarkGray)),
     ]));
     lines.push(Line::from(""));
 
@@ -2309,13 +2328,13 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     ]));
 
     // ═══════════════════════════════════════════════════════════════════════
-    // CODE IMPACT
+    // CODE IMPACT (lines changed in merged tasks)
     // ═══════════════════════════════════════════════════════════════════════
     if stats.total_lines_added > 0 || stats.total_lines_deleted > 0 {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  📝 ", Style::default().fg(Color::Green)),
-            Span::styled("CODE IMPACT", Style::default().fg(Color::DarkGray)),
+            Span::styled("LINES CHANGED", Style::default().fg(Color::DarkGray)),
         ]));
 
         let total_lines = stats.total_lines_added + stats.total_lines_deleted;
@@ -2343,29 +2362,115 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
             Span::styled(" / ", Style::default().fg(Color::DarkGray)),
             Span::styled("-", Style::default().fg(Color::Red)),
             Span::styled(format!("{}", stats.total_lines_deleted), Style::default().fg(Color::Red)),
-            Span::styled(" lines", Style::default().fg(Color::DarkGray)),
+            Span::styled(" (merged tasks)", Style::default().fg(Color::DarkGray)),
         ]));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // TOTAL TIME
+    // TIME BREAKDOWN (work vs review)
     // ═══════════════════════════════════════════════════════════════════════
     if stats.total_duration_seconds > 0 {
         lines.push(Line::from(""));
-        let total_duration = chrono::Duration::seconds(stats.total_duration_seconds);
         lines.push(Line::from(vec![
             Span::styled("  🕐 ", Style::default().fg(accent_color)),
-            Span::styled("TOTAL TIME ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_duration_long(total_duration), Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
+            Span::styled("TIME BREAKDOWN", Style::default().fg(Color::DarkGray)),
         ]));
+
+        // Total time
+        let total_duration = chrono::Duration::seconds(stats.total_duration_seconds);
+        lines.push(Line::from(vec![
+            Span::styled("     Total:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format_duration_long(total_duration), Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
+            Span::styled(" (start→done)", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // In Progress time
+        if stats.total_in_progress_seconds > 0 {
+            let in_progress_duration = chrono::Duration::seconds(stats.total_in_progress_seconds);
+            let avg_in_progress = stats.average_in_progress_seconds().map(chrono::Duration::seconds);
+            lines.push(Line::from(vec![
+                Span::styled("     Working:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_duration_long(in_progress_duration), Style::default().fg(Color::Yellow)),
+                if let Some(avg) = avg_in_progress {
+                    Span::styled(format!(" (avg {})", format_duration(avg)), Style::default().fg(Color::DarkGray))
+                } else {
+                    Span::styled("", Style::default())
+                },
+            ]));
+        }
+
+        // Review time
+        if stats.total_review_seconds > 0 {
+            let review_duration = chrono::Duration::seconds(stats.total_review_seconds);
+            let avg_review = stats.average_review_seconds().map(chrono::Duration::seconds);
+            lines.push(Line::from(vec![
+                Span::styled("     Review:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_duration_long(review_duration), Style::default().fg(Color::Magenta)),
+                if let Some(avg) = avg_review {
+                    Span::styled(format!(" (avg {})", format_duration(avg)), Style::default().fg(Color::DarkGray))
+                } else {
+                    Span::styled("", Style::default())
+                },
+            ]));
+        }
     }
 
-    // Footer
+    // ═══════════════════════════════════════════════════════════════════════
+    // TOKEN USAGE & COST
+    // ═══════════════════════════════════════════════════════════════════════
+    if stats.total_tokens() > 0 || stats.total_cost_usd > 0.0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  💰 ", Style::default().fg(Color::Yellow)),
+            Span::styled("API USAGE", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Cost
+        if stats.total_cost_usd > 0.0 {
+            lines.push(Line::from(vec![
+                Span::styled("     Cost:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("${:.2}", stats.total_cost_usd), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(" USD", Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        // Tokens
+        if stats.total_tokens() > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("     Tokens:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_number(stats.total_tokens()), Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" ({}↓ {}↑)", format_number(stats.total_input_tokens), format_number(stats.total_output_tokens)), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        // Cache efficiency
+        if stats.total_cache_read_tokens > 0 {
+            let cache_total = stats.total_cache_read_tokens + stats.total_cache_creation_tokens;
+            let cache_pct = if stats.total_input_tokens > 0 {
+                (stats.total_cache_read_tokens as f64 / stats.total_input_tokens as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            lines.push(Line::from(vec![
+                Span::styled("     Cache:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_number(cache_total), Style::default().fg(Color::Green)),
+                Span::styled(format!(" ({}% read)", cache_pct), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+
+    // Footer with scroll hint
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Press any key to close",
+        "  ↑/↓ scroll • any key to close",
         Style::default().fg(Color::DarkGray),
     )));
+
+    // Calculate scroll offset from UI state
+    let scroll_offset = app.model.ui_state.stats_scroll_offset;
+    let visible_height = area.height.saturating_sub(2) as usize; // Account for borders
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let scroll = scroll_offset.min(max_scroll);
 
     let content = Paragraph::new(lines)
         .block(
@@ -2374,10 +2479,22 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(accent_color)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White))
+        .scroll((scroll as u16, 0));
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(content, area);
+}
+
+/// Format a large number with K/M suffixes for readability
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        format!("{}", n)
+    }
 }
 
 /// Format a duration for long display (e.g., "2 days, 5 hours")

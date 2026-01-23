@@ -306,6 +306,8 @@ pub enum Message {
     ToggleStats,           // Show/hide project statistics modal (/)
     ScrollHelpUp(usize),   // Scroll help modal up by N lines
     ScrollHelpDown(usize), // Scroll help modal down by N lines
+    ScrollStatsUp(usize),  // Scroll stats modal up by N lines
+    ScrollStatsDown(usize), // Scroll stats modal down by N lines
     ToggleTaskPreview,     // Show/hide task preview modal (v/space)
     TaskDetailNextTab,     // Move to next tab in task detail modal
     TaskDetailPrevTab,     // Move to previous tab in task detail modal
