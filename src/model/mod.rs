@@ -94,6 +94,52 @@ fn default_qa_enabled() -> bool {
     true
 }
 
+/// Strategy for applying task changes to the main worktree.
+///
+/// Different project types benefit from different apply strategies:
+/// - Projects with hot reload (Next.js, Vite, etc.) can test changes immediately
+///   after applying source files without a build step.
+/// - Compiled projects (Rust, Go, etc.) need to build before the changes can be tested.
+///
+/// This setting allows per-project configuration of the apply workflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ApplyStrategy {
+    /// Build before testing (default for backward compatibility).
+    /// After applying changes, run the project's check/build command before
+    /// the user can test. Suitable for compiled languages like Rust, Go, C++.
+    #[default]
+    BuildFirst,
+
+    /// Hot reload - apply source and test immediately.
+    /// Skip the build step after applying, assuming the dev server will
+    /// automatically pick up changes. Suitable for Next.js, Vite, and similar
+    /// frameworks with fast refresh.
+    HotReload,
+}
+
+impl ApplyStrategy {
+    /// Get all available strategies for UI selection
+    pub fn all() -> &'static [ApplyStrategy] {
+        &[ApplyStrategy::BuildFirst, ApplyStrategy::HotReload]
+    }
+
+    /// Get the display name for the strategy
+    pub fn name(&self) -> &'static str {
+        match self {
+            ApplyStrategy::BuildFirst => "Build First",
+            ApplyStrategy::HotReload => "Hot Reload",
+        }
+    }
+
+    /// Get a short description of the strategy
+    pub fn description(&self) -> &'static str {
+        match self {
+            ApplyStrategy::BuildFirst => "Build/check after apply (Rust, Go, etc.)",
+            ApplyStrategy::HotReload => "Skip build, test immediately (Next.js, Vite, etc.)",
+        }
+    }
+}
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
@@ -729,6 +775,10 @@ pub struct Project {
     #[serde(default = "default_qa_enabled")]
     pub qa_enabled: bool,
 
+    /// Strategy for applying task changes to main worktree (default: BuildFirst)
+    #[serde(default)]
+    pub apply_strategy: ApplyStrategy,
+
     // Remote tracking status (transient - not persisted)
     /// Number of commits ahead of remote (local commits not pushed)
     #[serde(skip)]
@@ -996,6 +1046,7 @@ impl Project {
             commands: ProjectCommands::default(), // Will auto-detect when needed
             max_qa_attempts: default_max_qa_attempts(),
             qa_enabled: default_qa_enabled(),
+            apply_strategy: ApplyStrategy::default(),
             remote_ahead: 0,
             remote_behind: 0,
             has_remote: false,
@@ -2013,6 +2064,7 @@ pub enum ConfigField {
     MascotAdviceInterval,
     QaEnabled,
     MaxQaAttempts,
+    ApplyStrategy,
     CheckCommand,
     RunCommand,
     TestCommand,
@@ -2029,6 +2081,7 @@ impl ConfigField {
             ConfigField::MascotAdviceInterval,
             ConfigField::QaEnabled,
             ConfigField::MaxQaAttempts,
+            ConfigField::ApplyStrategy,
             ConfigField::CheckCommand,
             ConfigField::RunCommand,
             ConfigField::TestCommand,
@@ -2050,6 +2103,7 @@ impl ConfigField {
         if qa_enabled {
             fields.push(ConfigField::MaxQaAttempts);
         }
+        fields.push(ConfigField::ApplyStrategy);
         fields.extend([
             ConfigField::CheckCommand,
             ConfigField::RunCommand,
@@ -2132,6 +2186,7 @@ impl ConfigField {
             ConfigField::MascotAdviceInterval => "  Advice Interval",
             ConfigField::QaEnabled => "QA Validation",
             ConfigField::MaxQaAttempts => "  Max QA Attempts",
+            ConfigField::ApplyStrategy => "Apply Strategy",
             ConfigField::CheckCommand => "Check Command",
             ConfigField::RunCommand => "Run Command",
             ConfigField::TestCommand => "Test Command",
@@ -2148,6 +2203,7 @@ impl ConfigField {
             ConfigField::MascotAdviceInterval => "How often mascot gives advice (1-120 minutes)",
             ConfigField::QaEnabled => "Auto-validate Claude's work when it stops",
             ConfigField::MaxQaAttempts => "Retries before moving to Needs Work (1-10)",
+            ConfigField::ApplyStrategy => "How to test changes after applying to main",
             ConfigField::CheckCommand => "e.g. cargo check, npm run build, tsc --noEmit",
             ConfigField::RunCommand => "e.g. cargo run, npm start, python main.py",
             ConfigField::TestCommand => "e.g. cargo test, npm test, pytest",
@@ -2211,6 +2267,8 @@ pub struct ConfigModalState {
     pub temp_qa_enabled: bool,
     /// Temporary max QA attempts setting
     pub temp_max_qa_attempts: u32,
+    /// Temporary apply strategy setting
+    pub temp_apply_strategy: ApplyStrategy,
 }
 
 /// Create vim mode handler with custom keybindings
@@ -2627,6 +2685,9 @@ pub struct ProjectTaskData {
     /// Aggregated statistics for completed tasks
     #[serde(default)]
     pub statistics: TaskStatistics,
+    /// Strategy for applying task changes to main worktree
+    #[serde(default)]
+    pub apply_strategy: ApplyStrategy,
 }
 
 fn default_version() -> u32 { 1 }
@@ -2640,6 +2701,7 @@ impl Default for ProjectTaskData {
             applied_stash_ref: None,
             commands: ProjectCommands::default(),
             statistics: TaskStatistics::default(),
+            apply_strategy: ApplyStrategy::default(),
         }
     }
 }
@@ -2695,6 +2757,7 @@ impl Project {
         self.applied_stash_ref = data.applied_stash_ref;
         self.commands = data.commands;
         self.statistics = data.statistics;
+        self.apply_strategy = data.apply_strategy;
 
         // Regenerate worktree paths (they're not persisted, derived from project_dir + display_id)
         for task in &mut self.tasks {
@@ -2731,6 +2794,7 @@ impl Project {
             applied_stash_ref: self.applied_stash_ref.clone(),
             commands: self.commands.clone(),
             statistics: self.statistics.clone(),
+            apply_strategy: self.apply_strategy,
         };
         data.save(&self.working_dir)
     }

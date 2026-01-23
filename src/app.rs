@@ -7171,12 +7171,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
             // === Configuration Modal ===
 
             Message::ShowConfigModal => {
-                use crate::model::{ConfigModalState, ConfigField};
+                use crate::model::{ConfigModalState, ConfigField, ApplyStrategy};
 
-                // Get current project commands and QA settings (or defaults)
-                let (temp_commands, temp_qa_enabled, temp_max_qa_attempts) = self.model.active_project()
-                    .map(|p| (p.commands.clone(), p.qa_enabled, p.max_qa_attempts))
-                    .unwrap_or_else(|| (Default::default(), true, 3));
+                // Get current project commands, QA settings, and apply strategy (or defaults)
+                let (temp_commands, temp_qa_enabled, temp_max_qa_attempts, temp_apply_strategy) = self.model.active_project()
+                    .map(|p| (p.commands.clone(), p.qa_enabled, p.max_qa_attempts, p.apply_strategy))
+                    .unwrap_or_else(|| (Default::default(), true, 3, ApplyStrategy::default()));
                 let temp_editor = self.model.global_settings.default_editor;
                 let temp_mascot_advice = self.model.global_settings.mascot_advice_enabled;
                 let temp_mascot_interval = self.model.global_settings.mascot_advice_interval_minutes;
@@ -7191,6 +7191,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     temp_mascot_interval,
                     temp_qa_enabled,
                     temp_max_qa_attempts,
+                    temp_apply_strategy,
                 });
             }
 
@@ -7246,6 +7247,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             config.edit_buffer = config.temp_max_qa_attempts.to_string();
                             config.editing = true;
                         }
+                    } else if config.selected_field == ConfigField::ApplyStrategy {
+                        // Cycle through apply strategies
+                        use crate::model::ApplyStrategy;
+                        let strategies = ApplyStrategy::all();
+                        let idx = strategies.iter().position(|s| *s == config.temp_apply_strategy).unwrap_or(0);
+                        config.temp_apply_strategy = strategies[(idx + 1) % strategies.len()];
                     } else {
                         // Command field - enter text edit mode
                         if !config.editing {
@@ -7257,7 +7264,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
                                 ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
                                 ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
-                                | ConfigField::QaEnabled | ConfigField::MaxQaAttempts => String::new(),
+                                | ConfigField::QaEnabled | ConfigField::MaxQaAttempts | ConfigField::ApplyStrategy => String::new(),
                             };
                             config.editing = true;
                         }
@@ -7266,7 +7273,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             Message::ConfigEditFieldPrev => {
-                use crate::model::{ConfigField, Editor};
+                use crate::model::{ConfigField, Editor, ApplyStrategy};
 
                 if let Some(ref mut config) = self.model.ui_state.config_modal {
                     if config.selected_field == ConfigField::DefaultEditor && config.editing {
@@ -7274,6 +7281,11 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         let editors = Editor::all();
                         let idx = editors.iter().position(|e| *e == config.temp_editor).unwrap_or(0);
                         config.temp_editor = editors[(idx + editors.len() - 1) % editors.len()];
+                    } else if config.selected_field == ConfigField::ApplyStrategy {
+                        // Cycle to previous apply strategy
+                        let strategies = ApplyStrategy::all();
+                        let idx = strategies.iter().position(|s| *s == config.temp_apply_strategy).unwrap_or(0);
+                        config.temp_apply_strategy = strategies[(idx + strategies.len() - 1) % strategies.len()];
                     }
                 }
             }
@@ -7311,6 +7323,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                         // If parse fails, keep previous value
                         config.editing = false;
                         config.edit_buffer.clear();
+                    } else if config.selected_field == ConfigField::ApplyStrategy {
+                        // ApplyStrategy is cycled directly, no edit mode
                     } else {
                         // Command field - save buffer to temp_commands
                         let value = if config.edit_buffer.is_empty() {
@@ -7326,7 +7340,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             ConfigField::FormatCommand => config.temp_commands.format = value,
                             ConfigField::LintCommand => config.temp_commands.lint = value,
                             ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
-                            | ConfigField::QaEnabled | ConfigField::MaxQaAttempts => {}
+                            | ConfigField::QaEnabled | ConfigField::MaxQaAttempts | ConfigField::ApplyStrategy => {}
                         }
 
                         config.editing = false;
@@ -7343,11 +7357,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             Message::ConfigSave => {
+                use crate::model::ApplyStrategy;
+
                 // Extract values before borrowing mutably
-                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval, temp_qa_enabled, temp_max_qa_attempts) = if let Some(ref config) = self.model.ui_state.config_modal {
-                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval, config.temp_qa_enabled, config.temp_max_qa_attempts)
+                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval, temp_qa_enabled, temp_max_qa_attempts, temp_apply_strategy) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval, config.temp_qa_enabled, config.temp_max_qa_attempts, config.temp_apply_strategy)
                 } else {
-                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes, true, 3)
+                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes, true, 3, ApplyStrategy::default())
                 };
 
                 // Check if mascot advice setting changed
@@ -7360,11 +7376,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 self.model.global_settings.mascot_advice_enabled = temp_mascot_advice;
                 self.model.global_settings.mascot_advice_interval_minutes = temp_mascot_interval;
 
-                // Save project commands and QA settings
+                // Save project commands, QA settings, and apply strategy
                 if let Some(project) = self.model.active_project_mut() {
                     project.commands = temp_commands;
                     project.qa_enabled = temp_qa_enabled;
                     project.max_qa_attempts = temp_max_qa_attempts;
+                    project.apply_strategy = temp_apply_strategy;
                 }
 
                 // If mascot advice setting changed, update all projects and start/stop watcher
@@ -7402,20 +7419,31 @@ Do not ask for permission - run tests and fix any issues you find."#);
             }
 
             Message::TriggerRestart => {
+                use crate::model::ApplyStrategy;
+
                 // Run build/check for all projects; only restart for bootstrap mode
                 let project_info = self.model.active_project().map(|p| {
                     let is_boot = is_bootstrap_project(p);
                     let check_cmd = p.commands.effective_check(&p.working_dir);
                     let working_dir = p.working_dir.clone();
-                    (is_boot, check_cmd, working_dir)
+                    let apply_strategy = p.apply_strategy;
+                    (is_boot, check_cmd, working_dir, apply_strategy)
                 });
 
-                let Some((is_bootstrap, check_cmd, working_dir)) = project_info else {
+                let Some((is_bootstrap, check_cmd, working_dir, apply_strategy)) = project_info else {
                     commands.push(Message::SetStatusMessage(Some(
                         "✓ Changes applied successfully.".to_string()
                     )));
                     return commands;
                 };
+
+                // For HotReload strategy, skip build - dev server picks up changes automatically
+                if apply_strategy == ApplyStrategy::HotReload && !is_bootstrap {
+                    commands.push(Message::SetStatusMessage(Some(
+                        "✓ Changes applied. Dev server will pick up changes.".to_string()
+                    )));
+                    return commands;
+                }
 
                 // If no check command detected, just show success
                 let Some(check_cmd) = check_cmd else {

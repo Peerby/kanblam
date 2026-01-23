@@ -3309,6 +3309,36 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         lines.push(Line::from(""));
     }
 
+    // Apply Strategy field
+    {
+        let is_selected = config.selected_field == ConfigField::ApplyStrategy;
+        let strategy = config.temp_apply_strategy;
+
+        let (prefix, style, value_style) = if is_selected {
+            (
+                "► ",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Cyan)
+            )
+        } else {
+            ("  ", Style::default(), Style::default().fg(Color::DarkGray))
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled("Apply Strategy: ", style),
+            Span::styled(strategy.name(), value_style),
+            Span::styled(if is_selected { "  (Enter/←/→ to change)" } else { "" }, Style::default().fg(Color::DarkGray)),
+        ]));
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(strategy.description(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
     // Section: Project Commands
     lines.push(Line::from(vec![
         Span::styled(
