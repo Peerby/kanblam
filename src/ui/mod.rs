@@ -902,6 +902,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
 fn render_task_preview_modal(frame: &mut Frame, app: &App) {
     let area = centered_rect(75, 80, frame.area());
 
+    // Calculate available content height for tabs
+    // Modal area minus: 2 (borders) + 2 (padding) + 2 (tab bar + empty line)
+    let content_height = area.height.saturating_sub(6) as usize;
+
     // Get the selected task
     let task = app.model.active_project().and_then(|project| {
         let tasks = project.tasks_by_status(app.model.ui_state.selected_column);
@@ -947,16 +951,16 @@ fn render_task_preview_modal(frame: &mut Frame, app: &App) {
             render_general_tab(&mut lines, task, app, &label_style, &value_style, &dim_style);
         }
         crate::model::TaskDetailTab::Spec => {
-            render_spec_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
+            render_spec_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style, content_height);
         }
         crate::model::TaskDetailTab::Notes => {
-            render_notes_tab(&mut lines, task, app, &label_style, &dim_style, &key_style);
+            render_notes_tab(&mut lines, task, app, &label_style, &dim_style, &key_style, content_height);
         }
         crate::model::TaskDetailTab::Git => {
-            render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style);
+            render_git_tab(&mut lines, task, app, &label_style, &value_style, &dim_style, &key_style, content_height);
         }
         crate::model::TaskDetailTab::Activity => {
-            render_activity_tab(&mut lines, task, &app.model.ui_state, &label_style, &value_style, &dim_style);
+            render_activity_tab(&mut lines, task, &app.model.ui_state, &label_style, &value_style, &dim_style, content_height);
         }
         crate::model::TaskDetailTab::Help => {
             render_help_tab(&mut lines, task, &key_style, &label_style, &dim_style);
@@ -1237,12 +1241,15 @@ fn render_spec_tab<'a>(
     _value_style: &Style,
     dim_style: &Style,
     key_style: &Style,
+    content_height: usize,
 ) {
     if let Some(ref spec) = task.spec {
         let spec_lines: Vec<&str> = spec.lines().collect();
         let total_lines = spec_lines.len();
         let scroll_offset = app.model.ui_state.spec_scroll_offset;
-        let visible_lines = 20; // How many lines to show at once
+        // Calculate visible lines: content_height minus header overhead (hints, position indicator, empty lines, "more below")
+        // Header takes ~4-5 lines when scrollable, content area gets the rest minus 2 for "more below" indicator
+        let visible_lines = content_height.saturating_sub(7).max(5);
 
         // Show scroll hints if content is scrollable
         if total_lines > visible_lines {
@@ -1359,6 +1366,7 @@ fn render_notes_tab(
     _label_style: &Style,
     dim_style: &Style,
     key_style: &Style,
+    content_height: usize,
 ) {
     if task.notes.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -1374,7 +1382,10 @@ fn render_notes_tab(
     } else {
         let total_notes = task.notes.len();
         let scroll_offset = app.model.ui_state.notes_scroll_offset;
-        let visible_notes = 10; // How many notes to show at once
+        // Calculate visible notes: content_height minus header overhead (hints, position indicator, empty lines, "more below")
+        // Header takes ~4-5 lines when scrollable, each note takes ~2 lines on average (title + potential continuation)
+        // Divide by 2 to approximate notes, with minimum of 3
+        let visible_notes = content_height.saturating_sub(6).max(3);
 
         // Show scroll hints if content is scrollable
         if total_notes > visible_notes {
@@ -1475,6 +1486,7 @@ fn render_git_tab<'a>(
     _value_style: &Style,
     dim_style: &Style,
     key_style: &Style,
+    content_height: usize,
 ) {
     if task.worktree_path.is_none() {
         lines.push(Line::from(Span::styled("No worktree for this task", *dim_style)));
@@ -1544,10 +1556,16 @@ fn render_git_tab<'a>(
     // Get git diff from cache or show loading message
     let scroll_offset = app.model.ui_state.git_diff_scroll_offset;
 
+    // Calculate remaining height for diff content
+    // Header takes: branch (1) + changes/no changes (1) + optionally commits behind (1) + separator (1) + scroll hints (1) + empty (1)
+    // This is approximately 6-7 lines, use lines.len() to be accurate
+    let header_lines = lines.len();
+    let diff_content_height = content_height.saturating_sub(header_lines);
+
     if let Some((cached_task_id, ref diff_content)) = app.model.ui_state.git_diff_cache {
         if cached_task_id == task.id {
             // Parse and render the diff with colors
-            render_git_diff_content(lines, diff_content, scroll_offset, dim_style);
+            render_git_diff_content(lines, diff_content, scroll_offset, dim_style, diff_content_height);
         } else {
             lines.push(Line::from(Span::styled("Loading diff...", *dim_style)));
         }
@@ -1562,6 +1580,7 @@ fn render_git_diff_content<'a>(
     diff_content: &str,
     scroll_offset: usize,
     dim_style: &Style,
+    content_height: usize,
 ) {
     let diff_lines: Vec<&str> = diff_content.lines().collect();
     let total_lines = diff_lines.len();
@@ -1571,10 +1590,14 @@ fn render_git_diff_content<'a>(
         return;
     }
 
+    // Calculate visible lines from available content height
+    // Account for: scroll position indicator (2 lines when shown) + "more below" indicator (2 lines when shown)
+    let visible_lines = content_height.saturating_sub(4).max(5);
+
     // Show scroll position indicator
-    if total_lines > 20 {
+    if total_lines > visible_lines {
         let percentage = if total_lines > 0 {
-            ((scroll_offset as f64 / total_lines as f64) * 100.0) as usize
+            ((scroll_offset as f64 / total_lines.saturating_sub(visible_lines).max(1) as f64) * 100.0).min(100.0) as usize
         } else {
             0
         };
@@ -1582,7 +1605,7 @@ fn render_git_diff_content<'a>(
             Span::styled(
                 format!("Lines {}-{} of {} ({}%)",
                     scroll_offset + 1,
-                    (scroll_offset + 30).min(total_lines),
+                    (scroll_offset + visible_lines).min(total_lines),
                     total_lines,
                     percentage
                 ),
@@ -1593,7 +1616,6 @@ fn render_git_diff_content<'a>(
     }
 
     // Render visible diff lines with colors
-    let visible_lines = 25; // How many lines to show
     for line in diff_lines.iter().skip(scroll_offset).take(visible_lines) {
         let styled_line = style_diff_line(line);
         lines.push(styled_line);
@@ -1682,6 +1704,7 @@ fn render_activity_tab<'a>(
     _label_style: &Style,
     _value_style: &Style,
     dim_style: &Style,
+    content_height: usize,
 ) {
     // Calculate total output captured
     let total_output_chars: usize = task.activity_log.iter()
@@ -1786,9 +1809,13 @@ fn render_activity_tab<'a>(
         let scroll_offset = ui_state.activity_scroll_offset;
         let expanded_idx = ui_state.activity_expanded_idx;
 
-        // Calculate visible window (show ~15 entries with room for expansion)
+        // Calculate visible window based on available height
+        // Header takes: title (1) + empty (1) + session info (1) + stats (1) + empty (1) + separator (1) = 6 lines
+        // Each entry takes ~1 line (plus expanded content if expanded), plus scroll indicators (2)
+        let header_lines = lines.len(); // Use actual count of lines added so far
+        let visible_count = content_height.saturating_sub(header_lines + 2).max(5); // +2 for scroll indicators
         let total_entries = task.activity_log.len();
-        let visible_count = 15.min(total_entries);
+        let visible_count = visible_count.min(total_entries);
         let start_idx = scroll_offset.min(total_entries.saturating_sub(visible_count));
         let end_idx = (start_idx + visible_count).min(total_entries);
 
