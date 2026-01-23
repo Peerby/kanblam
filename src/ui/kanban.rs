@@ -286,8 +286,9 @@ fn render_column(frame: &mut Frame, area: Rect, app: &App, status: TaskStatus) {
                     let spec_phase_b = ['▄', '▌', '▀', '▐']; // ½ filled, clockwise
                     // Phase C uses spec_phase_a with inverted colors
                     let spec_phase_d = '█'; // Full block, completion
-                    // QA validation animation - magnifying glass search pattern
-                    let qa_frames = ['∘', '󰍉', '󰍊', '󰍋', '󰍊', '󰍉', '∘'];
+                    // QA validation animation - pulsing circle/ring pattern (validation check)
+                    // Uses standard Unicode circles for terminal compatibility (Nerd Font icons cause artifacts)
+                    let qa_frames = ['◦', '○', '◎', '●', '◎', '○', '◦'];
                     // Build check animation - rising blocks, two phases (normal then inverted)
                     // Creates a "scrolling block" effect
                     let build_check_frames = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
