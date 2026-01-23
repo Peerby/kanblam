@@ -23,6 +23,157 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+/// Tmux key bindings for pane navigation
+#[derive(Clone)]
+pub struct TmuxKeys {
+    /// Prefix key (e.g., "C-b" or "C-a")
+    pub prefix: String,
+    /// Key to move to pane above
+    pub pane_up: String,
+    /// Key to move to pane below
+    pub pane_down: String,
+    /// Key to move to left pane
+    pub pane_left: String,
+    /// Key to move to right pane
+    pub pane_right: String,
+}
+
+impl Default for TmuxKeys {
+    fn default() -> Self {
+        Self {
+            prefix: "^b".to_string(),
+            pane_up: "↑".to_string(),
+            pane_down: "↓".to_string(),
+            pane_left: "←".to_string(),
+            pane_right: "→".to_string(),
+        }
+    }
+}
+
+impl TmuxKeys {
+    /// Query tmux for current key bindings, falling back to defaults if unavailable
+    pub fn from_tmux() -> Self {
+        let mut keys = Self::default();
+
+        // Get prefix key
+        if let Some(prefix) = get_tmux_option("prefix") {
+            keys.prefix = format_tmux_key(&prefix);
+        }
+
+        // Get pane navigation keys from key bindings
+        // Look for select-pane bindings in the prefix table
+        if let Ok(output) = Command::new("tmux")
+            .args(["list-keys", "-T", "prefix"])
+            .output()
+        {
+            if output.status.success() {
+                let bindings = String::from_utf8_lossy(&output.stdout);
+                for line in bindings.lines() {
+                    // Parse lines like: bind-key -T prefix Up select-pane -U
+                    // Format: bind-key    -T prefix    <key>    <command> [args]
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 5 && parts[0] == "bind-key" {
+                        // Find the key and command
+                        // Skip "bind-key -T prefix" and any flags
+                        let mut key_idx = 3;
+                        while key_idx < parts.len() && parts[key_idx].starts_with('-') {
+                            // Skip flags like -r
+                            key_idx += 1;
+                            // If flag takes an argument (like -T), skip that too
+                            if key_idx > 3 && !parts[key_idx - 1].starts_with('-') {
+                                continue;
+                            }
+                        }
+                        if key_idx >= parts.len() {
+                            continue;
+                        }
+                        let key = parts[key_idx];
+                        let cmd_start = key_idx + 1;
+                        if cmd_start >= parts.len() {
+                            continue;
+                        }
+
+                        // Check for select-pane with direction
+                        if parts[cmd_start] == "select-pane" && cmd_start + 1 < parts.len() {
+                            let direction = parts[cmd_start + 1];
+                            let formatted_key = format_tmux_key(key);
+                            match direction {
+                                "-U" => keys.pane_up = formatted_key,
+                                "-D" => keys.pane_down = formatted_key,
+                                "-L" => keys.pane_left = formatted_key,
+                                "-R" => keys.pane_right = formatted_key,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        keys
+    }
+
+    /// Format as a compact hint string for the status bar
+    /// Returns something like "C-b + ←↑↓→" or "C-a + hjkl"
+    pub fn format_hint(&self) -> String {
+        // Check if using arrow keys or vim-style keys
+        let nav_keys = if self.is_arrow_keys() {
+            "←↑↓→".to_string()
+        } else if self.is_vim_keys() {
+            format!("{}{}{}{}", self.pane_left, self.pane_up, self.pane_down, self.pane_right)
+        } else {
+            // Mixed or custom - show all keys
+            format!(
+                "{}{}{}{}",
+                self.pane_left, self.pane_down, self.pane_up, self.pane_right
+            )
+        };
+        format!("{} {}", self.prefix, nav_keys)
+    }
+
+    fn is_arrow_keys(&self) -> bool {
+        self.pane_up == "↑"
+            && self.pane_down == "↓"
+            && self.pane_left == "←"
+            && self.pane_right == "→"
+    }
+
+    fn is_vim_keys(&self) -> bool {
+        (self.pane_up == "k" || self.pane_up == "K")
+            && (self.pane_down == "j" || self.pane_down == "J")
+            && (self.pane_left == "h" || self.pane_left == "H")
+            && (self.pane_right == "l" || self.pane_right == "L")
+    }
+}
+
+/// Get a tmux option value
+fn get_tmux_option(option: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["show-options", "-gv", option])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Format a tmux key for display (e.g., "C-b" becomes "^b", "Left" becomes "←")
+fn format_tmux_key(key: &str) -> String {
+    match key {
+        "Left" => "←".to_string(),
+        "Right" => "→".to_string(),
+        "Up" => "↑".to_string(),
+        "Down" => "↓".to_string(),
+        _ if key.starts_with("C-") => format!("^{}", &key[2..]),
+        _ => key.to_string(),
+    }
+}
+
 /// State for the statusbar TUI
 pub struct StatusbarState {
     /// Task ID this statusbar is for
@@ -57,6 +208,10 @@ pub struct StatusbarState {
     pub last_height_check: Instant,
     /// Whether we're prompting to install lazygit
     pub lazygit_install_prompt: bool,
+    /// Tmux key bindings for pane navigation
+    pub tmux_keys: TmuxKeys,
+    /// Whether this statusbar pane is the active pane (receiving keyboard input)
+    pub pane_is_active: bool,
 }
 
 impl StatusbarState {
@@ -81,6 +236,9 @@ impl StatusbarState {
         // Detect dev command
         let dev_command = detect_dev_command(&worktree_path);
 
+        // Query tmux for keybindings
+        let tmux_keys = TmuxKeys::from_tmux();
+
         Self {
             task_id,
             worktree_path,
@@ -98,6 +256,23 @@ impl StatusbarState {
             dev_running: false,
             last_height_check: Instant::now() - Duration::from_secs(10), // Force immediate check
             lazygit_install_prompt: false,
+            tmux_keys,
+            pane_is_active: false,
+        }
+    }
+
+    /// Check if the statusbar pane is the active pane in the tmux session
+    pub fn check_pane_active(&mut self) {
+        // Query tmux to see if the bottom pane (statusbar) is active
+        let target = format!("{}:.{{bottom}}", self.session_name);
+        if let Ok(output) = Command::new("tmux")
+            .args(["display-message", "-t", &target, "-p", "#{pane_active}"])
+            .output()
+        {
+            if output.status.success() {
+                let active = String::from_utf8_lossy(&output.stdout).trim() == "1";
+                self.pane_is_active = active;
+            }
         }
     }
 
@@ -328,7 +503,13 @@ const KANBLAM_ART_BOTTOM_POST: &str = "█ █▄▄ █▀█ █ ▀ █";  //
 /// Otherwise: status on line 1, plain "KANBLAM" on line 2
 fn render(frame: &mut Frame, state: &StatusbarState) {
     let area = frame.area();
-    let bg_style = Style::default().bg(Color::Rgb(30, 30, 40));
+    // Use a highlighted background when this pane is active to indicate it receives keyboard input
+    let bg_color = if state.pane_is_active {
+        Color::Rgb(50, 50, 70) // Lighter/highlighted when active
+    } else {
+        Color::Rgb(30, 30, 40) // Normal dark background
+    };
+    let bg_style = Style::default().bg(bg_color);
     let green = Color::Rgb(80, 200, 120);
     let kanblam_style = Style::default().fg(green).add_modifier(Modifier::BOLD);
 
@@ -424,6 +605,16 @@ fn render(frame: &mut Frame, state: &StatusbarState) {
                 Style::default().fg(Color::DarkGray),
             ));
         }
+
+        // Tmux pane navigation hints
+        status_spans.push(Span::styled(
+            " │ panes:",
+            Style::default().fg(Color::DarkGray),
+        ));
+        status_spans.push(Span::styled(
+            state.tmux_keys.format_hint(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
     }
 
     // Dev running indicator
@@ -888,6 +1079,9 @@ fn run_loop(
 
         // Ensure pane stays at 2 lines (handles screen dimension changes)
         state.enforce_pane_height();
+
+        // Check if this pane is active (for visual feedback)
+        state.check_pane_active();
 
         // Render
         let area = terminal.draw(|f| render(f, state))?.area;
