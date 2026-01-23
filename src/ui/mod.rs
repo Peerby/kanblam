@@ -1084,6 +1084,10 @@ fn render_general_tab<'a>(
                 for line in ansi_lines {
                     lines.push(line);
                 }
+                lines.push(Line::from(Span::styled(
+                    "↑ Low-res preview · actual image is full resolution",
+                    *dim_style,
+                )));
                 lines.push(Line::from(""));
             }
         }
