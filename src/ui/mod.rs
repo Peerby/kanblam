@@ -2306,9 +2306,8 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
     let y_axis_width = if max_count > 99 { 3 } else { 2 };
 
     // Build the title with proper centering
-    // Add 1 char padding on the right side of the chart
-    let right_padding = 1;
-    let chart_box_width = chart_inner_width + right_padding;
+    // The label row has no padding; other rows get 1 space padding to align
+    let chart_box_width = chart_inner_width + 1;
     let title = format!(" {}-DAY ACTIVITY ", num_days);
     let title_len = title.len();
     let dashes_total = chart_box_width.saturating_sub(title_len);
@@ -2386,8 +2385,8 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
             spans.push(Span::styled(format!("  {}", bar_char), Style::default().fg(color)));
         }
 
-        // Add right padding before closing vertical bar
-        spans.push(Span::styled(" ".repeat(right_padding), Style::default()));
+        // Add right padding before closing vertical bar (1 space for bar rows)
+        spans.push(Span::styled(" ", Style::default()));
         spans.push(Span::styled("│", Style::default().fg(accent_color)));
         lines.push(Line::from(spans));
     }
@@ -2402,13 +2401,12 @@ fn render_stats_modal(frame: &mut Frame, app: &App) {
         let (label, is_today) = match i {
             0 => (" T ".to_string(), true),    // Today - centered in 3-char cell
             1 => (" Y ".to_string(), false),   // Yesterday - centered in 3-char cell
-            _ => (format!("{:>2} ", -(i as i32)), false),  // -2, -3, etc. - right-aligned
+            _ => (format!("{:>2} ", -(i as i32)), false),  // -2, -3, etc. - right-aligned with trailing space
         };
         let color = if is_today { bar_full } else { Color::DarkGray };
         label_spans.push(Span::styled(label, Style::default().fg(color)));
     }
-    // Add right padding before closing vertical bar
-    label_spans.push(Span::styled(" ".repeat(right_padding), Style::default()));
+    // No right padding for label row - the │ aligns directly after labels
     label_spans.push(Span::styled("│", Style::default().fg(accent_color)));
     lines.push(Line::from(label_spans));
 
