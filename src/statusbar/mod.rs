@@ -504,8 +504,9 @@ const KANBLAM_ART_BOTTOM_POST: &str = "█ █▄▄ █▀█ █ ▀ █";  //
 fn render(frame: &mut Frame, state: &StatusbarState) {
     let area = frame.area();
     // Use a highlighted background when this pane is active to indicate it receives keyboard input
+    // Active color uses a warm tint from the mascot palette (dark magenta/orange)
     let bg_color = if state.pane_is_active {
-        Color::Rgb(50, 50, 70) // Lighter/highlighted when active
+        Color::Rgb(70, 35, 50) // Warm dark magenta - clearly active, matches mascot palette
     } else {
         Color::Rgb(30, 30, 40) // Normal dark background
     };
