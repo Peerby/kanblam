@@ -1815,10 +1815,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             };
                             commands.push(Message::SetStatusMessage(Some(status)));
 
-                            // Update session mode to CLI
+                            // Update session mode to CLI and record open time
                             if let Some(project) = self.model.active_project_mut() {
                                 if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                     task.session_mode = crate::model::SessionMode::CliInteractive;
+                                    task.cli_opened_at = Some(chrono::Utc::now());
+                                    task.log_activity("User opened terminal");
                                 }
                             }
                         }
@@ -4193,9 +4195,21 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // For Review: only protect SDK-sourced signals (QA completion) - CLI signals
                                     // mean user is actively continuing work and should move back to InProgress
                                     let is_protected_review = task.status == TaskStatus::Review && signal.source == "sdk";
+
+                                    // Grace period for CLI startup: ignore CLI working signals within 3 seconds
+                                    // of opening the terminal. Claude CLI may fire PreToolUse during session
+                                    // restore (e.g., reading context files) which isn't actual user work.
+                                    let is_cli_startup_grace_period = signal.source == "cli"
+                                        && task.status == TaskStatus::Review
+                                        && task.cli_opened_at.map_or(false, |opened_at| {
+                                            let grace_period = chrono::Duration::seconds(3);
+                                            chrono::Utc::now() - opened_at < grace_period
+                                        });
+
                                     if !was_accepting && !was_updating && !was_applying
                                         && task.status != TaskStatus::Testing
                                         && !is_protected_review
+                                        && !is_cli_startup_grace_period
                                     {
                                         // Move to end of InProgress column so newly active tasks appear at bottom
                                         project.move_task_to_start_of_status(task_id, TaskStatus::InProgress);
@@ -4203,7 +4217,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                     // Re-find task since move_task_to_start_of_status may have repositioned it
                                     // Only set Working state if not in a protected Review state from SDK
                                     // Late SDK signals shouldn't override Paused state for Review tasks
-                                    if !is_protected_review {
+                                    if !is_protected_review && !is_cli_startup_grace_period {
                                         if let Some(task) = project.tasks.iter_mut().find(|t| t.id == task_id) {
                                             task.session_state = crate::model::ClaudeSessionState::Working;
                                         }

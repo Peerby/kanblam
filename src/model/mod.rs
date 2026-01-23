@@ -1473,6 +1473,10 @@ pub struct Task {
     /// If sdk_command_count > cli_opened_at_command_count, CLI needs refresh
     #[serde(default)]
     pub cli_opened_at_command_count: u32,
+    /// Timestamp when CLI terminal was opened (for grace period on working signals)
+    /// Used to ignore spurious "working" signals from Claude CLI startup
+    #[serde(default)]
+    pub cli_opened_at: Option<DateTime<Utc>>,
     /// Feedback queued to be sent when Claude finishes current work
     /// Used when user sends feedback while SDK/CLI is actively working
     #[serde(skip)]
@@ -1582,6 +1586,7 @@ impl Task {
             // SDK/CLI handoff tracking
             sdk_command_count: 0,
             cli_opened_at_command_count: 0,
+            cli_opened_at: None,
             pending_feedback: None,
             feedback_history: Vec::new(),
             // Queueing
