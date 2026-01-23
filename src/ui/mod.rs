@@ -3,6 +3,7 @@ mod kanban;
 pub mod logo;
 mod output;
 mod status_bar;
+pub mod ultrathink;
 pub mod watcher;
 mod welcome;
 
@@ -745,6 +746,19 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         Line::from(Span::styled(" New Task ", title_style))
     };
 
+    // Check for ultrathink in input and add rainbow indicator to title
+    let input_text = app.model.ui_state.get_input_text();
+    let title = if ultrathink::contains_ultrathink(&input_text) {
+        // Append rainbow "ULTRATHINK" indicator to title
+        let mut spans = title.spans.into_iter().collect::<Vec<_>>();
+        spans.push(Span::styled(" ", Style::default()));
+        spans.extend(ultrathink::rainbow_spans("ULTRATHINK"));
+        spans.push(Span::styled(" ", Style::default()));
+        Line::from(spans)
+    } else {
+        title
+    };
+
     // Create the block for the editor
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1034,16 +1048,26 @@ fn render_general_tab<'a>(
 ) {
     // Title (full if short_title exists)
     if task.short_title.is_some() {
+        let title_style = Style::default().fg(Color::White);
         for title_line in task.title.lines() {
-            lines.push(Line::from(Span::styled(title_line.to_string(), Style::default().fg(Color::White))));
+            if ultrathink::contains_ultrathink(title_line) {
+                lines.push(Line::from(ultrathink::style_line_with_ultrathink(title_line, title_style)));
+            } else {
+                lines.push(Line::from(Span::styled(title_line.to_string(), title_style)));
+            }
         }
         lines.push(Line::from(""));
     }
 
     // Description
     if !task.description.is_empty() {
+        let desc_style = Style::default().fg(Color::Gray);
         for desc_line in task.description.lines() {
-            lines.push(Line::from(Span::styled(desc_line.to_string(), Style::default().fg(Color::Gray))));
+            if ultrathink::contains_ultrathink(desc_line) {
+                lines.push(Line::from(ultrathink::style_line_with_ultrathink(desc_line, desc_style)));
+            } else {
+                lines.push(Line::from(Span::styled(desc_line.to_string(), desc_style)));
+            }
         }
         lines.push(Line::from(""));
     }
@@ -1051,6 +1075,7 @@ fn render_general_tab<'a>(
     // Feedback history
     if !task.feedback_history.is_empty() {
         lines.push(Line::from(Span::styled("─ Feedback History ─", *dim_style)));
+        let feedback_style = Style::default().fg(Color::Cyan);
         for entry in &task.feedback_history {
             let elapsed = chrono::Utc::now().signed_duration_since(entry.timestamp);
             let time_ago = if elapsed.num_seconds() < 60 {
@@ -1062,10 +1087,16 @@ fn render_general_tab<'a>(
             } else {
                 format!("{}d ago", elapsed.num_days())
             };
-            lines.push(Line::from(vec![
+            // Check for ultrathink in feedback content
+            let mut spans = vec![
                 Span::styled(format!("{:>8} ", time_ago), Style::default().fg(Color::DarkGray)),
-                Span::styled(entry.content.clone(), Style::default().fg(Color::Cyan)),
-            ]));
+            ];
+            if ultrathink::contains_ultrathink(&entry.content) {
+                spans.extend(ultrathink::style_line_with_ultrathink(&entry.content, feedback_style));
+            } else {
+                spans.push(Span::styled(entry.content.clone(), feedback_style));
+            }
+            lines.push(Line::from(spans));
         }
         lines.push(Line::from(""));
     }
@@ -1302,30 +1333,44 @@ fn render_spec_tab<'a>(
             let styled_line = if line.starts_with("> ") {
                 // Blockquote - important instruction in yellow/bold
                 let content = &line[2..];
-                Line::from(vec![
-                    Span::styled("│ ", Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        content.to_string(),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
-                ])
+                let blockquote_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                let mut spans = vec![Span::styled("│ ", Style::default().fg(Color::Yellow))];
+                // Check for ultrathink in blockquote content
+                if ultrathink::contains_ultrathink(content) {
+                    spans.extend(ultrathink::style_line_with_ultrathink(content, blockquote_style));
+                } else {
+                    spans.push(Span::styled(content.to_string(), blockquote_style));
+                }
+                Line::from(spans)
             } else if line.starts_with("## ") {
                 // Section headers in cyan bold
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ))
+                let header_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                if ultrathink::contains_ultrathink(line) {
+                    Line::from(ultrathink::style_line_with_ultrathink(line, header_style))
+                } else {
+                    Line::from(Span::styled(line.to_string(), header_style))
+                }
             } else if line.starts_with("- ") || line.starts_with("* ") {
                 // Bullet points with green bullet
                 let content = &line[2..];
-                Line::from(vec![
-                    Span::styled("• ", Style::default().fg(Color::Green)),
-                    Span::styled(content.to_string(), Style::default().fg(Color::White)),
-                ])
+                let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Green))];
+                // Check for ultrathink in bullet content
+                if ultrathink::contains_ultrathink(content) {
+                    spans.extend(ultrathink::style_line_with_ultrathink(content, Style::default().fg(Color::White)));
+                } else {
+                    spans.push(Span::styled(content.to_string(), Style::default().fg(Color::White)));
+                }
+                Line::from(spans)
             } else if line.trim().is_empty() {
                 Line::from("")
             } else {
-                Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White)))
+                // Regular text - check for ultrathink
+                let text_style = Style::default().fg(Color::White);
+                if ultrathink::contains_ultrathink(line) {
+                    Line::from(ultrathink::style_line_with_ultrathink(line, text_style))
+                } else {
+                    Line::from(Span::styled(line.to_string(), text_style))
+                }
             };
             lines.push(styled_line);
         }
@@ -1431,6 +1476,7 @@ fn render_notes_tab(
         }
 
         // Render visible notes
+        let note_text_style = Style::default().fg(Color::White);
         for (i, note) in task.notes.iter().skip(scroll_offset).take(visible_notes).enumerate() {
             let note_num = scroll_offset + i + 1;
             // Wrap long notes to multiple lines
@@ -1438,30 +1484,32 @@ fn render_notes_tab(
 
             // First line with note number
             if let Some(first_line) = wrapped_lines.first() {
-                lines.push(Line::from(vec![
+                let mut spans = vec![
                     Span::styled(
                         format!("{}. ", note_num),
                         Style::default().fg(Color::DarkGray),
                     ),
-                    Span::styled(
-                        (*first_line).to_string(),
-                        Style::default().fg(Color::White),
-                    ),
-                ]));
+                ];
+                // Check for ultrathink in note content
+                if ultrathink::contains_ultrathink(first_line) {
+                    spans.extend(ultrathink::style_line_with_ultrathink(first_line, note_text_style));
+                } else {
+                    spans.push(Span::styled((*first_line).to_string(), note_text_style));
+                }
+                lines.push(Line::from(spans));
             }
 
             // Continuation lines (indented)
             for line in wrapped_lines.iter().skip(1) {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "   ",
-                        Style::default(),
-                    ),
-                    Span::styled(
-                        (*line).to_string(),
-                        Style::default().fg(Color::White),
-                    ),
-                ]));
+                let mut spans = vec![
+                    Span::styled("   ", Style::default()),
+                ];
+                if ultrathink::contains_ultrathink(line) {
+                    spans.extend(ultrathink::style_line_with_ultrathink(line, note_text_style));
+                } else {
+                    spans.push(Span::styled((*line).to_string(), note_text_style));
+                }
+                lines.push(Line::from(spans));
             }
         }
 
