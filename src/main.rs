@@ -109,15 +109,20 @@ async fn main() -> anyhow::Result<()> {
 
     // Process any signals that arrived while app was not running
     // Signals are sorted chronologically and replayed in order
+    // Only replay signals newer than the last processed timestamp to avoid re-processing
     // Note: replaying_signals flag suppresses audio notifications during replay
     if let Some(ref mut watcher) = hook_watcher {
         app.model.ui_state.replaying_signals = true;
-        let pending_events = watcher.process_all_pending();
+        let (pending_events, max_ts) = watcher.process_all_pending(app.model.last_processed_signal_ts);
         for event in pending_events {
             if let Some(msg) = convert_watcher_event(event) {
                 let commands = app.update(msg);
                 process_commands_recursively(&mut app, commands);
             }
+        }
+        // Update the last processed timestamp if we processed any signals
+        if let Some(ts) = max_ts {
+            app.model.last_processed_signal_ts = Some(ts);
         }
         app.model.ui_state.replaying_signals = false;
     }
@@ -215,6 +220,9 @@ where
                     let commands = app.update(msg);
                     // Process commands recursively to handle nested commands
                     process_commands_recursively(app, commands);
+                    // Update last processed timestamp to current time
+                    // This ensures we won't replay this signal on restart
+                    app.model.last_processed_signal_ts = Some(chrono::Utc::now().timestamp_millis());
                 }
             }
         }

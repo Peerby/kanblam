@@ -191,12 +191,18 @@ impl HookWatcher {
     /// Process all existing signal files in the directory
     /// Call this on startup to catch signals written while app was not running
     /// Signals are processed in chronological order (oldest first)
-    pub fn process_all_pending(&mut self) -> Vec<WatcherEvent> {
+    ///
+    /// Parameters:
+    /// - `after_ts`: Only process signals with timestamp > after_ts (None = process all)
+    ///
+    /// Returns: (events, max_timestamp) where max_timestamp is the highest timestamp processed
+    pub fn process_all_pending(&mut self, after_ts: Option<i64>) -> (Vec<WatcherEvent>, Option<i64>) {
         let mut events = Vec::new();
+        let mut max_ts: Option<i64> = None;
 
         let entries = match std::fs::read_dir(&self.signal_dir) {
             Ok(entries) => entries,
-            Err(_) => return events,
+            Err(_) => return (events, max_ts),
         };
 
         // Collect and sort signal files by timestamp (extracted from filename)
@@ -225,7 +231,23 @@ impl HookWatcher {
             let path = entry.path();
             let filename = entry.file_name().to_string_lossy().to_string();
 
-            // Skip if already processed
+            // Extract timestamp from filename
+            let file_ts = filename
+                .strip_suffix(".json")
+                .and_then(|s| s.rsplit('-').next())
+                .and_then(|ts| ts.parse::<i64>().ok())
+                .unwrap_or(0);
+
+            // Skip if timestamp is at or before the cutoff (already processed in previous session)
+            if let Some(cutoff) = after_ts {
+                if file_ts <= cutoff {
+                    // Mark as processed in memory to avoid re-reading
+                    self.processed_signals.insert(filename);
+                    continue;
+                }
+            }
+
+            // Skip if already processed in this session
             if self.processed_signals.contains(&filename) {
                 continue;
             }
@@ -234,6 +256,9 @@ impl HookWatcher {
                 if let Ok(signal) = serde_json::from_str::<HookSignalFile>(&content) {
                     // Mark as processed (don't delete - other instances may need it)
                     self.processed_signals.insert(filename);
+
+                    // Track max timestamp
+                    max_ts = Some(max_ts.unwrap_or(file_ts).max(file_ts));
 
                     let event = match signal.event.as_str() {
                         "stop" => Some(WatcherEvent::ClaudeStopped {
@@ -276,7 +301,7 @@ impl HookWatcher {
             }
         }
 
-        events
+        (events, max_ts)
     }
 
     /// Clean up signal files older than SIGNAL_TTL_SECS

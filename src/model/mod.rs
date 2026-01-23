@@ -683,6 +683,10 @@ pub struct AppModel {
     /// Global settings (shared across all projects)
     #[serde(default)]
     pub global_settings: GlobalSettings,
+    /// Timestamp (millis) of the last processed signal file
+    /// Used to avoid replaying already-processed signals on restart
+    #[serde(default)]
+    pub last_processed_signal_ts: Option<i64>,
     #[serde(skip)]
     pub ui_state: UiState,
 }
@@ -693,6 +697,7 @@ impl Default for AppModel {
             projects: Vec::new(),
             active_project_idx: 0,
             global_settings: GlobalSettings::default(),
+            last_processed_signal_ts: None,
             ui_state: UiState::default(),
         }
     }
