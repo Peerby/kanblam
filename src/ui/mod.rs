@@ -3471,6 +3471,15 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         lines.push(Line::from(""));
     }
 
+    // Section: Project Settings
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("Project: {}", project_name),
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::UNDERLINED)
+        ),
+    ]));
+    lines.push(Line::from(""));
+
     // Apply Strategy field
     {
         let is_selected = config.selected_field == ConfigField::ApplyStrategy;
@@ -3500,15 +3509,6 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         }
         lines.push(Line::from(""));
     }
-
-    // Section: Project Commands
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("Project: {}", project_name),
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::UNDERLINED)
-        ),
-    ]));
-    lines.push(Line::from(""));
 
     // Command fields
     let command_fields = [
