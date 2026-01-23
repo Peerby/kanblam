@@ -80,6 +80,9 @@ pub struct GlobalSettings {
     /// Mascot advice interval in minutes (default: 15)
     #[serde(default = "default_mascot_interval")]
     pub mascot_advice_interval_minutes: u32,
+    /// Vim mode enabled for text input editor (default: false = regular mode)
+    #[serde(default)]
+    pub vim_mode_enabled: bool,
 }
 
 fn default_mascot_interval() -> u32 {
@@ -146,6 +149,7 @@ impl Default for GlobalSettings {
             default_editor: Editor::Vim,
             mascot_advice_enabled: None, // Will show intro message on first run
             mascot_advice_interval_minutes: 15,
+            vim_mode_enabled: false, // Default to regular editor mode
         }
     }
 }
@@ -1834,6 +1838,8 @@ pub struct UiState {
     pub focus: FocusArea,
     pub editor_state: EditorState,
     pub editor_event_handler: EditorEventHandler,
+    /// Whether vim mode is enabled for the editor (cached from GlobalSettings)
+    pub vim_mode_enabled: bool,
     pub selected_task_idx: Option<usize>,
     /// The ID of the currently selected task (source of truth for selection)
     pub selected_task_id: Option<Uuid>,
@@ -2152,6 +2158,7 @@ pub struct InteractiveModal {
 pub enum ConfigField {
     #[default]
     DefaultEditor,
+    VimModeEnabled,
     MascotAdvice,
     MascotAdviceInterval,
     QaEnabled,
@@ -2169,6 +2176,7 @@ impl ConfigField {
     pub fn all() -> &'static [ConfigField] {
         &[
             ConfigField::DefaultEditor,
+            ConfigField::VimModeEnabled,
             ConfigField::MascotAdvice,
             ConfigField::MascotAdviceInterval,
             ConfigField::QaEnabled,
@@ -2186,6 +2194,7 @@ impl ConfigField {
     pub fn visible_fields(mascot_enabled: bool, qa_enabled: bool) -> Vec<ConfigField> {
         let mut fields = vec![
             ConfigField::DefaultEditor,
+            ConfigField::VimModeEnabled,
             ConfigField::MascotAdvice,
         ];
         if mascot_enabled {
@@ -2274,6 +2283,7 @@ impl ConfigField {
     pub fn label(&self) -> &'static str {
         match self {
             ConfigField::DefaultEditor => "Default Editor",
+            ConfigField::VimModeEnabled => "Vim Mode",
             ConfigField::MascotAdvice => "Mascot Advice",
             ConfigField::MascotAdviceInterval => "  Advice Interval",
             ConfigField::QaEnabled => "QA Validation",
@@ -2291,6 +2301,7 @@ impl ConfigField {
     pub fn hint(&self) -> &'static str {
         match self {
             ConfigField::DefaultEditor => "External editor for Ctrl-G (global setting)",
+            ConfigField::VimModeEnabled => "Enable vim keybindings in task input editor",
             ConfigField::MascotAdvice => "Toggle with Ctrl-W (uses Claude tokens)",
             ConfigField::MascotAdviceInterval => "How often mascot gives advice (1-120 minutes)",
             ConfigField::QaEnabled => "Auto-validate Claude's work when it stops",
@@ -2306,7 +2317,7 @@ impl ConfigField {
 
     /// Whether this field is a global setting (vs project-specific)
     pub fn is_global(&self) -> bool {
-        matches!(self, ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval)
+        matches!(self, ConfigField::DefaultEditor | ConfigField::VimModeEnabled | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval)
     }
 
     /// Get the next field (wrapping), respecting visible fields based on enabled toggles
@@ -2351,6 +2362,8 @@ pub struct ConfigModalState {
     pub temp_commands: ProjectCommands,
     /// Temporary global settings (edited before save)
     pub temp_editor: Editor,
+    /// Temporary vim mode enabled setting
+    pub temp_vim_mode_enabled: bool,
     /// Temporary mascot advice setting (None = show intro, Some(true/false) = enabled/disabled)
     pub temp_mascot_advice: Option<bool>,
     /// Temporary mascot advice interval in minutes
@@ -2361,6 +2374,21 @@ pub struct ConfigModalState {
     pub temp_max_qa_attempts: u32,
     /// Temporary apply strategy setting
     pub temp_apply_strategy: ApplyStrategy,
+}
+
+/// Create regular (non-vim) mode handler with standard text editing keybindings
+/// This mode stays in Insert mode and doesn't use modal editing.
+/// Uses emacs-style bindings which provide modeless editing by default.
+fn create_regular_handler() -> EditorEventHandler {
+    // Emacs mode provides modeless editing with standard keybindings:
+    // - Arrow keys for navigation
+    // - Home/End for start/end of line
+    // - Backspace/Delete for character deletion
+    // - Enter for newline
+    // - Ctrl+A/E for start/end of line
+    // - Ctrl+K to delete to end of line
+    // - Ctrl+F/B for forward/backward (also via arrow keys)
+    EditorEventHandler::emacs_mode()
 }
 
 /// Create vim mode handler with custom keybindings
@@ -2452,8 +2480,9 @@ impl Default for UiState {
         Self {
             focus: FocusArea::default(),
             editor_state,
-            // Use vim mode with custom keybindings
-            editor_event_handler: create_vim_handler(),
+            // Default to regular mode (non-vim) - will be updated from GlobalSettings on startup
+            editor_event_handler: create_regular_handler(),
+            vim_mode_enabled: false,
             selected_task_idx: None,
             selected_task_id: None,
             selected_column: TaskStatus::default(),
@@ -2579,6 +2608,20 @@ impl UiState {
     /// Check if the open project dialog is open
     pub fn is_open_project_dialog_open(&self) -> bool {
         self.open_project_dialog_slot.is_some()
+    }
+
+    /// Set the editor mode (vim or regular) and update the event handler
+    pub fn set_vim_mode(&mut self, enabled: bool) {
+        if self.vim_mode_enabled != enabled {
+            self.vim_mode_enabled = enabled;
+            self.editor_event_handler = if enabled {
+                create_vim_handler()
+            } else {
+                create_regular_handler()
+            };
+            // Reset to Insert mode when switching
+            self.editor_state.mode = EditorMode::Insert;
+        }
     }
 }
 

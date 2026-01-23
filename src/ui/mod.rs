@@ -769,6 +769,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(block, area);
 
     // Configure the editor theme
+    // Hide the status line (Insert/Normal mode indicator) when vim mode is off
     let theme = EditorTheme::default()
         .base(Style::default().fg(text_color))
         .cursor_style(if is_focused {
@@ -776,6 +777,11 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             Style::default()
         });
+    let theme = if app.model.ui_state.vim_mode_enabled {
+        theme
+    } else {
+        theme.hide_status_line()
+    };
 
     // Render the editor with wrap enabled
     let editor_state = &mut app.model.ui_state.editor_state;
@@ -3341,6 +3347,47 @@ fn render_config_modal(frame: &mut Frame, app: &App) {
         lines.push(Line::from(vec![
             Span::raw("    "),
             Span::styled(ConfigField::DefaultEditor.hint(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Vim Mode field
+    let is_selected = config.selected_field == ConfigField::VimModeEnabled;
+    let vim_enabled = config.temp_vim_mode_enabled;
+    let vim_value = if vim_enabled { "On" } else { "Off" };
+
+    let (prefix, style, value_style) = if is_selected {
+        (
+            "► ",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            if vim_enabled {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Red)
+            }
+        )
+    } else {
+        (
+            "  ",
+            Style::default(),
+            if vim_enabled {
+                Style::default().fg(Color::Green).add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+            }
+        )
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled("Vim Mode: ", style),
+        Span::styled(vim_value, value_style),
+        Span::styled(if is_selected { "  (Enter to toggle)" } else { "" }, Style::default().fg(Color::DarkGray)),
+    ]));
+    if is_selected {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(ConfigField::VimModeEnabled.hint(), Style::default().fg(Color::DarkGray)),
         ]));
     }
     lines.push(Line::from(""));

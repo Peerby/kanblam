@@ -920,35 +920,55 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::InputSubmitAndStart]
         }
 
-        // Enter behavior depends on editor mode:
-        // - Normal mode: submit (or line continuation if ends with \)
-        // - Insert mode: insert newline (handled by edtui)
+        // Enter behavior depends on editor mode and vim mode setting:
+        // - Regular mode: submit (or line continuation if ends with \)
+        // - Vim Normal mode: submit (or line continuation if ends with \)
+        // - Vim Insert mode: insert newline (handled by edtui)
         // - Search mode: go to first search result (handled by edtui)
         KeyCode::Enter if !ctrl && !alt => {
             use edtui::EditorMode;
-            match app.model.ui_state.editor_state.mode {
-                EditorMode::Normal => {
-                    let text = app.model.ui_state.get_input_text();
-                    if text.ends_with('\\') {
-                        // Remove the backslash and insert a newline
-                        use edtui::actions::{Execute, DeleteChar, LineBreak};
-                        DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
-                        LineBreak(1).execute(&mut app.model.ui_state.editor_state);
-                        vec![]
-                    } else if text.trim().is_empty() {
-                        // Empty input: unfocus instead of submitting
-                        vec![Message::FocusChanged(FocusArea::KanbanBoard)]
-                    } else {
-                        vec![Message::InputSubmit]
-                    }
-                }
-                EditorMode::Insert | EditorMode::Search | EditorMode::Visual => {
-                    // Let edtui handle: LineBreak in Insert, FindFirst in Search
-                    app.model.ui_state.editor_event_handler.on_key_event(
-                        key,
-                        &mut app.model.ui_state.editor_state,
-                    );
+
+            // In regular (non-vim) mode, Enter always submits or continues line
+            if !app.model.ui_state.vim_mode_enabled {
+                let text = app.model.ui_state.get_input_text();
+                if text.ends_with('\\') {
+                    // Remove the backslash and insert a newline
+                    use edtui::actions::{Execute, DeleteChar, LineBreak};
+                    DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
+                    LineBreak(1).execute(&mut app.model.ui_state.editor_state);
                     vec![]
+                } else if text.trim().is_empty() {
+                    // Empty input: unfocus instead of submitting
+                    vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+                } else {
+                    vec![Message::InputSubmit]
+                }
+            } else {
+                // Vim mode: behavior depends on current mode
+                match app.model.ui_state.editor_state.mode {
+                    EditorMode::Normal => {
+                        let text = app.model.ui_state.get_input_text();
+                        if text.ends_with('\\') {
+                            // Remove the backslash and insert a newline
+                            use edtui::actions::{Execute, DeleteChar, LineBreak};
+                            DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
+                            LineBreak(1).execute(&mut app.model.ui_state.editor_state);
+                            vec![]
+                        } else if text.trim().is_empty() {
+                            // Empty input: unfocus instead of submitting
+                            vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+                        } else {
+                            vec![Message::InputSubmit]
+                        }
+                    }
+                    EditorMode::Insert | EditorMode::Search | EditorMode::Visual => {
+                        // Let edtui handle: LineBreak in Insert, FindFirst in Search
+                        app.model.ui_state.editor_event_handler.on_key_event(
+                            key,
+                            &mut app.model.ui_state.editor_state,
+                        );
+                        vec![]
+                    }
                 }
             }
         }
@@ -958,16 +978,31 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             vec![Message::InputSubmit]
         }
 
-        // Escape: always pass to edtui for vim mode switching (Insert -> Normal)
-        // Never unfocuses - use Ctrl+C or Up at position 0 to exit
+        // Escape behavior depends on vim mode setting:
+        // - Vim mode: pass to edtui for mode switching (Insert -> Normal)
+        // - Regular mode: unfocus editor (like Ctrl+C)
         KeyCode::Esc => {
             // Clear pending replace mode if active
             app.model.ui_state.pending_replace_char = false;
-            app.model.ui_state.editor_event_handler.on_key_event(
-                key,
-                &mut app.model.ui_state.editor_state,
-            );
-            vec![]
+
+            if app.model.ui_state.vim_mode_enabled {
+                // Vim mode: pass to edtui for mode switching
+                app.model.ui_state.editor_event_handler.on_key_event(
+                    key,
+                    &mut app.model.ui_state.editor_state,
+                );
+                vec![]
+            } else {
+                // Regular mode: Escape unfocuses or cancels
+                if app.model.ui_state.feedback_task_id.is_some() {
+                    vec![Message::CancelFeedbackMode]
+                } else if app.model.ui_state.editing_task_id.is_some() {
+                    vec![Message::CancelEdit]
+                } else {
+                    // Just unfocus, keep the content
+                    vec![Message::FocusChanged(FocusArea::KanbanBoard)]
+                }
+            }
         }
 
         // Ctrl+C unfocuses editor, cancels edit/feedback/note if active (keeps content for new tasks)
@@ -1037,12 +1072,28 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
             }
         }
 
+        // When vim mode is off, use standard text editor behavior:
+        // - Backspace deletes character before cursor
+        // - Delete deletes character under cursor
+        KeyCode::Backspace if !app.model.ui_state.vim_mode_enabled => {
+            use edtui::actions::{Execute, DeleteChar};
+            DeleteChar(1).execute(&mut app.model.ui_state.editor_state);
+            vec![]
+        }
+
+        KeyCode::Delete if !app.model.ui_state.vim_mode_enabled => {
+            use edtui::actions::{Execute, DeleteCharForward};
+            DeleteCharForward(1).execute(&mut app.model.ui_state.editor_state);
+            vec![]
+        }
+
         // All other keys (including plain Enter for newlines) go to edtui editor
         _ => {
             use edtui::EditorMode;
 
-            // 'r' in Normal mode enters replace character mode
-            if app.model.ui_state.editor_state.mode == EditorMode::Normal
+            // 'r' in Vim Normal mode enters replace character mode (only when vim mode enabled)
+            if app.model.ui_state.vim_mode_enabled
+                && app.model.ui_state.editor_state.mode == EditorMode::Normal
                 && key.code == KeyCode::Char('r')
                 && !ctrl
                 && !alt

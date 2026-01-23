@@ -7225,6 +7225,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     .map(|p| (p.commands.clone(), p.qa_enabled, p.max_qa_attempts, p.apply_strategy))
                     .unwrap_or_else(|| (Default::default(), true, 3, ApplyStrategy::default()));
                 let temp_editor = self.model.global_settings.default_editor;
+                let temp_vim_mode_enabled = self.model.global_settings.vim_mode_enabled;
                 let temp_mascot_advice = self.model.global_settings.mascot_advice_enabled;
                 let temp_mascot_interval = self.model.global_settings.mascot_advice_interval_minutes;
 
@@ -7234,6 +7235,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     edit_buffer: String::new(),
                     temp_commands,
                     temp_editor,
+                    temp_vim_mode_enabled,
                     temp_mascot_advice,
                     temp_mascot_interval,
                     temp_qa_enabled,
@@ -7276,6 +7278,9 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             // Enter edit mode
                             config.editing = true;
                         }
+                    } else if config.selected_field == ConfigField::VimModeEnabled {
+                        // Toggle vim mode on/off
+                        config.temp_vim_mode_enabled = !config.temp_vim_mode_enabled;
                     } else if config.selected_field == ConfigField::MascotAdvice {
                         // Toggle on/off (None becomes Some(true), Some(true) becomes Some(false), Some(false) becomes Some(true))
                         config.temp_mascot_advice = Some(!config.temp_mascot_advice.unwrap_or(true));
@@ -7310,7 +7315,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                                 ConfigField::TestCommand => config.temp_commands.test.clone().unwrap_or_default(),
                                 ConfigField::FormatCommand => config.temp_commands.format.clone().unwrap_or_default(),
                                 ConfigField::LintCommand => config.temp_commands.lint.clone().unwrap_or_default(),
-                                ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
+                                ConfigField::DefaultEditor | ConfigField::VimModeEnabled | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
                                 | ConfigField::QaEnabled | ConfigField::MaxQaAttempts | ConfigField::ApplyStrategy => String::new(),
                             };
                             config.editing = true;
@@ -7350,6 +7355,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     if config.selected_field == ConfigField::DefaultEditor {
                         // Editor field - just exit edit mode (cycling is done via h/l)
                         config.editing = false;
+                    } else if config.selected_field == ConfigField::VimModeEnabled {
+                        // VimModeEnabled is toggled directly, no edit mode
                     } else if config.selected_field == ConfigField::MascotAdvice {
                         // MascotAdvice is toggled directly, no edit mode
                     } else if config.selected_field == ConfigField::MascotAdviceInterval {
@@ -7386,7 +7393,7 @@ Do not ask for permission - run tests and fix any issues you find."#);
                             ConfigField::TestCommand => config.temp_commands.test = value,
                             ConfigField::FormatCommand => config.temp_commands.format = value,
                             ConfigField::LintCommand => config.temp_commands.lint = value,
-                            ConfigField::DefaultEditor | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
+                            ConfigField::DefaultEditor | ConfigField::VimModeEnabled | ConfigField::MascotAdvice | ConfigField::MascotAdviceInterval
                             | ConfigField::QaEnabled | ConfigField::MaxQaAttempts | ConfigField::ApplyStrategy => {}
                         }
 
@@ -7407,10 +7414,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 use crate::model::ApplyStrategy;
 
                 // Extract values before borrowing mutably
-                let (temp_editor, temp_commands, temp_mascot_advice, temp_mascot_interval, temp_qa_enabled, temp_max_qa_attempts, temp_apply_strategy) = if let Some(ref config) = self.model.ui_state.config_modal {
-                    (config.temp_editor, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval, config.temp_qa_enabled, config.temp_max_qa_attempts, config.temp_apply_strategy)
+                let (temp_editor, temp_vim_mode_enabled, temp_commands, temp_mascot_advice, temp_mascot_interval, temp_qa_enabled, temp_max_qa_attempts, temp_apply_strategy) = if let Some(ref config) = self.model.ui_state.config_modal {
+                    (config.temp_editor, config.temp_vim_mode_enabled, config.temp_commands.clone(), config.temp_mascot_advice, config.temp_mascot_interval, config.temp_qa_enabled, config.temp_max_qa_attempts, config.temp_apply_strategy)
                 } else {
-                    (self.model.global_settings.default_editor, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes, true, 3, ApplyStrategy::default())
+                    (self.model.global_settings.default_editor, self.model.global_settings.vim_mode_enabled, crate::model::ProjectCommands::default(), self.model.global_settings.mascot_advice_enabled, self.model.global_settings.mascot_advice_interval_minutes, true, 3, ApplyStrategy::default())
                 };
 
                 // Check if mascot advice setting changed
@@ -7420,8 +7427,12 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                 // Save global settings
                 self.model.global_settings.default_editor = temp_editor;
+                self.model.global_settings.vim_mode_enabled = temp_vim_mode_enabled;
                 self.model.global_settings.mascot_advice_enabled = temp_mascot_advice;
                 self.model.global_settings.mascot_advice_interval_minutes = temp_mascot_interval;
+
+                // Update UI state's editor mode if changed
+                self.model.ui_state.set_vim_mode(temp_vim_mode_enabled);
 
                 // Save project commands, QA settings, and apply strategy
                 if let Some(project) = self.model.active_project_mut() {
@@ -8284,6 +8295,9 @@ pub fn load_state(custom_path: Option<&PathBuf>) -> Result<AppModel> {
             // else: keep tasks from global state (migration path)
             // They'll be saved to project dir on next save
         }
+
+        // Initialize UI state's vim mode from persisted global settings
+        model.ui_state.set_vim_mode(model.global_settings.vim_mode_enabled);
 
         Ok(model)
     } else {
