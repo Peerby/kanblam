@@ -724,6 +724,10 @@ fn handle_mouse_event(
             }
             current_x += tab_width + 3; // + separator " │ "
         }
+        // Click on top line (project tabs row) but not on a specific tab - focus the project bar
+        if y == 0 {
+            return Some(Message::FocusChanged(FocusArea::ProjectTabs));
+        }
         return None;
     }
 
