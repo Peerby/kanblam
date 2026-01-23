@@ -1254,7 +1254,9 @@ fn render_spec_tab<'a>(
                 Span::styled("gg", *key_style),
                 Span::styled("/", *dim_style),
                 Span::styled("G", *key_style),
-                Span::styled(" jump", *dim_style),
+                Span::styled(" jump  ", *dim_style),
+                Span::styled("Ctrl-G", *key_style),
+                Span::styled(" edit", *dim_style),
             ]));
 
             // Show scroll position indicator
@@ -1273,6 +1275,13 @@ fn render_spec_tab<'a>(
                     ),
                     *dim_style,
                 ),
+            ]));
+            lines.push(Line::from(""));
+        } else {
+            // Show edit hint even when content isn't scrollable
+            lines.push(Line::from(vec![
+                Span::styled("Ctrl-G", *key_style),
+                Span::styled(" edit", *dim_style),
             ]));
             lines.push(Line::from(""));
         }
@@ -1320,7 +1329,12 @@ fn render_spec_tab<'a>(
             )));
         }
     } else {
-        // No spec yet
+        // No spec yet - show hint to add one
+        lines.push(Line::from(vec![
+            Span::styled("Ctrl-G", *key_style),
+            Span::styled(" edit", *dim_style),
+        ]));
+        lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "No spec generated yet.",
             *dim_style,
