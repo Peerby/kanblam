@@ -6780,6 +6780,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                 if self.model.ui_state.show_task_preview {
                     self.model.ui_state.task_detail_tab = crate::model::TaskDetailTab::default();
                     self.model.ui_state.spec_scroll_offset = 0;
+                    // Reset activity scroll state when opening modal
+                    self.model.ui_state.activity_scroll_offset = 0;
+                    self.model.ui_state.activity_expanded_idx = None;
+                    self.model.ui_state.activity_auto_scroll = true;
                 }
             }
 
@@ -6789,6 +6793,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                 // Reset scroll offsets when switching tabs
                 self.model.ui_state.spec_scroll_offset = 0;
+
+                // Reset activity scroll state and enable auto-scroll when switching to Activity tab
+                if new_tab == crate::model::TaskDetailTab::Activity {
+                    self.model.ui_state.activity_scroll_offset = 0;
+                    self.model.ui_state.activity_expanded_idx = None;
+                    self.model.ui_state.activity_auto_scroll = true;
+                }
 
                 // Load git diff when switching to Git tab
                 if new_tab == crate::model::TaskDetailTab::Git {
@@ -6811,6 +6822,13 @@ Do not ask for permission - run tests and fix any issues you find."#);
 
                 // Reset scroll offsets when switching tabs
                 self.model.ui_state.spec_scroll_offset = 0;
+
+                // Reset activity scroll state and enable auto-scroll when switching to Activity tab
+                if new_tab == crate::model::TaskDetailTab::Activity {
+                    self.model.ui_state.activity_scroll_offset = 0;
+                    self.model.ui_state.activity_expanded_idx = None;
+                    self.model.ui_state.activity_auto_scroll = true;
+                }
 
                 // Load git diff when switching to Git tab
                 if new_tab == crate::model::TaskDetailTab::Git {
@@ -6922,6 +6940,8 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     self.model.ui_state.activity_scroll_offset.saturating_sub(entries);
                 // Clear expansion when scrolling
                 self.model.ui_state.activity_expanded_idx = None;
+                // User scrolled up - disable auto-scroll
+                self.model.ui_state.activity_auto_scroll = false;
             }
 
             Message::ScrollActivityDown(entries) => {
@@ -6943,6 +6963,10 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     .min(max_scroll);
                 // Clear expansion when scrolling
                 self.model.ui_state.activity_expanded_idx = None;
+                // Re-enable auto-scroll if user scrolled to the bottom
+                if self.model.ui_state.activity_scroll_offset >= max_scroll {
+                    self.model.ui_state.activity_auto_scroll = true;
+                }
             }
 
             Message::ToggleActivityExpand => {
@@ -7054,6 +7078,27 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     if self.model.ui_state.status_message_decay == 0 {
                         self.model.ui_state.status_message = None;
                     }
+                }
+
+                // Auto-scroll activity log to bottom when new entries arrive
+                // Only when: modal is open, Activity tab is selected, and auto-scroll is enabled
+                if self.model.ui_state.show_task_preview
+                    && self.model.ui_state.task_detail_tab == crate::model::TaskDetailTab::Activity
+                    && self.model.ui_state.activity_auto_scroll
+                {
+                    // Get current task's activity log length
+                    let activity_len = self.model.active_project()
+                        .and_then(|project| {
+                            let tasks = project.tasks_by_status(self.model.ui_state.selected_column);
+                            self.model.ui_state.selected_task_idx
+                                .and_then(|idx| tasks.get(idx).copied())
+                        })
+                        .map(|task| task.activity_log.len())
+                        .unwrap_or(0);
+
+                    // Scroll to bottom (same formula as ScrollActivityDown)
+                    let max_scroll = activity_len.saturating_sub(10);
+                    self.model.ui_state.activity_scroll_offset = max_scroll;
                 }
 
                 // Auto-scroll long watcher comments horizontally (like title scrolling)

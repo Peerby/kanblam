@@ -1884,6 +1884,9 @@ pub struct UiState {
     pub activity_scroll_offset: usize,
     /// Which activity entry is expanded to show full output (None = all collapsed)
     pub activity_expanded_idx: Option<usize>,
+    /// Whether to auto-scroll activity log to bottom when new entries arrive
+    /// Disabled when user manually scrolls up, re-enabled when user scrolls to bottom
+    pub activity_auto_scroll: bool,
 
     // Interactive terminal modal
     /// If set, the interactive modal is open for this task
@@ -2505,6 +2508,7 @@ impl Default for UiState {
             task_detail_tab: TaskDetailTab::default(),
             activity_scroll_offset: 0,
             activity_expanded_idx: None,
+            activity_auto_scroll: true,
             interactive_modal: None,
             open_project_dialog_slot: None,
             directory_browser: None,
