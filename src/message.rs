@@ -436,4 +436,22 @@ pub enum Message {
     SidecarModalSetActionStatus(Option<String>),
     /// Sidecar action completed
     SidecarActionCompleted { success: bool, message: String },
+
+    // Markdown file picker (Ctrl+O in new task input)
+    /// Open the markdown file picker (scans repo for .md files)
+    ShowMdFilePicker,
+    /// Close the markdown file picker without selecting
+    CloseMdFilePicker,
+    /// Navigate in the file picker list
+    MdFilePickerNavigate(i32),
+    /// Jump to first item in file picker
+    MdFilePickerNavigateToStart,
+    /// Jump to last item in file picker
+    MdFilePickerNavigateToEnd,
+    /// Update the filter text (character typed)
+    MdFilePickerPushChar(char),
+    /// Remove last character from filter
+    MdFilePickerPopChar,
+    /// Confirm selection - load file contents into task description
+    MdFilePickerConfirm,
 }

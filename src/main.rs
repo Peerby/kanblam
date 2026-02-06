@@ -314,6 +314,13 @@ where
                         // Global watcher insight shortcut - works when not editing text
                         let commands = app.update(Message::OpenWatcherInsightModal);
                         process_commands_recursively(app, commands);
+                    } else if app.model.ui_state.md_file_picker.is_some() {
+                        // Handle markdown file picker input (intercept before TaskInput)
+                        let messages = handle_md_file_picker_key(key);
+                        for msg in messages {
+                            let commands = app.update(msg);
+                            process_commands_recursively(app, commands);
+                        }
                     } else if app.model.ui_state.focus == FocusArea::TaskInput {
                         // Handle input mode directly with textarea
                         let messages = handle_textarea_input(key, app);
@@ -1043,6 +1050,19 @@ fn handle_textarea_input(key: event::KeyEvent, app: &mut App) -> Vec<Message> {
         // Ctrl+G opens input in external editor (vim)
         KeyCode::Char('g') if ctrl => {
             vec![Message::OpenExternalEditor]
+        }
+
+        // Ctrl+O opens markdown file picker (only for new tasks, not editing/feedback/notes)
+        KeyCode::Char('o') if ctrl => {
+            // Only show file picker when creating a new task (not editing, feedback, or note mode)
+            if app.model.ui_state.editing_task_id.is_none()
+                && app.model.ui_state.feedback_task_id.is_none()
+                && app.model.ui_state.note_task_id.is_none()
+            {
+                vec![Message::ShowMdFilePicker]
+            } else {
+                vec![]
+            }
         }
 
         // Ctrl+I - pass to editor
@@ -2027,6 +2047,70 @@ fn handle_sidecar_modal_key(key: event::KeyEvent) -> Vec<Message> {
         KeyCode::Char('3') => {
             // Start (action 2)
             vec![Message::SidecarModalNavigate(10), Message::SidecarModalExecuteAction]
+        }
+
+        _ => vec![],
+    }
+}
+
+/// Handle key events when the markdown file picker is open
+/// Type to filter, j/k/arrows to navigate, Enter to select, Esc to cancel
+fn handle_md_file_picker_key(key: event::KeyEvent) -> Vec<Message> {
+    match key.code {
+        // Close picker without selecting
+        KeyCode::Esc => {
+            vec![Message::CloseMdFilePicker]
+        }
+
+        // Navigate up
+        KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::MdFilePickerNavigate(-1)]
+        }
+        KeyCode::Up => {
+            vec![Message::MdFilePickerNavigate(-1)]
+        }
+
+        // Navigate down
+        KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::MdFilePickerNavigate(1)]
+        }
+        KeyCode::Down => {
+            vec![Message::MdFilePickerNavigate(1)]
+        }
+
+        // Jump to start
+        KeyCode::Home => {
+            vec![Message::MdFilePickerNavigateToStart]
+        }
+
+        // Jump to end
+        KeyCode::End => {
+            vec![Message::MdFilePickerNavigateToEnd]
+        }
+
+        // Page up (move 10 items)
+        KeyCode::PageUp => {
+            vec![Message::MdFilePickerNavigate(-10)]
+        }
+
+        // Page down (move 10 items)
+        KeyCode::PageDown => {
+            vec![Message::MdFilePickerNavigate(10)]
+        }
+
+        // Confirm selection
+        KeyCode::Enter => {
+            vec![Message::MdFilePickerConfirm]
+        }
+
+        // Backspace - remove last character from filter
+        KeyCode::Backspace => {
+            vec![Message::MdFilePickerPopChar]
+        }
+
+        // Type character - add to filter
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            vec![Message::MdFilePickerPushChar(c)]
         }
 
         _ => vec![],

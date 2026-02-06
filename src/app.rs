@@ -8117,6 +8117,94 @@ Do not ask for permission - run tests and fix any issues you find."#);
                     modal.build_timestamp = get_sidecar_build_timestamp();
                 }
             }
+
+            // Markdown file picker messages
+            Message::ShowMdFilePicker => {
+                use crate::model::MdFilePickerState;
+
+                // Get the project directory to scan for .md files
+                if let Some(project) = self.model.active_project() {
+                    let project_dir = project.working_dir.clone();
+                    let md_files = scan_markdown_files(&project_dir);
+
+                    if md_files.is_empty() {
+                        self.model.ui_state.status_message = Some("No .md files found in repository".to_string());
+                        self.model.ui_state.status_message_decay = 30;
+                    } else {
+                        self.model.ui_state.md_file_picker = Some(MdFilePickerState::new(md_files));
+                    }
+                }
+            }
+
+            Message::CloseMdFilePicker => {
+                self.model.ui_state.md_file_picker = None;
+            }
+
+            Message::MdFilePickerNavigate(delta) => {
+                if let Some(ref mut picker) = self.model.ui_state.md_file_picker {
+                    picker.navigate(delta);
+                }
+            }
+
+            Message::MdFilePickerNavigateToStart => {
+                if let Some(ref mut picker) = self.model.ui_state.md_file_picker {
+                    picker.navigate_to_start();
+                }
+            }
+
+            Message::MdFilePickerNavigateToEnd => {
+                if let Some(ref mut picker) = self.model.ui_state.md_file_picker {
+                    picker.navigate_to_end();
+                }
+            }
+
+            Message::MdFilePickerPushChar(c) => {
+                if let Some(ref mut picker) = self.model.ui_state.md_file_picker {
+                    picker.push_char(c);
+                }
+            }
+
+            Message::MdFilePickerPopChar => {
+                if let Some(ref mut picker) = self.model.ui_state.md_file_picker {
+                    picker.pop_char();
+                }
+            }
+
+            Message::MdFilePickerConfirm => {
+                // Get the selected file path and read its contents
+                let file_to_load = self.model.ui_state.md_file_picker
+                    .as_ref()
+                    .and_then(|p| p.selected_file().cloned());
+
+                if let Some(relative_path) = file_to_load {
+                    if let Some(project) = self.model.active_project() {
+                        let full_path = project.working_dir.join(&relative_path);
+                        match std::fs::read_to_string(&full_path) {
+                            Ok(content) => {
+                                // Replace the editor content with the file contents
+                                self.model.ui_state.set_input_text(&content);
+
+                                // Close the picker
+                                self.model.ui_state.md_file_picker = None;
+
+                                // Show success message
+                                let filename = relative_path.file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| relative_path.to_string_lossy().to_string());
+                                self.model.ui_state.status_message = Some(format!("Loaded: {}", filename));
+                                self.model.ui_state.status_message_decay = 30;
+                            }
+                            Err(e) => {
+                                self.model.ui_state.status_message = Some(format!("Failed to read file: {}", e));
+                                self.model.ui_state.status_message_decay = 50;
+                            }
+                        }
+                    }
+                }
+
+                // Close picker even if no selection
+                self.model.ui_state.md_file_picker = None;
+            }
         }
 
         // Keep selected_task_id in sync with selected_task_idx
@@ -8131,6 +8219,47 @@ Do not ask for permission - run tests and fix any issues you find."#);
         }
 
         commands
+    }
+}
+
+/// Scan a directory recursively for .md files, returning paths relative to the directory
+fn scan_markdown_files(dir: &PathBuf) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    scan_markdown_files_recursive(dir, dir, &mut files);
+    // Sort files by path for consistent display
+    files.sort();
+    files
+}
+
+fn scan_markdown_files_recursive(base_dir: &PathBuf, current_dir: &PathBuf, files: &mut Vec<PathBuf>) {
+    let read_dir = match std::fs::read_dir(current_dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files/directories and common non-source directories
+        if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
+            continue;
+        }
+
+        if path.is_dir() {
+            // Recurse into subdirectories
+            scan_markdown_files_recursive(base_dir, &path, files);
+        } else if path.is_file() {
+            // Check if it's a .md file
+            if let Some(ext) = path.extension() {
+                if ext.eq_ignore_ascii_case("md") {
+                    // Store relative path
+                    if let Ok(relative) = path.strip_prefix(base_dir) {
+                        files.push(relative.to_path_buf());
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -2000,6 +2000,169 @@ pub struct UiState {
     // Stats modal scrolling
     /// Scroll offset for the stats modal (lines scrolled from top)
     pub stats_scroll_offset: usize,
+
+    // Markdown file picker (Ctrl+O in new task input)
+    /// If set, the markdown file picker is open
+    pub md_file_picker: Option<MdFilePickerState>,
+}
+
+/// State for the markdown file picker modal
+#[derive(Debug, Clone)]
+pub struct MdFilePickerState {
+    /// All .md files in the repository (relative paths)
+    pub all_files: Vec<PathBuf>,
+    /// Current filter/search text
+    pub filter_text: String,
+    /// Filtered and scored results (indices into all_files, with scores)
+    pub filtered_indices: Vec<(usize, i64)>,
+    /// Selected index in the filtered list
+    pub selected_idx: usize,
+}
+
+impl MdFilePickerState {
+    /// Create a new file picker with the given list of markdown files
+    pub fn new(files: Vec<PathBuf>) -> Self {
+        let all_indices: Vec<(usize, i64)> = (0..files.len()).map(|i| (i, 0)).collect();
+        Self {
+            all_files: files,
+            filter_text: String::new(),
+            filtered_indices: all_indices,
+            selected_idx: 0,
+        }
+    }
+
+    /// Update the filter text and recompute filtered results with fuzzy matching
+    pub fn set_filter(&mut self, filter: String) {
+        self.filter_text = filter;
+        self.refilter();
+    }
+
+    /// Add a character to the filter
+    pub fn push_char(&mut self, ch: char) {
+        self.filter_text.push(ch);
+        self.refilter();
+    }
+
+    /// Remove the last character from the filter
+    pub fn pop_char(&mut self) {
+        self.filter_text.pop();
+        self.refilter();
+    }
+
+    /// Recompute filtered results based on current filter text
+    fn refilter(&mut self) {
+        if self.filter_text.is_empty() {
+            // No filter - show all files sorted by path
+            self.filtered_indices = (0..self.all_files.len()).map(|i| (i, 0)).collect();
+        } else {
+            // Fuzzy match against file paths
+            let filter_lower = self.filter_text.to_lowercase();
+            let mut scored: Vec<(usize, i64)> = self.all_files
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, path)| {
+                    let path_str = path.to_string_lossy().to_lowercase();
+                    fuzzy_match(&path_str, &filter_lower).map(|score| (idx, score))
+                })
+                .collect();
+
+            // Sort by score (descending - higher is better)
+            scored.sort_by(|a, b| b.1.cmp(&a.1));
+            self.filtered_indices = scored;
+        }
+
+        // Reset selection to first item (or keep within bounds)
+        self.selected_idx = 0;
+    }
+
+    /// Get the currently selected file path
+    pub fn selected_file(&self) -> Option<&PathBuf> {
+        self.filtered_indices
+            .get(self.selected_idx)
+            .and_then(|(idx, _)| self.all_files.get(*idx))
+    }
+
+    /// Navigate selection by delta
+    pub fn navigate(&mut self, delta: i32) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        let current = self.selected_idx as i32;
+        let new_idx = (current + delta).max(0) as usize;
+        self.selected_idx = new_idx.min(self.filtered_indices.len().saturating_sub(1));
+    }
+
+    /// Jump to start of list
+    pub fn navigate_to_start(&mut self) {
+        self.selected_idx = 0;
+    }
+
+    /// Jump to end of list
+    pub fn navigate_to_end(&mut self) {
+        if !self.filtered_indices.is_empty() {
+            self.selected_idx = self.filtered_indices.len() - 1;
+        }
+    }
+}
+
+/// Simple fuzzy matching algorithm
+/// Returns a score if the pattern matches the text, or None if no match
+/// Higher scores indicate better matches
+fn fuzzy_match(text: &str, pattern: &str) -> Option<i64> {
+    if pattern.is_empty() {
+        return Some(0);
+    }
+
+    let text_chars: Vec<char> = text.chars().collect();
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+
+    let mut text_idx = 0;
+    let mut pattern_idx = 0;
+    let mut score: i64 = 0;
+    let mut consecutive = 0;
+    let mut last_match_idx: Option<usize> = None;
+
+    while text_idx < text_chars.len() && pattern_idx < pattern_chars.len() {
+        if text_chars[text_idx] == pattern_chars[pattern_idx] {
+            // Match found
+            score += 1;
+
+            // Bonus for consecutive matches
+            if let Some(last) = last_match_idx {
+                if text_idx == last + 1 {
+                    consecutive += 1;
+                    score += consecutive * 2;
+                } else {
+                    consecutive = 0;
+                }
+            }
+
+            // Bonus for matching at start of path component (after / or at start)
+            if text_idx == 0 || text_chars.get(text_idx.saturating_sub(1)) == Some(&'/') {
+                score += 5;
+            }
+
+            // Bonus for matching the filename part (after last /)
+            if let Some(last_slash) = text.rfind('/') {
+                if text_idx > last_slash {
+                    score += 2;
+                }
+            } else {
+                score += 2; // No slash, entire text is filename
+            }
+
+            last_match_idx = Some(text_idx);
+            pattern_idx += 1;
+        }
+        text_idx += 1;
+    }
+
+    // All pattern characters must be matched
+    if pattern_idx == pattern_chars.len() {
+        Some(score)
+    } else {
+        None
+    }
 }
 
 /// State for the sidecar control modal
@@ -2553,6 +2716,8 @@ impl Default for UiState {
             build_check_in_progress: false,
             // Stats modal scrolling
             stats_scroll_offset: 0,
+            // Markdown file picker
+            md_file_picker: None,
         }
     }
 }

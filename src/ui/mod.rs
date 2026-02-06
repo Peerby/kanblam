@@ -154,6 +154,11 @@ pub fn view(frame: &mut Frame, app: &mut App) {
         render_sidecar_modal(frame, app);
     }
 
+    // Render markdown file picker modal if active
+    if app.model.ui_state.md_file_picker.is_some() {
+        render_md_file_picker(frame, app);
+    }
+
     // Render watcher insight modal if active
     if app.model.ui_state.show_watcher_insight_modal {
         if let Some(ref project) = app.model.active_project() {
@@ -819,9 +824,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         )
     } else if is_insert_mode {
         // INSERT MODE hints
+        let is_new_task = !is_editing_task && !is_feedback_mode && !is_note_mode;
         if effective_image_count > 0 {
             // With images: "^C cancel ^V+img ^X-1 ^Uclr ⏎ line esc→⏎ submit ^S start"
-            // Width: 2+7+2+5+2+3+2+4+1+6+4+8+2+6 = 54
             (
                 Line::from(vec![
                     Span::styled("^C", key_style),
@@ -841,9 +846,29 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 ]),
                 54u16,
             )
+        } else if is_new_task {
+            // New task, no images: "^C cancel ^V img ^O md ^G vim ⏎ line esc→⏎ submit ^S start"
+            (
+                Line::from(vec![
+                    Span::styled("^C", key_style),
+                    Span::styled(" cancel ", desc_style),
+                    Span::styled("^V", key_style),
+                    Span::styled(" img ", desc_style),
+                    Span::styled("^O", key_style),
+                    Span::styled(" md ", desc_style),
+                    Span::styled("^G", key_style),
+                    Span::styled(editor_hint.clone(), desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" line ", desc_style),
+                    Span::styled("esc→⏎", key_style),
+                    Span::styled(" submit ", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
+                ]),
+                52 + editor_hint_len,
+            )
         } else {
-            // No images: "^C cancel ^V img ^G vim ⏎ line esc→⏎ submit ^S start"
-            // Width: 2+8+2+5+2+editor+1+6+4+8+2+6 = 46 + editor_hint_len
+            // Editing/feedback/note, no images: "^C cancel ^V img ^G vim ⏎ line esc→⏎ submit ^S start"
             (
                 Line::from(vec![
                     Span::styled("^C", key_style),
@@ -864,9 +889,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     } else {
         // NORMAL MODE hints
+        let is_new_task = !is_editing_task && !is_feedback_mode && !is_note_mode;
         if effective_image_count > 0 {
             // With images: "^C cancel ^V+img ^X-1 ^Uclr aio edit ⏎ submit ^S start"
-            // Width: 2+8+2+5+2+3+2+4+3+6+1+8+2+6 = 54
             (
                 Line::from(vec![
                     Span::styled("^C", key_style),
@@ -886,9 +911,29 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
                 ]),
                 54u16,
             )
+        } else if is_new_task {
+            // New task, no images: "^C cancel ^V img ^O md ^G vim aio edit ⏎ submit ^S start"
+            (
+                Line::from(vec![
+                    Span::styled("^C", key_style),
+                    Span::styled(" cancel ", desc_style),
+                    Span::styled("^V", key_style),
+                    Span::styled(" img ", desc_style),
+                    Span::styled("^O", key_style),
+                    Span::styled(" md ", desc_style),
+                    Span::styled("^G", key_style),
+                    Span::styled(editor_hint, desc_style),
+                    Span::styled("aio", key_style),
+                    Span::styled(" edit ", desc_style),
+                    Span::styled("⏎", key_style),
+                    Span::styled(" submit ", desc_style),
+                    Span::styled("^S", key_style),
+                    Span::styled(" start", desc_style),
+                ]),
+                51 + editor_hint_len,
+            )
         } else {
-            // No images: "^C cancel ^V img ^G vim aio edit ⏎ submit ^S start"
-            // Width: 2+8+2+5+2+editor+3+6+1+8+2+6 = 45 + editor_hint_len
+            // Editing/feedback/note, no images: "^C cancel ^V img ^G vim aio edit ⏎ submit ^S start"
             (
                 Line::from(vec![
                     Span::styled("^C", key_style),
@@ -2725,6 +2770,8 @@ fn render_help(frame: &mut Frame, scroll_offset: usize) {
         ]),
         Line::from("  Enter      Submit task"),
         Line::from("  \\Enter    Newline (line continuation)"),
+        Line::from("  Ctrl-O     Insert from .md file (fuzzy picker)"),
+        Line::from("  Ctrl-G     Open in external editor"),
         Line::from("  Ctrl-V     Paste image"),
         Line::from("  Ctrl-X/U   Remove last / clear all images"),
         Line::from("  Esc        Cancel / unfocus"),
@@ -3944,6 +3991,150 @@ fn render_sidecar_modal(frame: &mut Frame, app: &App) {
                 .title(" Sidecar Control ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(modal_widget, area);
+}
+
+/// Render the markdown file picker modal
+fn render_md_file_picker(frame: &mut Frame, app: &App) {
+    let picker = match &app.model.ui_state.md_file_picker {
+        Some(p) => p,
+        None => return,
+    };
+
+    // Modal size: 60% width, 70% height
+    let area = centered_rect(60, 70, frame.area());
+
+    let label_style = Style::default().fg(Color::DarkGray);
+    let selected_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let filter_style = Style::default().fg(Color::Cyan);
+    let path_style = Style::default().fg(Color::Blue);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Title
+    lines.push(Line::from(Span::styled(
+        "Insert Markdown File",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    // Search/filter input
+    lines.push(Line::from(vec![
+        Span::styled("Filter: ", label_style),
+        Span::styled(
+            if picker.filter_text.is_empty() {
+                "(type to search)".to_string()
+            } else {
+                picker.filter_text.clone()
+            },
+            if picker.filter_text.is_empty() {
+                label_style
+            } else {
+                filter_style
+            },
+        ),
+        Span::styled("▏", Style::default().fg(Color::Yellow)), // Cursor
+    ]));
+    lines.push(Line::from(""));
+
+    // Result count
+    let count_text = if picker.filter_text.is_empty() {
+        format!("{} files", picker.filtered_indices.len())
+    } else {
+        format!("{} of {} files", picker.filtered_indices.len(), picker.all_files.len())
+    };
+    lines.push(Line::from(Span::styled(count_text, label_style)));
+    lines.push(Line::from(""));
+
+    // Separator
+    lines.push(Line::from(Span::styled(
+        "─".repeat(area.width.saturating_sub(4) as usize),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    // File list - show as many as fit in the modal
+    let header_lines = lines.len();
+    let footer_lines = 4; // Key hints + separator
+    let available_lines = area.height.saturating_sub(2) as usize; // Account for borders
+    let list_height = available_lines.saturating_sub(header_lines + footer_lines);
+
+    // Calculate scroll offset to keep selection visible
+    let scroll_offset = if picker.selected_idx >= list_height {
+        picker.selected_idx - list_height + 1
+    } else {
+        0
+    };
+
+    let visible_items = picker.filtered_indices
+        .iter()
+        .skip(scroll_offset)
+        .take(list_height);
+
+    if picker.filtered_indices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (no matching files)",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    } else {
+        for (display_idx, (file_idx, _score)) in visible_items.enumerate() {
+            let actual_idx = scroll_offset + display_idx;
+            let is_selected = actual_idx == picker.selected_idx;
+            let prefix = if is_selected { "► " } else { "  " };
+            let path = &picker.all_files[*file_idx];
+            let path_str = path.to_string_lossy();
+
+            let style = if is_selected { selected_style } else { path_style };
+
+            // Truncate path if too long
+            let max_path_len = area.width.saturating_sub(6) as usize;
+            let display_path = if path_str.len() > max_path_len {
+                format!("...{}", &path_str[path_str.len() - max_path_len + 3..])
+            } else {
+                path_str.to_string()
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(display_path, style),
+            ]));
+        }
+    }
+
+    // Pad to fill space
+    while lines.len() < available_lines.saturating_sub(footer_lines) {
+        lines.push(Line::from(""));
+    }
+
+    // Separator
+    lines.push(Line::from(Span::styled(
+        "─".repeat(area.width.saturating_sub(4) as usize),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    // Key hints
+    let key_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    lines.push(Line::from(vec![
+        Span::styled("  ↑/↓", key_style),
+        Span::styled(" navigate  ", hint_style),
+        Span::styled("Enter", key_style),
+        Span::styled(" select  ", hint_style),
+        Span::styled("Esc", key_style),
+        Span::styled(" cancel", hint_style),
+    ]));
+
+    let modal_widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Select Markdown File (Ctrl+O) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
         )
         .style(Style::default().fg(Color::White));
 
