@@ -683,13 +683,25 @@ fn handle_mouse_event(
     let x = mouse.column;
     let y = mouse.row;
 
-    // Fixed input height (must match ui/mod.rs)
-    let input_height = 5u16;
+    // Calculate dynamic input height to match ui/mod.rs exactly
+    let is_welcome_screen = app.model.projects.is_empty();
+    let frame_width = size.width.saturating_sub(4) as usize; // Account for borders
+    let input_height = if is_welcome_screen {
+        0
+    } else {
+        crate::ui::calculate_input_height(
+            &app.model.ui_state.editor_state.lines.to_string(),
+            frame_width,
+        )
+    };
 
     // Calculate layout regions (project bar at top now)
-    // Header height is dynamic based on terminal size (must match ui/mod.rs)
+    // Header height is dynamic based on terminal size (must match ui/mod.rs exactly)
+    // The renderer uses get_logo_size_for_project_bar with project_bar_width, but for mouse
+    // handling we can use should_show_full_logo which is equivalent for determining header height
     let show_full_logo = crate::ui::logo::should_show_full_logo(size.width, size.height);
-    let header_height = if show_full_logo { 4u16 } else { 1u16 };
+    // IMPORTANT: header_height must match ui/mod.rs: 3 for full/medium logo, 1 for compact
+    let header_height = if show_full_logo { 3u16 } else { 1u16 };
     let status_height = 1u16;
     let kanban_height = size.height.saturating_sub(header_height + input_height + status_height);
 
@@ -723,21 +735,15 @@ fn handle_mouse_event(
             }
         }
 
-        // Project tabs are roughly spaced out
-        // Estimate project width based on name lengths
-        let mut current_x = 1u16; // Initial space
-        for (idx, project) in app.model.projects.iter().enumerate() {
-            // Width: " [N] name " + separator
-            let tab_width = if idx < 9 {
-                (5 + project.name.len() + 2) as u16
-            } else {
-                (2 + project.name.len() + 2) as u16
+        // Use the exact same layout calculation as the renderer for project tabs
+        if let Some(hit) = crate::ui::hit_test_project_bar(app, x) {
+            return match hit {
+                crate::ui::ProjectBarHitResult::AddProject => {
+                    let num_projects = app.model.projects.len();
+                    Some(Message::ShowOpenProjectDialog { slot: num_projects })
+                }
+                crate::ui::ProjectBarHitResult::SwitchProject(idx) => Some(Message::SwitchProject(idx)),
             };
-
-            if x >= current_x && x < current_x + tab_width {
-                return Some(Message::SwitchProject(idx));
-            }
-            current_x += tab_width + 3; // + separator " │ "
         }
         // Click on top line (project tabs row) but not on a specific tab - focus the project bar
         if y == 0 {
@@ -748,59 +754,23 @@ fn handle_mouse_event(
 
     // Check if click is in kanban area
     if y >= kanban_y && y < input_y {
-        let kanban_rel_y = y - kanban_y;
-        // Kanban board has outer border (1 char each side)
-        // Inside is a 2x3 grid layout:
-        //   Row 0: Planned (left)    | InProgress (right)
-        //   Row 1: Testing (left)    | NeedsWork (right)
-        //   Row 2: Review (left)     | Done (right)
+        // Use the exact same layout calculation as the renderer
+        let kanban_area = Rect::new(0, kanban_y, size.width, kanban_height);
 
-        let inner_x = x.saturating_sub(1); // Account for left border
-        let inner_y = kanban_rel_y.saturating_sub(1); // Account for top border (use relative y)
-        let inner_width = size.width.saturating_sub(2);
-        let inner_height = kanban_height.saturating_sub(2);
-
-        // Determine which cell (2x3 grid)
-        let half_width = inner_width / 2;
-        let row_height = inner_height / 3;
-
-        let is_right = inner_x >= half_width;
-        let row = if inner_y < row_height {
-            0
-        } else if inner_y < row_height * 2 {
-            1
-        } else {
-            2
-        };
-
-        // 2x3 grid: Row1 = Planned|InProgress, Row2 = Testing|NeedsWork, Row3 = Review|Done
-        let status = match (row, is_right) {
-            (0, false) => TaskStatus::Planned,     // Row 0, left
-            (0, true) => TaskStatus::InProgress,   // Row 0, right
-            (1, false) => TaskStatus::Testing,     // Row 1, left
-            (1, true) => TaskStatus::NeedsWork,   // Row 1, right
-            (2, false) => TaskStatus::Review,      // Row 2, left
-            (_, _) => TaskStatus::Done,            // Row 2, right (catch-all)
-        };
-
-        // Calculate task index within the cell
-        // Each cell has its own border (1 line) + title area
-        let cell_y = inner_y.saturating_sub(row as u16 * row_height);
-
-        // Account for column border and title (roughly 2 lines)
-        if cell_y >= 2 {
-            let task_idx = (cell_y - 2) as usize;
-
-            if let Some(project) = app.model.active_project() {
-                let tasks = project.tasks_by_status(status);
-                if task_idx < tasks.len() {
-                    return Some(Message::ClickedTask { status, task_idx });
+        if let Some(hit) = crate::ui::hit_test_kanban(kanban_area, x, y) {
+            if let Some(task_idx) = hit.task_idx {
+                // Validate task index against actual task count
+                if let Some(project) = app.model.active_project() {
+                    let tasks = project.tasks_by_status(hit.status);
+                    if task_idx < tasks.len() {
+                        return Some(Message::ClickedTask { status: hit.status, task_idx });
+                    }
                 }
             }
+            // Click on column header, border, or empty task area - just select the column
+            return Some(Message::SelectColumn(hit.status));
         }
-
-        // Click on column header or empty space - just select the column
-        return Some(Message::SelectColumn(status));
+        return None;
     }
 
     // Check if click is in input area

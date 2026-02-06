@@ -8,6 +8,137 @@ use ratatui::{
     Frame,
 };
 
+/// Result of hit-testing a click position against the kanban board
+#[derive(Debug, Clone)]
+pub struct KanbanHitResult {
+    /// The TaskStatus column that was clicked
+    pub status: TaskStatus,
+    /// The task index within that column, if a task row was clicked
+    pub task_idx: Option<usize>,
+}
+
+/// Calculate the 6 cell rectangles (2x3 grid) for the kanban board given the outer area.
+/// Returns array of (status, cell_rect) in order:
+/// [Planned, InProgress, Testing, NeedsWork, Review, Done]
+pub fn calculate_kanban_cells(area: Rect) -> [(TaskStatus, Rect); 6] {
+    // Same logic as render_kanban: outer border with title, then 2x3 grid with proportional rows
+    // Must match render_kanban exactly - including the title (though title doesn't affect inner())
+    let block = Block::default()
+        .title(" Kanban Board ")
+        .borders(Borders::ALL);
+    let inner = block.inner(area);
+
+    let total_height = inner.height as i32;
+    let min_row_height: u16 = 3;
+
+    // Calculate row heights with same logic as render
+    let rows = if total_height < (min_row_height * 3) as i32 {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+            ])
+            .split(inner)
+    } else {
+        let mut row1_h = (total_height * 42 / 100) as u16;
+        let mut row2_h = (total_height * 17 / 100) as u16;
+        let mut row3_h = (total_height - row1_h as i32 - row2_h as i32) as u16;
+
+        if row2_h < min_row_height {
+            let deficit = min_row_height - row2_h;
+            row2_h = min_row_height;
+            if row1_h > min_row_height && row3_h > min_row_height {
+                let steal_from_1 = deficit / 2;
+                let steal_from_3 = deficit - steal_from_1;
+                row1_h = row1_h.saturating_sub(steal_from_1).max(min_row_height);
+                row3_h = row3_h.saturating_sub(steal_from_3).max(min_row_height);
+            }
+        }
+        if row1_h < min_row_height {
+            row1_h = min_row_height;
+        }
+        if row3_h < min_row_height {
+            row3_h = min_row_height;
+        }
+
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(row1_h),
+                Constraint::Length(row2_h),
+                Constraint::Length(row3_h),
+            ])
+            .split(inner)
+    };
+
+    let row1_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[0]);
+
+    let row2_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
+
+    let row3_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[2]);
+
+    [
+        (TaskStatus::Planned, row1_cols[0]),
+        (TaskStatus::InProgress, row1_cols[1]),
+        (TaskStatus::Testing, row2_cols[0]),
+        (TaskStatus::NeedsWork, row2_cols[1]),
+        (TaskStatus::Review, row3_cols[0]),
+        (TaskStatus::Done, row3_cols[1]),
+    ]
+}
+
+/// Hit-test a screen position against the kanban board.
+/// Returns which column/task was clicked, if any.
+pub fn hit_test_kanban(kanban_area: Rect, x: u16, y: u16) -> Option<KanbanHitResult> {
+    // Check if click is within the kanban area at all
+    if x < kanban_area.x || x >= kanban_area.x + kanban_area.width ||
+       y < kanban_area.y || y >= kanban_area.y + kanban_area.height {
+        return None;
+    }
+
+    let cells = calculate_kanban_cells(kanban_area);
+
+    // Find which cell was clicked
+    for (status, cell_rect) in cells {
+        if x >= cell_rect.x && x < cell_rect.x + cell_rect.width &&
+           y >= cell_rect.y && y < cell_rect.y + cell_rect.height {
+            // Found the cell - now calculate task index
+            // Each cell has a border (1 line top) and we need to find the inner area
+            let cell_block = Block::default().borders(Borders::ALL);
+            let cell_inner = cell_block.inner(cell_rect);
+
+            // Check if click is in the inner content area
+            if y >= cell_inner.y && y < cell_inner.y + cell_inner.height {
+                // Task list starts at the inner area's first line
+                let task_y = (y - cell_inner.y) as usize;
+                return Some(KanbanHitResult {
+                    status,
+                    task_idx: Some(task_y),
+                });
+            } else {
+                // Click on border/title area
+                return Some(KanbanHitResult {
+                    status,
+                    task_idx: None,
+                });
+            }
+        }
+    }
+
+    None
+}
+
 /// Render the Kanban board with six columns in a 2x3 grid
 pub fn render_kanban(frame: &mut Frame, area: Rect, app: &App) {
     let is_focused = app.model.ui_state.focus == FocusArea::KanbanBoard;

@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 pub use interactive_modal::render_interactive_modal;
-pub use kanban::render_kanban;
+pub use kanban::{hit_test_kanban, render_kanban};
 pub use status_bar::render_status_bar;
 pub use welcome::welcome_message_count;
 
@@ -182,8 +182,10 @@ pub fn view(frame: &mut Frame, app: &mut App) {
 }
 
 /// Calculate the required height for the input area based on content
-/// Accounts for wrapped lines and includes borders
-fn calculate_input_height(content: &str, available_width: usize) -> u16 {
+/// Calculate the dynamic height for the input area based on content.
+/// Accounts for wrapped lines and includes borders.
+/// This is used by both the renderer and mouse hit-testing to ensure consistent layout.
+pub fn calculate_input_height(content: &str, available_width: usize) -> u16 {
     const MIN_HEIGHT: u16 = 4;  // Minimum input area (2 lines + borders)
     const MAX_HEIGHT: u16 = 12; // Maximum input area to avoid taking over the screen
 
@@ -256,6 +258,61 @@ fn calculate_project_bar_width(app: &App) -> u16 {
     }
 
     width as u16
+}
+
+/// Result of hit-testing a click position against the project bar
+#[derive(Debug, Clone)]
+pub enum ProjectBarHitResult {
+    /// Clicked on the +project button
+    AddProject,
+    /// Clicked on a specific project tab (index into projects list)
+    SwitchProject(usize),
+}
+
+/// Hit-test a screen position against the project bar.
+/// Returns which tab was clicked, if any.
+pub fn hit_test_project_bar(app: &App, x: u16) -> Option<ProjectBarHitResult> {
+    let num_projects = app.model.projects.len();
+    let mut current_x: usize = 1; // Leading space " "
+
+    // +project button (index 0 in tab selection)
+    if num_projects < 9 {
+        let label_len = if num_projects == 0 { 14 } else { 7 }; // " [!] +project " or " [!] + "
+        let button_end = current_x + label_len;
+
+        if (x as usize) >= current_x && (x as usize) < button_end {
+            return Some(ProjectBarHitResult::AddProject);
+        }
+        current_x = button_end + 3; // Skip separator " │ "
+    }
+
+    // Project tabs
+    for (idx, project) in app.model.projects.iter().enumerate() {
+        // Tab text: " [X] name " where X is the shift char
+        let tab_len = if idx + 1 < 10 {
+            6 + project.name.len() // " [X] name "
+        } else {
+            2 + project.name.len() // " name "
+        };
+
+        // Attention badge: " N "
+        let attention_count = project.attention_count();
+        let badge_len = if attention_count > 0 {
+            2 + attention_count.to_string().len() // " N "
+        } else {
+            0
+        };
+
+        let tab_end = current_x + tab_len + badge_len;
+
+        if (x as usize) >= current_x && (x as usize) < tab_end {
+            return Some(ProjectBarHitResult::SwitchProject(idx));
+        }
+
+        current_x = tab_end + 3; // Skip separator " │ "
+    }
+
+    None
 }
 
 /// Render the header area (project bar + optional logo)
