@@ -6,6 +6,8 @@ use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::model::ProjectCommands;
+
 /// Information about a worktree
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -1363,36 +1365,47 @@ pub fn try_fast_rebase(worktree_path: &PathBuf, project_dir: &PathBuf) -> Result
         // Git rebase only catches line-level conflicts, not semantic conflicts
         // (e.g., code using old APIs/structures that have since changed)
 
-        let build_result = Command::new("cargo")
-            .current_dir(worktree_path)
-            .args(["build"])
-            .output();
+        // Detect the appropriate check command for this project type
+        let commands = ProjectCommands::detect(project_dir);
 
-        match build_result {
-            Ok(output) if output.status.success() => {
-                // Build succeeded - safe to proceed with merge
-                return Ok(true);
-            }
-            Ok(output) => {
-                // Build failed - semantic conflicts exist
-                // Restore to pre-rebase state and let Claude handle it
-                if let Some(ref orig) = original_head {
-                    let _ = Command::new("git")
-                        .current_dir(worktree_path)
-                        .args(["reset", "--hard", orig])
-                        .output();
+        if let Some(check_cmd) = commands.check {
+            // Parse the check command to get program and args
+            let parts: Vec<&str> = check_cmd.split_whitespace().collect();
+            if let Some((program, args)) = parts.split_first() {
+                let build_result = Command::new(program)
+                    .current_dir(worktree_path)
+                    .args(args)
+                    .output();
+
+                match build_result {
+                    Ok(output) if output.status.success() => {
+                        // Build succeeded - safe to proceed with merge
+                        return Ok(true);
+                    }
+                    Ok(output) => {
+                        // Build failed - semantic conflicts exist
+                        // Restore to pre-rebase state and let Claude handle it
+                        if let Some(ref orig) = original_head {
+                            let _ = Command::new("git")
+                                .current_dir(worktree_path)
+                                .args(["reset", "--hard", orig])
+                                .output();
+                        }
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        eprintln!("Fast rebase succeeded but build failed - falling back to Claude: {}",
+                            stderr.lines().take(5).collect::<Vec<_>>().join("\n"));
+                        return Ok(false); // Fall back to Claude
+                    }
+                    Err(_) => {
+                        // Couldn't run check command - proceed anyway but warn
+                        return Ok(true);
+                    }
                 }
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("Fast rebase succeeded but build failed - falling back to Claude: {}",
-                    stderr.lines().take(5).collect::<Vec<_>>().join("\n"));
-                return Ok(false); // Fall back to Claude
-            }
-            Err(_) => {
-                // Couldn't run cargo build - proceed anyway but warn
-                // This could happen in non-Rust projects
-                return Ok(true);
             }
         }
+
+        // No check command detected for this project type - proceed without verification
+        return Ok(true);
     }
 
     // Rebase failed - check if it's due to conflicts
